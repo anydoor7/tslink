@@ -27,6 +27,30 @@ func stubProcessLivenessError(t *testing.T) {
 	t.Cleanup(func() { openProcessForLiveness = orig })
 }
 
+// holdProcessObject keeps pid's process object open until the test ends.
+// Windows does not reuse a PID while any handle to its object is open, and
+// after the process exits OpenProcess on that PID keeps succeeding: the
+// state antivirus, a parent or a service leaves behind for an exited daemon.
+func holdProcessObject(t *testing.T, pid int) {
+	t.Helper()
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		t.Fatalf("OpenProcess(helper) error = %v", err)
+	}
+	t.Cleanup(func() { _ = windows.CloseHandle(handle) })
+}
+
+// requireHeldExitedProcess checks the premise that the exited helper is still
+// openable through its held process object.
+func requireHeldExitedProcess(t *testing.T, pid int) {
+	t.Helper()
+	probe, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		t.Fatalf("premise: exited helper is no longer openable while a handle is held: %v", err)
+	}
+	_ = windows.CloseHandle(probe)
+}
+
 func stubStopProcessLookupError(t *testing.T) {
 	t.Helper()
 	orig := findProcessForStop

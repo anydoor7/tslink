@@ -1479,10 +1479,14 @@ func TestStopDaemon_AlreadyExited(t *testing.T) {
 	}
 
 	pid := cmd.Process.Pid
+	// On Windows, keep the helper's PID out of reuse and its exited process
+	// object openable until StopDaemon returns, as any other open handle would.
+	holdProcessObject(t, pid)
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatalf("Kill() error = %v", err)
 	}
 	_ = cmd.Wait()
+	requireHeldExitedProcess(t, pid)
 
 	path := filepath.Join(t.TempDir(), "tslink.pid")
 	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {

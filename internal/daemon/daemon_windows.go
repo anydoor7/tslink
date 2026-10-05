@@ -177,7 +177,17 @@ func StopDaemon(pidPath string) error {
 		}
 		return fmt.Errorf("inspect process %d: %w", pid, err)
 	}
+	// An exited process stays openable while any handle keeps its object
+	// (and its PID) alive, but its executable can no longer be inspected, so
+	// identity verification would refuse it. Apply inspectProcessLiveness's
+	// exit-code rule first, so stop agrees with status about an exited daemon.
+	var exitCode uint32
+	exited := windows.GetExitCodeProcess(handle, &exitCode) == nil && exitCode != windowsStillActive
 	_ = windows.CloseHandle(handle)
+	if exited {
+		RemovePID(pidPath)
+		return nil
+	}
 
 	if err := verifyProcessIdentity(pidPath, pid); err != nil {
 		return fmt.Errorf("refusing to stop process from PID file: %w", err)
