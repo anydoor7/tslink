@@ -262,59 +262,64 @@ func TestBootstrapRefusesOtherConfigBeforeInstall(t *testing.T) {
 func TestBootstrapStableWindow(t *testing.T) {
 	for _, scenario := range []string{"stable", "death", "pid_change", "late_death", "never_ready", "cancelled"} {
 		t.Run(scenario, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if scenario == "cancelled" {
-				cancel()
-			}
-			calls := 0
-			start := time.Now()
-			// late_death is driven by call count, not by the scheduler. On the
-			// wall clock, three 1ms polls could span the 8ms window under load
-			// and the wait accepted the process before it died. This clock
-			// moves one poll interval per sample and never otherwise, so the
-			// three good samples always span 2ms and the death on the fourth
-			// always lands inside the window.
-			clock := time.Unix(0, 0)
-			if scenario == "late_death" {
-				oldNow := bootstrapNowFn
-				t.Cleanup(func() { bootstrapNowFn = oldNow })
-				bootstrapNowFn = func() time.Time { return clock }
-			}
-			pid, err := waitStableDaemon(ctx, func() (int, error) {
-				calls++
-				clock = clock.Add(time.Millisecond)
-				switch scenario {
-				case "death":
-					if calls > 1 {
+			// Virtual time: the 25ms timeout and 8ms settle window run on the
+			// product clock and timers, which the bubble owns, so a stalled runner
+			// cannot exhaust the timeout before the stable samples arrive.
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if scenario == "cancelled" {
+					cancel()
+				}
+				calls := 0
+				start := time.Now()
+				// late_death is driven by call count, not by the scheduler. On the
+				// wall clock, three 1ms polls could span the 8ms window under load
+				// and the wait accepted the process before it died. This clock
+				// moves one poll interval per sample and never otherwise, so the
+				// three good samples always span 2ms and the death on the fourth
+				// always lands inside the window.
+				clock := time.Unix(0, 0)
+				if scenario == "late_death" {
+					oldNow := bootstrapNowFn
+					t.Cleanup(func() { bootstrapNowFn = oldNow })
+					bootstrapNowFn = func() time.Time { return clock }
+				}
+				pid, err := waitStableDaemon(ctx, func() (int, error) {
+					calls++
+					clock = clock.Add(time.Millisecond)
+					switch scenario {
+					case "death":
+						if calls > 1 {
+							return 0, nil
+						}
+					case "pid_change":
+						if calls > 1 {
+							return 43, nil
+						}
+					case "late_death":
+						if calls > 3 {
+							return 0, nil
+						}
+					case "never_ready":
 						return 0, nil
 					}
-				case "pid_change":
-					if calls > 1 {
-						return 43, nil
+					return 42, nil
+				}, 25*time.Millisecond, time.Millisecond, 8*time.Millisecond)
+				if scenario == "stable" {
+					if err != nil || pid != 42 || calls < 2 || time.Since(start) < 8*time.Millisecond {
+						t.Fatalf("pid=%d err=%v calls=%d elapsed=%s", pid, err, calls, time.Since(start))
 					}
-				case "late_death":
-					if calls > 3 {
-						return 0, nil
-					}
-				case "never_ready":
-					return 0, nil
+				} else if err == nil {
+					t.Fatalf("accepted unstable process: %s calls=%d pid=%d", scenario, calls, pid)
 				}
-				return 42, nil
-			}, 25*time.Millisecond, time.Millisecond, 8*time.Millisecond)
-			if scenario == "stable" {
-				if err != nil || pid != 42 || calls < 2 || time.Since(start) < 8*time.Millisecond {
-					t.Fatalf("pid=%d err=%v calls=%d elapsed=%s", pid, err, calls, time.Since(start))
+				// Rejected by the death itself, not by running out the deadline:
+				// a timeout is also an error, and would stay green with the
+				// PID/state check deleted.
+				if scenario == "late_death" && (calls != 4 || !strings.Contains(err.Error(), "PID/state changed (42 -> 0)")) {
+					t.Fatalf("late_death rejected for the wrong reason: calls=%d err=%v", calls, err)
 				}
-			} else if err == nil {
-				t.Fatalf("accepted unstable process: %s calls=%d pid=%d", scenario, calls, pid)
-			}
-			// Rejected by the death itself, not by running out the deadline:
-			// a timeout is also an error, and would stay green with the
-			// PID/state check deleted.
-			if scenario == "late_death" && (calls != 4 || !strings.Contains(err.Error(), "PID/state changed (42 -> 0)")) {
-				t.Fatalf("late_death rejected for the wrong reason: calls=%d err=%v", calls, err)
-			}
+			})
 		})
 	}
 }
@@ -373,51 +378,56 @@ func TestBootstrapAddWritesBeforeInstallThenReturnsURL(t *testing.T) {
 // daemon and the registry were both fine. It must now flow through to the
 // caller's own wait and come back as a successful add with an auth URL.
 func TestBootstrapAddSucceedsWhenEnrollmentURLArrivesLate(t *testing.T) {
-	dir := isolateBootstrap(t)
-	handoffPath := filepath.Join(dir, "auth-handoff.json")
-	record := newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late-fixture", 4242)
-	installDaemonFn = func(context.Context, io.Writer) error {
-		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
-			return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true}
+	// Virtual time: the URL lands at three evidence budgets (60ms) and the
+	// caller waits 2s, both on the bubble clock, so the ordering the test is
+	// about cannot be inverted by a stalled runner.
+	synctest.Test(t, func(t *testing.T) {
+		dir := isolateBootstrap(t)
+		handoffPath := filepath.Join(dir, "auth-handoff.json")
+		record := newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late-fixture", 4242)
+		installDaemonFn = func(context.Context, io.Writer) error {
+			isRunningFn = func(string) bool { return true }
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
+				return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true}
+			}
+			// Nothing to show for it yet, and nothing to show for it for longer
+			// than the whole setup budget.
+			go func() {
+				time.Sleep(3 * bootstrapEvidenceTimeout)
+				_ = saveAuthHandoff(handoffPath, record)
+			}()
+			return nil
 		}
-		// Nothing to show for it yet, and nothing to show for it for longer
-		// than the whole setup budget.
-		go func() {
-			time.Sleep(3 * bootstrapEvidenceTimeout)
-			_ = saveAuthHandoff(handoffPath, record)
-		}()
-		return nil
-	}
-	var stderr bytes.Buffer
-	addCmd, _, err := rootCmd.Find([]string{"add"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resetCommandLocalFlags(t, addCmd)
-	setCommandTestContext(t, addCmd)
-	addCmd.SetErr(&stderr)
-	var stdout bytes.Buffer
-	addCmd.SetOut(&stdout)
-	for k, v := range map[string]string{"proxy": "localhost:3000", "wait": "2s"} {
-		if err := addCmd.Flags().Set(k, v); err != nil {
+		var stderr bytes.Buffer
+		addCmd, _, err := rootCmd.Find([]string{"add"})
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := addCmd.RunE(addCmd, []string{"myapp"}); err != nil {
-		t.Fatalf("late enrollment URL was reported as a failure: %v\nstderr=%s", err, &stderr)
-	}
-	if strings.Contains(stderr.String(), "crash-looping") || strings.Contains(stderr.String(), "daemon_setup_failed") {
-		t.Fatalf("healthy path blamed the installation: %s", &stderr)
-	}
-	svc, err := loadPersistedService(filepath.Join(dir, "registry.json"), "myapp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := buildAddResult(context.Background(), svc, true, filepath.Join(dir, "tslink.pid"), filepath.Join(dir, "registry.json"), filepath.Join(dir, "runtime.json"), 2*time.Second)
-	if err != nil || result.AuthURL != record.AuthURL || !result.URLPending {
-		t.Fatalf("result=%+v err=%v", result, err)
-	}
+		resetCommandLocalFlags(t, addCmd)
+		setCommandTestContext(t, addCmd)
+		addCmd.SetErr(&stderr)
+		var stdout bytes.Buffer
+		addCmd.SetOut(&stdout)
+		for k, v := range map[string]string{"proxy": "localhost:3000", "wait": "2s"} {
+			if err := addCmd.Flags().Set(k, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := addCmd.RunE(addCmd, []string{"myapp"}); err != nil {
+			t.Fatalf("late enrollment URL was reported as a failure: %v\nstderr=%s", err, &stderr)
+		}
+		if strings.Contains(stderr.String(), "crash-looping") || strings.Contains(stderr.String(), "daemon_setup_failed") {
+			t.Fatalf("healthy path blamed the installation: %s", &stderr)
+		}
+		svc, err := loadPersistedService(filepath.Join(dir, "registry.json"), "myapp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := buildAddResult(context.Background(), svc, true, filepath.Join(dir, "tslink.pid"), filepath.Join(dir, "registry.json"), filepath.Join(dir, "runtime.json"), 2*time.Second)
+		if err != nil || result.AuthURL != record.AuthURL || !result.URLPending {
+			t.Fatalf("result=%+v err=%v", result, err)
+		}
+	})
 }
 
 // TestBootstrapTemplateApplyUsesSetup counts the call; this holds the order.

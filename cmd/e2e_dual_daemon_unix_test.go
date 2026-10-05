@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/daemon"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Two tslink binaries at different absolute paths sharing one config
@@ -211,7 +211,7 @@ func TestE2EDualBinaryLeavesNoResidualProcesses(t *testing.T) {
 	e2eAssertProcessCount(t, daemonBinary, 1, "daemon started")
 
 	handle.stopAndReap()
-	if !handle.WaitExit(5 * time.Second) {
+	if !handle.WaitExit(testwait.Budget(t)) {
 		t.Fatal("owned daemon did not exit after deterministic reclamation")
 	}
 	e2eAssertNoResidualProcesses(t, daemonBinary, cliBinary)

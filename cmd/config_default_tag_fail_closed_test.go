@@ -14,6 +14,7 @@ import (
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func writeGlobalConfigFixture(t *testing.T, raw string) string {
@@ -126,13 +127,8 @@ func TestConfigWritersTakeTheConfigLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("writer failed after the lock was released: %v", err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("writer did not finish after the lock was released")
+		if err := testwait.Recv(t, done, "config writer finished after the lock was released"); err != nil {
+			t.Fatalf("writer failed after the lock was released: %v", err)
 		}
 	}
 	cfg, err := config.LoadGlobalConfig()

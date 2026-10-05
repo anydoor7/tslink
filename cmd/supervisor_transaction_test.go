@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/spf13/cobra"
 )
 
@@ -37,13 +38,7 @@ func repairOperation(ctx context.Context, op string) error {
 }
 func repairAwait(t *testing.T, ch <-chan error) error {
 	t.Helper()
-	select {
-	case err := <-ch:
-		return err
-	case <-time.After(5 * time.Second):
-		t.Fatal("transaction deadlocked")
-		return nil
-	}
+	return testwait.Recv(t, ch, "transaction finished (not deadlocked)")
 }
 
 // A real command pauses inside its manager phase, after definition mutation.
@@ -70,14 +65,12 @@ func TestRepairSupervisorTransactions(t *testing.T) {
 			}
 			armed.Store(true)
 			first := make(chan error, 1)
-			firstCtx, firstCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// Cancelled only on an early return: the first command must finish
+			// after release however slowly the runner gets there.
+			firstCtx, firstCancel := context.WithCancel(context.Background())
 			defer firstCancel()
 			go func() { first <- repairOperation(firstCtx, pair[0]) }()
-			select {
-			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("first did not enter manager")
-			}
+			testwait.Recv(t, entered, "first command entered the manager phase")
 			path, _ := supervisorPath()
 			before, _ := os.ReadFile(path)
 			count := calls.Load()
@@ -86,9 +79,10 @@ func TestRepairSupervisorTransactions(t *testing.T) {
 			go func() { second <- repairOperation(ctx, pair[1]) }()
 			var err error
 			timedOut := false
+			// Non-fatal so the owner is released and both commands drained.
 			select {
 			case err = <-second:
-			case <-time.After(5 * time.Second):
+			case <-time.After(testwait.Budget(t)):
 				timedOut = true
 			}
 			cancel()
@@ -162,7 +156,7 @@ func TestRepairBootstrapRechecksLiveDaemonInsideLock(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("waiter: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Error("waiter ignored cancellation")
 	}
 	cancel()

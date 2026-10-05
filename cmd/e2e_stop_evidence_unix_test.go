@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // E2: `tslink stop` may delete PID artifacts only when the process is
@@ -168,7 +168,7 @@ func TestE2EStopTerminatesLiveDaemonAndClearsArtifacts(t *testing.T) {
 		t.Fatalf("stopped = false, want true; data=%+v", data)
 	}
 
-	if !handle.WaitExit(10 * time.Second) {
+	if !handle.WaitExit(testwait.Budget(t)) {
 		t.Fatalf("daemon PID %d survived `tslink stop`", handle.PID)
 	}
 	e2eAssertProcessCount(t, daemonBinary, 0, "after stop")

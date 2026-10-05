@@ -12,10 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestBuiltinSupervisorStateFilesFailClosed(t *testing.T) {
@@ -176,18 +178,23 @@ func TestBuiltinSupervisorStateWriterRetriesSharingAndBoundsStall(t *testing.T) 
 	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Virtual time: the reader is released at 30ms of the same clock that paces
+	// the writer's 10ms retries, so the release always lands inside the retry
+	// budget instead of racing it on a loaded runner.
+	synctest.Test(t, func(t *testing.T) {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		closed := make(chan struct{})
+		go func() { time.Sleep(30 * time.Millisecond); f.Close(); close(closed) }()
+		err = writeBuiltinSupervisorState(path, []byte("new"), daemon.NewSupervisorClock())
+		<-closed
+		if err != nil {
+			t.Fatalf("transient reader=%v", err)
+		}
+	})
 	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	closed := make(chan struct{})
-	go func() { time.Sleep(30 * time.Millisecond); f.Close(); close(closed) }()
-	err = writeBuiltinSupervisorState(path, []byte("new"), daemon.NewSupervisorClock())
-	<-closed
-	if err != nil {
-		t.Fatalf("transient reader=%v", err)
-	}
-	f, err = os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,16 +307,19 @@ func TestBuiltinSupervisorRealProcessLifecycle(t *testing.T) {
 	go func() { joined <- parent.Wait() }()
 	defer func() {
 		_ = parent.Process.Kill()
+		// Deferred cleanup reports without t.Fatal.
 		select {
 		case <-joined:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("supervisor not reaped")
 		}
 	}()
 	pidPath := filepath.Join(dir, "tslink.pid")
 	wait := func(want string, oldPID int) builtinSupervisorRecord {
 		t.Helper()
-		deadline := time.Now().Add(15 * time.Second)
+		// Real process starts; the hang guard keeps the last observation in
+		// its failure message.
+		deadline := time.Now().Add(testwait.Budget(t))
 		var last builtinSupervisorRecord
 		var lastErr error
 		for time.Now().Before(deadline) {
@@ -365,8 +375,13 @@ func TestBuiltinSupervisorRealProcessLifecycle(t *testing.T) {
 	}
 	child.Release()
 	second := wait("running", first.DaemonPID)
-	if elapsed := time.Since(killedAt); elapsed < time.Second || elapsed > 8*time.Second {
-		t.Fatalf("first crash restart time=%s", elapsed)
+	// A timer never fires early, so the 1s first backoff is a strict lower
+	// bound; how long the restarted child takes to start is not a property.
+	if elapsed := time.Since(killedAt); elapsed < time.Second {
+		t.Fatalf("first crash restart time=%s, before the 1s backoff", elapsed)
+	}
+	if second.Failures != 1 {
+		t.Fatalf("restart after one crash recorded failures=%d, want 1: %+v", second.Failures, second)
 	}
 	// Remove only proven-dead PID evidence. Stopping the parent must still work
 	// with a missing PID while it is backing off.
@@ -400,7 +415,7 @@ func TestBuiltinSupervisorRealProcessLifecycle(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	breakerCtx, breakerCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	breakerCtx, breakerCancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer breakerCancel()
 	breaker := exec.CommandContext(breakerCtx, bin, "supervise")
 	breaker.Env = env
