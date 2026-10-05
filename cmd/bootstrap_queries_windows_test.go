@@ -116,12 +116,21 @@ func bootstrapInspectInstaller(t *testing.T, ctx context.Context, path string, e
 	}
 }
 
-func bootstrapSetQueryProcess(t *testing.T, exe string) {
+// bootstrapSetQueryProcess runs each scheduler query as a real test child and
+// reports each query's error in order, so a cancellation test can tell a query
+// ended by its caller from one ended by its own managerQueryTimeout.
+func bootstrapSetQueryProcess(t *testing.T, exe string) <-chan error {
+	queries := make(chan error, 16)
 	windowsSchedulerFn = func(managerCtx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
 		if op != "query" {
 			t.Fatalf("unexpected manager mutation: %s", op)
 		}
 		_, err := runBoundedManagerCommandContext(managerCtx, exe, managerQueryTimeout, "-test.run=^TestManagerCallerContextHelper$")
+		select {
+		case queries <- err:
+		default:
+		}
 		return windowsSchedulerStatus{}, err
 	}
+	return queries
 }

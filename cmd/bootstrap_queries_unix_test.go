@@ -115,9 +115,17 @@ func bootstrapObserveQueries(t *testing.T, observe func(context.Context)) {
 	}
 }
 
-func bootstrapSetQueryProcess(t *testing.T, exe string) {
+// bootstrapSetQueryProcess runs each manager query as a real test child and
+// reports each query's error in order, so a cancellation test can tell a query
+// ended by its caller from one ended by its own managerQueryTimeout.
+func bootstrapSetQueryProcess(t *testing.T, exe string) <-chan error {
+	queries := make(chan error, 16)
 	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		_, err := boundedManagerOutput(ctx, exe, "-test.run=^TestManagerCallerContextHelper$")
+		select {
+		case queries <- err:
+		default:
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -126,4 +134,5 @@ func bootstrapSetQueryProcess(t *testing.T, exe string) {
 		}
 		return []byte("Could not find service\n"), errors.New("not found")
 	}
+	return queries
 }

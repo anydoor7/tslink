@@ -25,6 +25,7 @@ import (
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/server"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
@@ -110,6 +111,17 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 				status, body, err := scopedHTTPRequest(t, h, "tags_set", `{"service":"photos","tag":"tag:updated"}`)
 				response <- stringMustJSON(map[string]any{"status": status, "body": body, "transport_error": err != nil})
 			}()
+			// entered and locked are closed once and response is buffered, so
+			// these polls never consume a phase signal.
+			closed := func(ch <-chan struct{}) bool {
+				select {
+				case <-ch:
+					return true
+				default:
+					return false
+				}
+			}
+			testwait.Until(t, "request reached the registry writer or ended", func() bool { return closed(entered) || len(response) != 0 })
 			select {
 			case <-entered:
 			case body := <-response:
@@ -118,6 +130,7 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 			if err := filelock.Unlock(lock); err != nil {
 				t.Fatal(err)
 			}
+			testwait.Until(t, "request reached the locked mutation or ended", func() bool { return closed(locked) || len(response) != 0 })
 			select {
 			case <-locked:
 			case body := <-response:
@@ -134,8 +147,8 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 				policyClock.Store(expiry.UnixNano())
 			}
 			unblock()
-			<-completed
-			body := <-response
+			testwait.Recv(t, completed, "tags_set action completed")
+			body := testwait.Recv(t, response, "HTTP response returned")
 			t.Logf("HTTP result: %s", body)
 			if !strings.Contains(body, `"status":200`) || !strings.Contains(body, `"transport_error":false`) {
 				t.Fatalf("RPC transport failed: %s", body)
@@ -360,57 +373,69 @@ func TestMCPExpiryAfterRealAuditWait(t *testing.T) {
 	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
 	}
-	a := defaultMCPActions(sharePaths{Registry: path}, io.Discard)
-	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	expiry := now.Add(time.Hour)
-	var policyClock atomic.Int64
-	policyClock.Store(now.UnixNano())
-	a.nowFn = func() time.Time { return time.Unix(0, policyClock.Load()) }
-	s := mcpscope.Session{Who: "operator", Scope: testRoleScope("app-operator"), ExpiresAt: &expiry}
-	a.session = &s
-	j := mcpaudit.Journal{Path: mcpAuditPath(path)}
-	lock, err := os.OpenFile(j.Path+".lock", os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lock.Close()
-	if err := filelock.Lock(lock); err != nil {
-		t.Fatal(err)
-	}
-	defer filelock.Unlock(lock)
-	entered := make(chan struct{})
-	first := true
-	a.audit = func(ctx context.Context, e mcpaudit.Entry) error {
-		if first {
-			first = false
-			close(entered)
+	// Virtual time: Journal.Record polls the real OS lock on 10ms timers under
+	// a 2s budget. In the bubble the fixture's hold cannot exhaust that budget
+	// on a slow runner, and the sleep below always ends with Record parked in
+	// its lock poll.
+	synctest.Test(t, func(t *testing.T) {
+		a := defaultMCPActions(sharePaths{Registry: path}, io.Discard)
+		now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+		expiry := now.Add(time.Hour)
+		var policyClock atomic.Int64
+		policyClock.Store(now.UnixNano())
+		a.nowFn = func() time.Time { return time.Unix(0, policyClock.Load()) }
+		s := mcpscope.Session{Who: "operator", Scope: testRoleScope("app-operator"), ExpiresAt: &expiry}
+		a.session = &s
+		j := mcpaudit.Journal{Path: mcpAuditPath(path)}
+		lock, err := os.OpenFile(j.Path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return j.Record(ctx, e)
-	}
-	result := make(chan string, 1)
-	go func() {
-		r, err := callMCPTool(context.Background(), a, "app_restart", json.RawMessage(`{"app":"photos"}`))
-		result <- mcpResultCode(r, err)
-	}()
-	<-entered
-	// While Record is blocked on the OS lock, advance the injected policy
-	// clock; releasing the lock synchronizes the subsequent decision.
-	time.Sleep(30 * time.Millisecond)
-	policyClock.Store(expiry.UnixNano())
-	if err := filelock.Unlock(lock); err != nil {
-		t.Fatal(err)
-	}
-	if code := <-result; code != "mcp_scope_denied" {
-		t.Fatalf("post-audit code=%s", code)
-	}
-	reg, err := registry.Load(path)
-	if err != nil || reg.Services[0].RestartGeneration != 0 {
-		t.Fatalf("registry=%v error=%v", reg, err)
-	}
-	entries, err := j.Read()
-	if err != nil || len(entries) != 2 || entries[1].Result != "denied" {
-		t.Fatalf("receipts=%v error=%v", entries, err)
-	}
+		defer lock.Close()
+		if err := filelock.Lock(lock); err != nil {
+			t.Fatal(err)
+		}
+		defer filelock.Unlock(lock)
+		entered := make(chan struct{})
+		first := true
+		a.audit = func(ctx context.Context, e mcpaudit.Entry) error {
+			if first {
+				first = false
+				close(entered)
+			}
+			return j.Record(ctx, e)
+		}
+		result := make(chan string, 1)
+		go func() {
+			r, err := callMCPTool(context.Background(), a, "app_restart", json.RawMessage(`{"app":"photos"}`))
+			result <- mcpResultCode(r, err)
+		}()
+		<-entered
+		// While Record is blocked on the OS lock, advance the injected policy
+		// clock; releasing the lock synchronizes the subsequent decision.
+		time.Sleep(30 * time.Millisecond)
+		synctest.Wait()
+		select {
+		case code := <-result:
+			t.Fatalf("app_restart returned while the audit lock was held: %s", code)
+		default:
+		}
+		policyClock.Store(expiry.UnixNano())
+		if err := filelock.Unlock(lock); err != nil {
+			t.Fatal(err)
+		}
+		if code := <-result; code != "mcp_scope_denied" {
+			t.Fatalf("post-audit code=%s", code)
+		}
+		reg, err := registry.Load(path)
+		if err != nil || reg.Services[0].RestartGeneration != 0 {
+			t.Fatalf("registry=%v error=%v", reg, err)
+		}
+		entries, err := j.Read()
+		if err != nil || len(entries) != 2 || entries[1].Result != "denied" {
+			t.Fatalf("receipts=%v error=%v", entries, err)
+		}
+	})
 }
 
 func TestMCPPersonCreationHintAndUnknownRevoke(t *testing.T) {
@@ -763,11 +788,7 @@ func TestMCPShareCompensationRetainsBindingDeadline(t *testing.T) {
 				r, err := callMCPTool(ctx, a, "share", json.RawMessage(`{"target":"3001"}`))
 				done <- mcpResultCode(r, err)
 			}()
-			select {
-			case <-started:
-			case <-time.After(2 * time.Second):
-				t.Fatal("share did not reach startup")
-			}
+			testwait.Recv(t, started, "share reached daemon startup")
 			lock, err := os.OpenFile(paths.Registry+".lock", os.O_RDWR, 0600)
 			if err != nil {
 				t.Fatal(err)
@@ -781,16 +802,11 @@ func TestMCPShareCompensationRetainsBindingDeadline(t *testing.T) {
 				expired.Store(true)
 			}
 			cancel()
-			<-returned
+			testwait.Recv(t, returned, "daemon startup returned after cancellation")
 			if err := filelock.Unlock(lock); err != nil {
 				t.Fatal(err)
 			}
-			var code string
-			select {
-			case code = <-done:
-			case <-time.After(2 * time.Second):
-				t.Fatal("share compensation did not complete")
-			}
+			code := testwait.Recv(t, done, "share compensation completed")
 			wantCode := "internal_error"
 			if state == "expired" {
 				wantCode = "mcp_scope_denied"
