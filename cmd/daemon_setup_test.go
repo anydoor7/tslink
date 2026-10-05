@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -24,6 +25,9 @@ import (
 	"github.com/anydoor7/tslink/internal/testenv"
 )
 
+// isolatedBootstrapEpoch is far from wall time, so no real clock can pass for it.
+var isolatedBootstrapEpoch = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+
 func isolateBootstrap(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -32,15 +36,26 @@ func isolateBootstrap(t *testing.T) string {
 	oldRunning, oldReadPID := isRunningFn, readPIDFn
 	oldEnsure, oldInstall, oldDetect, oldOutput := ensureDaemonFn, installDaemonFn, detectSupervisionFn, managerOutputFn
 	oldTimeout, oldInterval, oldSettle, oldEvidence := bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout
+	oldNow := bootstrapNowFn
 	t.Cleanup(func() {
 		isRunningFn, readPIDFn = oldRunning, oldReadPID
 		ensureDaemonFn, installDaemonFn, detectSupervisionFn, managerOutputFn = oldEnsure, oldInstall, oldDetect, oldOutput
 		bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout = oldTimeout, oldInterval, oldSettle, oldEvidence
+		bootstrapNowFn = oldNow
 	})
 	isRunningFn = func(string) bool { return false }
 	readPIDFn = func(string) (int, error) { return 4242, nil }
 	ensureDaemonFn = ensureDaemon
 	bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout = 20*time.Millisecond, time.Millisecond, 2*time.Millisecond, 20*time.Millisecond
+	// waitStableDaemon measures the 2ms settle window and the 20ms deadline on
+	// bootstrapNowFn. Advance it 1ms per reading, so both decisions follow the
+	// samples taken (at least two, spanning the window) and never how long a
+	// loaded runner paused between them. Tests that pin the window in virtual
+	// time install their own clock after this.
+	var readings atomic.Int64
+	bootstrapNowFn = func() time.Time {
+		return isolatedBootstrapEpoch.Add(time.Duration(readings.Add(1)) * time.Millisecond)
+	}
 	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "systemctl" {
 			return []byte("LoadState=not-found\n"), nil
