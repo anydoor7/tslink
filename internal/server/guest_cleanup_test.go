@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func cleanupGate(f *guestFixture) *guestGate { return f.s.nodes["photos"].handlerCloser.(*guestGate) }
@@ -245,13 +246,13 @@ func TestGuestCloseDrainsFlights(t *testing.T) {
 		t.Fatal("live flight control", len(timers))
 	}
 	for range 2 {
-		start := time.Now()
-		err := g.Close()
+		// The reader stays held until after both calls, so a Close that waited
+		// for the writer lock would never return; the guard names that hang.
+		closed := make(chan error, 1)
+		go func() { closed <- g.Close() }()
+		err := testwait.Recv(t, closed, "reader-held Close returned")
 		if err == nil || !strings.Contains(err.Error(), "guest counters: registry writer busy") {
 			t.Fatal("reader-held Close must report busy", err)
-		}
-		if time.Since(start) > time.Second {
-			t.Fatal("busy Close was not bounded")
 		}
 		if cleanupFlightCount(g) != 0 {
 			t.Fatal("Close retained flights")
@@ -267,23 +268,13 @@ func TestGuestCloseDrainsFlights(t *testing.T) {
 			t.Fatal("Close retained timer")
 		}
 	}
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
 	for range 3 {
-		select {
-		case <-stopped:
-		case <-deadline.C:
-			t.Fatal("Close did not cancel backend")
-		}
+		testwait.Recv(t, stopped, "Close canceled backend")
 	}
 	// Join each proxy's I/O before retrying, so its final authorization read
 	// cannot race the counter writer. Handler defers are still held above.
 	for range 3 {
-		select {
-		case <-proxyReturned:
-		case <-deadline.C:
-			t.Fatal("proxy I/O did not finish")
-		}
+		testwait.Recv(t, proxyReturned, "proxy I/O finished")
 	}
 	if err := filelock.Unlock(lock); err != nil {
 		t.Fatal(err)

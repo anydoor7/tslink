@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Revoke after the real proxy reaches its backend but before response headers.
@@ -80,11 +80,7 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 					done <- result{status, err}
 				}()
 				defer func() { unblock(); deliverResult(); <-joined }()
-				select {
-				case <-entered:
-				case <-time.After(5 * time.Second):
-					t.Fatal("request did not reach backend")
-				}
+				testwait.Recv(t, entered, "request reached backend")
 				want := http.StatusNoContent
 				if revoke {
 					releaseRead()
@@ -99,24 +95,16 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 				} else {
 					unblock()
 				}
-				select {
-				case got := <-done:
-					t.Logf("backend entered=%d revoke=%t status=%d error=%v", hits.Load(), revoke, got.status, got.err)
-					if got.err != nil || got.status != want {
-						t.Errorf("response status=%d error=%v; want %d", got.status, got.err, want)
-					}
-				case <-time.After(5 * time.Second):
-					t.Fatal("request did not finish")
+				got := testwait.Recv(t, done, "request finished")
+				t.Logf("backend entered=%d revoke=%t status=%d error=%v", hits.Load(), revoke, got.status, got.err)
+				if got.err != nil || got.status != want {
+					t.Errorf("response status=%d error=%v; want %d", got.status, got.err, want)
 				}
 				<-backendDone
 				<-appDone
 				waitGuestHandler(completed, "/blocked")
 				if revoke {
-					select {
-					case <-canceled:
-					case <-time.After(5 * time.Second):
-						t.Fatal("revocation did not cancel the real backend request")
-					}
+					testwait.Recv(t, canceled, "revocation canceled the real backend request")
 					response, _ := f.request("GET", "/after", "", cookies)
 					if response.StatusCode != http.StatusUnauthorized || hits.Load() != 1 {
 						t.Fatal("post-revoke request reached backend", response.StatusCode, hits.Load())

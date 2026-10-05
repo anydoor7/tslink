@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Exercise the same restore notification as the Unix special-file fixture,
@@ -49,11 +50,7 @@ func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepared()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("restore notification did not reach the real counter monitor")
-	}
+	testwait.Recv(t, entered, "restore notification reached the real counter monitor")
 	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -72,12 +69,7 @@ func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
 	owned := make(chan func(), 1)
 	go func() { owned <- f.holdCounterFlush() }()
 	release <- struct{}{}
-	var unlock func()
-	select {
-	case unlock = <-owned:
-	case <-time.After(5 * time.Second):
-		t.Fatal("fixture did not join released restore flush")
-	}
+	unlock := testwait.Recv(t, owned, "fixture joined released restore flush")
 	defer unlock()
 	if ok, err := filelock.TryLock(lock); err != nil || ok {
 		t.Fatalf("fixture ownership: writer acquired=%t err=%v", ok, err)
@@ -133,11 +125,7 @@ func TestGuestHealthyRequestFlushOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepared()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("real monitor flush missing")
-	}
+	testwait.Recv(t, entered, "real monitor flush entered")
 	// The raw control reproduces the healthy session's 503, not a latency
 	// failure or revocation. The same session recovers without a retry.
 	r, _ := f.request("GET", "/control", "", cookies)
@@ -152,13 +140,8 @@ func TestGuestHealthyRequestFlushOwnership(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 	release <- struct{}{}
-	select {
-	case r := <-result:
-		if r.StatusCode != 204 || f.hits.Load() != 1 {
-			t.Fatalf("original session: status=%d hits=%d", r.StatusCode, f.hits.Load())
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("healthy request did not join released flush")
+	if r := testwait.Recv(t, result, "healthy request joined released flush"); r.StatusCode != 204 || f.hits.Load() != 1 {
+		t.Fatalf("original session: status=%d hits=%d", r.StatusCode, f.hits.Load())
 	}
 	// A subsequent real mutation must succeed; helper ownership cannot leak
 	// into revoke. Its denial still uses the unmodified raw request path.
@@ -333,7 +316,7 @@ func TestGuestMonitorFlushOwnershipAndSessionRecovery(t *testing.T) {
 		}
 		t.Log("owner=monitor-counter-flush shared-lock=busy reason=unavailable status=503 backend-hits=1 virtual-wait=100ms")
 		owned := make(chan func(), 1)
-		go func() { owned <- (&guestFixture{t: t, path: path}).holdCounterFlush() }()
+		go func() { owned <- (&guestFixture{t: t, path: path, holdBudget: 5 * time.Second}).holdCounterFlush() }()
 		synctest.Wait()
 		select {
 		case unlock := <-owned:

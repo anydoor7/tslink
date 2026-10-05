@@ -19,6 +19,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/coder/websocket"
 )
 
@@ -272,7 +273,7 @@ func TestGuestStreams(t *testing.T) {
 						r.AddCookie(c)
 					}
 					header.Set("Cookie", r.Header.Get("Cookie"))
-					ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+					ctx, cancel := context.WithTimeout(t.Context(), testwait.Budget(t))
 					defer cancel()
 					c, _, e := websocket.Dial(ctx, strings.Replace(f.base, "https:", "wss:", 1)+"/socket", &websocket.DialOptions{HTTPClient: f.client, HTTPHeader: header})
 					if e != nil {
@@ -292,9 +293,20 @@ func TestGuestStreams(t *testing.T) {
 						continued = e == nil && string(msg) == "after"
 					}
 				}
-				// Stream authorization has finished latching expiry before returning
-				// its final read. Join that work before the read-only denial check.
+				// Join stream authorization reads before the read-only denial check.
 				cleanupGate(f).stateReads.Wait()
+				if end == "expiry" {
+					// The stream latches expiry only opportunistically: its writer
+					// try-lock fails closed against any concurrent reader, such as
+					// the monitor's grant poll, and nothing retries it once the
+					// flight ends. The read-only window below excludes writers, so
+					// an unlatched grant would make /next 503 by construction.
+					// Commit the latch through the monitor's own reconciliation.
+					testwait.Until(t, "guest expiry latch committed", func() bool {
+						_, err := registry.ReadGuestGrants(f.path, f.svc.Name, accessTestTime.Add(2*time.Hour))
+						return err == nil
+					})
+				}
 				defer f.holdCounterFlush()()
 				response, _ := f.request("GET", "/next", "", cookies)
 				next := response.StatusCode

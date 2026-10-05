@@ -26,6 +26,7 @@ import (
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/ipn"
 )
 
@@ -44,11 +45,14 @@ type guestFixture struct {
 	hits                   atomic.Int64
 	received               chan *http.Request
 	logPath                string
+	// holdBudget bounds holdCounterFlush. It is computed outside any synctest
+	// bubble, where t.Deadline panics; bubble fixtures set a virtual duration.
+	holdBudget time.Duration
 }
 
 func newGuestFixture(t *testing.T, pin string, h2, public bool) *guestFixture {
 	t.Helper()
-	f := &guestFixture{t: t, public: public, received: make(chan *http.Request, 1000)}
+	f := &guestFixture{t: t, public: public, received: make(chan *http.Request, 1000), holdBudget: testwait.Budget(t)}
 	f.now.Store(accessTestTime.UnixNano())
 	clock := func() time.Time { return time.Unix(0, f.now.Load()).UTC() }
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +95,7 @@ func newGuestFixture(t *testing.T, pin string, h2, public bool) *guestFixture {
 	} else {
 		f.tlsConfig.NextProtos = []string{"http/1.1"}
 	}
-	f.client = &http.Client{Transport: &http.Transport{TLSClientConfig: cert.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), ForceAttemptHTTP2: h2}, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	f.client = &http.Client{Transport: &http.Transport{TLSClientConfig: cert.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), ForceAttemptHTTP2: h2}, Timeout: testwait.Budget(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	t.Cleanup(f.client.CloseIdleConnections)
 	f.fake = &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, whoIsUser("alice", "laptop"), nil), status: funnelEnabledStatus("app.tailnet.ts.net.")}}
 	originalNew, originalNow := newTSNetServerFn, serverNowFn
@@ -208,7 +212,9 @@ func (f *guestFixture) holdCounterFlush() func() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	deadline := time.After(5 * time.Second)
+	// Also called inside synctest bubbles and from helper goroutines, where
+	// testwait.Until is unavailable; the budget alone bounds a hung writer.
+	deadline := time.After(f.holdBudget)
 	for {
 		acquired, err := filelock.TryReadLock(lock)
 		if err != nil {
@@ -585,10 +591,12 @@ func TestGuestWriterContentionDeniesPromptly(t *testing.T) {
 	if e = filelock.Lock(lock); e != nil {
 		t.Fatal(e)
 	}
-	start := time.Now()
+	// The writer stays held across the request, so a reader that waited for
+	// it would hang here. The 100ms reader bound itself is pinned in virtual
+	// time by TestGuestReadFailureVirtualBoundAndSessionRecovery/held-writer.
 	r, _ := f.request("GET", "/", "", cookies)
-	if r.StatusCode != 503 || time.Since(start) > time.Second || f.hits.Load() != 0 {
-		t.Fatal("registry writer stalled or fail-open")
+	if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || f.hits.Load() != 0 {
+		t.Fatal("registry writer stalled or fail-open", r.StatusCode)
 	}
 	if e = filelock.Unlock(lock); e != nil {
 		t.Fatal(e)
@@ -645,10 +653,11 @@ func TestGuestUnauthenticatedPartialUploadLanding(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer c.Close()
-	if e = c.SetDeadline(time.Now().Add(2 * time.Second)); e != nil {
+	if e = c.SetDeadline(time.Now().Add(testwait.Budget(t))); e != nil {
 		t.Fatal(e)
 	}
-	start := time.Now()
+	// No body byte is ever sent, so a landing that waited for the declared
+	// 32 MiB would never respond; that hang, not elapsed time, is the failure.
 	if _, e = fmt.Fprintf(c, "POST / HTTP/1.1\r\nHost: %s\r\nContent-Length: 33554433\r\n\r\n", addr); e != nil {
 		t.Fatal(e)
 	}
@@ -658,7 +667,7 @@ func TestGuestUnauthenticatedPartialUploadLanding(t *testing.T) {
 	}
 	defer r.Body.Close()
 	raw, e := io.ReadAll(r.Body)
-	if e != nil || r.StatusCode != 401 || !strings.Contains(string(raw), "Reopen the original link") || time.Since(start) > time.Second || f.hits.Load() != 0 {
+	if e != nil || r.StatusCode != 401 || !strings.Contains(string(raw), "Reopen the original link") || f.hits.Load() != 0 {
 		t.Fatal("unauthenticated upload exposed backend/limits or stalled", r.StatusCode, e)
 	}
 }
@@ -691,7 +700,7 @@ func guestMemoryListener(t *testing.T, f *guestFixture) *guestGate {
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(listener) }()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 		defer cancel()
 		if e := srv.Shutdown(ctx); e != nil {
 			t.Error(e)

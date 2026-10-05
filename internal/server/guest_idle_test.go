@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/coder/websocket"
 )
 
@@ -83,7 +84,7 @@ func TestGuestIdleStreamTermination(t *testing.T) {
 					for _, cookie := range cookies {
 						req.AddCookie(cookie)
 					}
-					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					ctx, cancel := context.WithTimeout(t.Context(), testwait.Budget(t))
 					defer cancel()
 					conn, _, err := websocket.Dial(ctx, strings.Replace(f.base, "https:", "wss:", 1)+"/socket", &websocket.DialOptions{HTTPClient: f.client, HTTPHeader: req.Header})
 					if err != nil {
@@ -114,12 +115,8 @@ func TestGuestIdleStreamTermination(t *testing.T) {
 				case "expiry":
 					f.now.Store(f.grant.ExpiresAt.UnixNano())
 				}
-				select {
-				case <-stopped:
-					t.Logf("idle stream terminated after %s in %s", end, time.Since(start))
-				case <-time.After(2 * time.Second):
-					t.Fatal("idle stream remained connected")
-				}
+				testwait.Recv(t, stopped, "idle stream terminated after "+end)
+				t.Logf("idle stream terminated after %s in %s", end, time.Since(start))
 			})
 		}
 	}
@@ -186,7 +183,7 @@ func TestGuestHijackedConnectionAfterHandlerReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	req, _ := http.NewRequest("GET", base+"/socket", nil)
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "test")
@@ -212,9 +209,5 @@ func TestGuestHijackedConnectionAfterHandlerReturns(t *testing.T) {
 	if _, err = registry.RevokeGuest(f.path, f.grant.ID, accessTestTime); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-completed:
-	case <-time.After(time.Second):
-		t.Fatal("returned handler's connection outlived revoke")
-	}
+	testwait.Recv(t, completed, "returned handler's connection closed on revoke")
 }
