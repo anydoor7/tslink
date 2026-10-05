@@ -266,9 +266,10 @@ func TestScopedFsnotifyPatternSelectsOnlyOwnedTests(t *testing.T) {
 	}
 }
 
-// goListFiles maps each main-module package to the Go, test and external
-// test files that `go list` selects for goos.
-func goListFiles(t *testing.T, root, goos string) map[string]map[string]bool {
+// goListFiles maps each main-module package to the files that `go list`
+// selects for goos: production GoFiles only, or also test and external test
+// files when withTests is set.
+func goListFiles(t *testing.T, root, goos string, withTests bool) map[string]map[string]bool {
 	t.Helper()
 	cmd := exec.Command("go", "list", "-json=ImportPath,GoFiles,TestGoFiles,XTestGoFiles", "./...")
 	cmd.Dir = root
@@ -288,7 +289,11 @@ func goListFiles(t *testing.T, root, goos string) map[string]map[string]bool {
 			t.Fatalf("decode GOOS=%s go list: %v", goos, err)
 		}
 		files := map[string]bool{}
-		for _, list := range [][]string{pkg.GoFiles, pkg.TestGoFiles, pkg.XTestGoFiles} {
+		lists := [][]string{pkg.GoFiles}
+		if withTests {
+			lists = append(lists, pkg.TestGoFiles, pkg.XTestGoFiles)
+		}
+		for _, list := range lists {
 			for _, name := range list {
 				files[name] = true
 			}
@@ -301,32 +306,44 @@ func goListFiles(t *testing.T, root, goos string) map[string]map[string]bool {
 // TestWindowsRaceSelectsEveryWindowsSpecificPackage executes the workflow's
 // own Windows race block with a stub `go`, fed by the real `go list` output
 // for GOOS=windows. The expected set is computed here from `go list -json`,
-// independently of the block's template and awk filter.
+// independently of the block's template and awk filter. The race detector
+// finds races in production code, so the set is every package with
+// Windows-specific production code; Windows-only tests of other packages
+// still run in the plain suite on Windows.
 func TestWindowsRaceSelectsEveryWindowsSpecificPackage(t *testing.T) {
 	_, steps := nativeJob(t)
 	script := namedStep(t, steps, windowsRaceStep).Run
 	root := repoRoot(t)
 
-	windows := goListFiles(t, root, "windows")
+	windows := goListFiles(t, root, "windows", false)
 	want := map[string]bool{}
 	for pkg, files := range windows {
 		for name := range files {
-			if strings.HasSuffix(name, "_windows.go") || strings.HasSuffix(name, "_windows_test.go") {
+			if strings.HasSuffix(name, "_windows.go") {
 				want[pkg] = true
 			}
 		}
 	}
-	if !want["github.com/anydoor7/tslink/internal/daemon"] || !want["github.com/anydoor7/tslink/internal/server"] {
+	if !want["github.com/anydoor7/tslink/internal/daemon"] {
 		t.Fatalf("expected Windows packages are missing from %v; the listing likely broke", want)
+	}
+	// Control for the production-only rule: internal/server has a Windows-only
+	// test file but no Windows-specific production code.
+	const testOnly = "github.com/anydoor7/tslink/internal/server"
+	if want[testOnly] {
+		t.Fatalf("%s gained Windows-specific production code; update this control", testOnly)
+	}
+	if _, ok := windows[testOnly]; !ok || !goListFiles(t, root, "windows", true)[testOnly]["fileserver_root_replacement_windows_test.go"] {
+		t.Fatalf("%s or its Windows-only test file is missing from the listing; the control proves nothing", testOnly)
 	}
 	// The step selects by file name. A file built only for Windows through a
 	// build constraint alone would escape it unless its package also has a
 	// suffixed file.
-	linux, darwin := goListFiles(t, root, "linux"), goListFiles(t, root, "darwin")
+	linux, darwin := goListFiles(t, root, "linux", false), goListFiles(t, root, "darwin", false)
 	for pkg, files := range windows {
 		for name := range files {
 			if !linux[pkg][name] && !darwin[pkg][name] && !want[pkg] {
-				t.Errorf("%s builds %s only on Windows, but the package has no _windows.go or _windows_test.go file, so Windows race skips it", pkg, name)
+				t.Errorf("%s builds %s only on Windows, but the package has no _windows.go file, so Windows race skips it", pkg, name)
 			}
 		}
 	}
@@ -403,7 +420,7 @@ exit 81
 	// An empty selection must fail rather than pass a race step that tested
 	// nothing. This run also records the block's exact go list arguments.
 	out, code := execute(t, "", "0", "0")
-	if code == 0 || !strings.Contains(out, "no package has a _windows.go or _windows_test.go source") {
+	if code == 0 || !strings.Contains(out, "no package has a _windows.go production source") {
 		t.Fatalf("empty selection: exit %d, want the explicit failure\n%s", code, out)
 	}
 	noTest(t)
@@ -437,7 +454,7 @@ exit 81
 			}
 			got[pkg] = true
 			if !want[pkg] {
-				t.Errorf("selected %s, which has no Windows-specific file", pkg)
+				t.Errorf("selected %s, which has no Windows-specific production file", pkg)
 			}
 		}
 		for pkg := range want {

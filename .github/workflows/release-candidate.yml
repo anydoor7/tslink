@@ -130,8 +130,8 @@ jobs:
       # (measured: about 1.8% per execution, no data race reports), so each
       # property runs only where it can differ. Every OS runs the suite once;
       # race covers the whole module on macOS, comes from Coverage on Ubuntu
-      # and covers packages with Windows-specific sources on Windows; the
-      # shuffle seeds run on Ubuntu. Scoped fsnotify runs TSLink's own
+      # and covers packages with Windows-specific production code on Windows;
+      # the shuffle seeds run on Ubuntu. Scoped fsnotify runs TSLink's own
       # regressions; its upstream suite waits on fixed 500ms sleeps and is
       # run by hand on update. TestNativeJobRunsEachPropertyWhereItCanDiffer
       # pins this shape.
@@ -145,10 +145,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          listing="$(go list -f '{{.ImportPath}}{{range .GoFiles}} {{.}}{{end}}{{range .TestGoFiles}} {{.}}{{end}}{{range .XTestGoFiles}} {{.}}{{end}}' ./...)"
-          selected="$(printf '%s\n' "${listing}" | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /_windows(_test)?\.go$/) { print $1; next } }')"
+          listing="$(go list -f '{{.ImportPath}}{{range .GoFiles}} {{.}}{{end}}' ./...)"
+          selected="$(printf '%s\n' "${listing}" | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /_windows\.go$/) { print $1; next } }')"
           if [ -z "${selected}" ]; then
-            echo "::error::no package has a _windows.go or _windows_test.go source; Windows race would test nothing"
+            echo "::error::no package has a _windows.go production source; Windows race would test nothing"
             exit 1
           fi
           packages=()

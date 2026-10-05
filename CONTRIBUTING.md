@@ -152,7 +152,7 @@ value or a config-dir override proves there was no side effect.
 | Draft | Classification and aggregate only; heavy checks wait until ready for review. |
 | Docs | Classification and aggregate only; no Go jobs. |
 | Go | Proposed CI policy tests, Ubuntu native build/vet/test, coverage under `-race`, recorded shuffle seeds and scoped fsnotify regressions, gofmt/tidy, staticcheck for three OSes, all six cross-builds and target vulnerability scans, Ubuntu compiled contracts, artifact verification, GoReleaser and manifest checks. |
-| Full | All Go-tier checks plus macOS/Windows native (whole-module race on macOS, race on Windows-specific packages on Windows) and compiled contracts, strict Darwin manifest check and three-platform manifest comparison. |
+| Full | All Go-tier checks plus macOS/Windows native (whole-module race on macOS, race on packages with Windows-specific production code on Windows) and compiled contracts, strict Darwin manifest check and three-platform manifest comparison. |
 
 Docs permits only root or `docs/` Markdown and images under `docs/assets/` that no Go source references. In merge-base, base and head, every `*.go` file (including tests and Darwin-only files) is scanned as raw Git bytes. A normalized path, basename, or case-sensitive stem substring selects full. The stem is the basename up to the first `.` or `_`: `README` for `README.ja.md`, `platforms` for `platforms.md`. Comments and partial-word matches count. Any change to a `*_zh.md` path selects full so the English-only documentation contract runs. This protects documentation contracts on every platform; Go-referenced documentation changes, including README edits, now run full. Correctness takes precedence over Actions-minute savings. Release metadata is read as raw Git bytes from every `.goreleaser*` file and `.github/workflows/release-candidate.yml`. A docs path (after removing leading `./`) or basename appearing anywhere in that text selects full, including comments. Any line with a glob character (`*`, `?`, `[`) and `docs`, `.md`, or a `files:`, `src:` or `contents:` key excludes every docs candidate. Embedded assets, executable files, `.gitattributes` and runtime/test fixtures cannot qualify as docs. Any symlink anywhere in the merge-base, base or head tree selects full. Embed directives are read as Git data with leading `./` normalized; uncertain inspection selects full. Platform/gate paths take precedence: OS-suffixed or build-tagged Go files, install/supervision/daemon code, files in an `internal/` package with OS-specific files, `go.mod`, `go.sum`, `.github/**` and `tools/**` select full. Deleted files are inspected too. Unknown paths or unavailable evidence select full. Add `ci:full` to force full on a ready PR; drafts still defer heavy checks. Draft transitions and label changes rerun classification. The tier job summary explains the decision.
 
@@ -168,7 +168,7 @@ The native job runs each test property only on the runners where it can differ, 
 |---|---|---|---|
 | `go test -count=1 ./...` | yes | yes | yes |
 | `-race` on the whole module | through coverage | yes | no |
-| `-race` on every package with a `_windows.go` or `_windows_test.go` file, listed at run time | - | - | yes |
+| `-race` on every package with `_windows.go` production code, listed at run time (the race detector finds races in production code; Windows-only tests still run in the plain suite) | - | - | yes |
 | Recorded shuffle seeds (`TSLINK_SHUFFLE_SEEDS`) | yes | no | no |
 | Coverage with `-race` and the 85% floor | yes | - | - |
 | Scoped fsnotify, normal and `-race`: TSLink's own regression tests only | yes | yes | yes |
@@ -177,8 +177,8 @@ The native job runs each test property only on the runners where it can differ, 
 
 ```bash
 # Packages the Windows race step selects (works on any host)
-GOOS=windows go list -f '{{.ImportPath}}{{range .GoFiles}} {{.}}{{end}}{{range .TestGoFiles}} {{.}}{{end}}{{range .XTestGoFiles}} {{.}}{{end}}' ./... \
-  | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /_windows(_test)?\.go$/) { print $1; next } }'
+GOOS=windows go list -f '{{.ImportPath}}{{range .GoFiles}} {{.}}{{end}}' ./... \
+  | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /_windows\.go$/) { print $1; next } }'
 
 # Scoped fsnotify regressions, as the gate runs them
 pattern="$(sed -n "s/^  TSLINK_FSNOTIFY_OWNED_TESTS: '\(.*\)'$/\1/p" .github/workflows/release-candidate.yml)"
