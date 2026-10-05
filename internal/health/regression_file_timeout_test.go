@@ -5,6 +5,7 @@ package health
 import (
 	"context"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -38,13 +39,13 @@ func TestReviewFileProbeTimeout(t *testing.T) {
 			t.Fatal("wrong FIFO rejection", code)
 		}
 		t.Log("rejected FIFO before blocking", code)
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Error("FIFO probe blocked before invalid-file rejection")
 		cancel()
 		select {
 		case code := <-result:
 			t.Log("returned on cancel", code)
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			// Join the blocked probe by opening its FIFO writer, then leave no worker.
 			fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
 			if err != nil {
@@ -84,7 +85,7 @@ func TestFileProbeFIFOReplacementBetweenStatAndOpen(t *testing.T) {
 		if got != "health_file_invalid" {
 			t.Fatal("replacement accepted", got)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		// Rescue a regressed blocking open so this test fails by assertion,
 		// rather than hanging until the package's test timeout.
 		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)

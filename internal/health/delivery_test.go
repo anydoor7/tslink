@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestNotifierCommandCancellation(t *testing.T) {
@@ -28,25 +30,10 @@ func TestNotifierCommandCancellation(t *testing.T) {
 		done <- Notify(ctx, NotifierConfig{Command: []string{os.Args[0], "-test.run=^TestNotifierCommandCancellation$"}}, Event{Kind: "app_down"})
 	}()
 	t.Cleanup(func() { cancel() })
-	deadline := time.After(5 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("notifier helper never started")
-		case <-time.After(time.Millisecond):
-		}
-	}
+	testwait.Until(t, "notifier helper started", func() bool { _, err := os.Stat(ready); return err == nil })
 	cancel()
-	select {
-	case err := <-done:
-		if err == nil || err.Error() != "alert_command_failed" {
-			t.Fatal("cancellation counted as success", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("canceled command did not return")
+	if err := testwait.Recv(t, done, "canceled command returned"); err == nil || err.Error() != "alert_command_failed" {
+		t.Fatal("cancellation counted as success", err)
 	}
 }
 
@@ -62,11 +49,7 @@ func TestDeliveryQueueBoundDedupAndShutdown(t *testing.T) {
 	r.StartDelivery(context.Background())
 	t.Cleanup(r.StopDelivery)
 	r.Commit(context.Background(), []Event{{Kind: "app_down", Service: "app"}}, now)
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no worker")
-	}
+	testwait.Recv(t, started, "delivery worker started the send")
 	// The in-flight delivery must not hold Commit or grow an unbounded queue.
 	for i := 1; i <= 17; i++ {
 		r.Commit(context.Background(), []Event{{Kind: "app_down", Service: "app"}}, now.Add(time.Duration(i)*5*time.Minute))
@@ -98,12 +81,7 @@ func TestDeliveryCompletionUsesEventIDAndPersists(t *testing.T) {
 	r.StartDelivery(context.Background())
 	t.Cleanup(r.StopDelivery)
 	r.Commit(context.Background(), []Event{{Kind: "app_down"}}, now)
-	select {
-	case result := <-r.DeliveryReady():
-		r.CompleteDelivery(result)
-	case <-time.After(5 * time.Second):
-		t.Fatal("no completion")
-	}
+	r.CompleteDelivery(testwait.Recv(t, r.DeliveryReady(), "delivery completion ready"))
 	if got := NewRecorder(r.Path, r.Config).State.Events[0].Delivery; got != "sent" {
 		t.Fatal(got)
 	}

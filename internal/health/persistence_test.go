@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestRecorderCoalescesDeliveryAndSkipsUnchangedWrites(t *testing.T) {
@@ -39,14 +41,7 @@ func TestRecorderCoalescesDeliveryAndSkipsUnchangedWrites(t *testing.T) {
 		r.Commit(context.Background(), []Event{{Kind: "app_down", Service: "app"}}, now.Add(time.Duration(i)*5*time.Minute))
 	}
 	close(release)
-	deadline := time.After(5 * time.Second)
-	for len(r.DeliveryReady()) != 17 {
-		select {
-		case <-deadline:
-			t.Fatal("missing delivery completions", len(r.DeliveryReady()))
-		case <-time.After(time.Millisecond):
-		}
-	}
+	testwait.Until(t, "all 17 delivery completions ready", func() bool { return len(r.DeliveryReady()) == 17 })
 	writes = 0
 	r.DrainDelivery()
 	if writes != 1 {
