@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -61,12 +62,18 @@ func TestAccessActiveInitFailureRecovery(t *testing.T) {
 	ready, done := make(chan struct{}), make(chan error, 1)
 	s.SetReadyFunc(func() error { close(ready); return nil })
 	go func() { done <- s.Run(ctx) }()
-	defer func() {
+	stop := sync.OnceFunc(func() {
 		cancel()
 		if err := <-done; err != nil {
 			t.Error(err)
 		}
-	}()
+		// Run has a bounded production shutdown, so returning from it does
+		// not by itself join persistence. The fixture owns the final drain.
+		if writer, ok := s.AccessLogWriter().(*accesslog.Lifecycle); ok {
+			<-writer.Done()
+		}
+	})
+	defer stop()
 	select {
 	case <-ready:
 	case <-time.After(3 * time.Second):
@@ -114,16 +121,10 @@ func TestAccessActiveInitFailureRecovery(t *testing.T) {
 			t.Fatal("recovery request failed")
 		}
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		r, err = accesslog.Query(dir, accesslog.Filter{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r.Summary.Count == 4 {
-			break
-		}
-		time.Sleep(time.Millisecond)
+	stop()
+	r, err = accesslog.Query(dir, accesslog.Filter{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if r.Summary.Count != 4 {
 		t.Fatalf("existing listener did not recover writer: %+v", r)
