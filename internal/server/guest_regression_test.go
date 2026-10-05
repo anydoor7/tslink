@@ -293,8 +293,13 @@ func TestGuestStreams(t *testing.T) {
 						continued = e == nil && string(msg) == "after"
 					}
 				}
-				// Join stream authorization reads before the read-only denial check.
-				cleanupGate(f).stateReads.Wait()
+				// Do not join the gate's stateReads here. The stream's copier
+				// goroutines can still start an authorization read after the
+				// invalidation above closed their connection, so a test-side
+				// Wait would race that Add from zero (only the gate's Close may
+				// Wait, after it stops new reads). The revocation is committed
+				// synchronously and the expiry latch is committed below; stream
+				// reads still in flight cannot change the denial checked next.
 				if end == "expiry" {
 					// The stream latches expiry only opportunistically: its writer
 					// try-lock fails closed against any concurrent reader, such as
