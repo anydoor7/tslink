@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"io"
 	"log/slog"
 	"net"
@@ -57,12 +58,12 @@ func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 	front.Start()
 	t.Cleanup(front.Close)
 
-	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), 5*time.Second)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), testwait.Budget(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(testwait.Budget(t))); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = fmt.Fprint(conn, "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
@@ -92,11 +93,7 @@ func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 		t.Fatalf("upgraded tunnel echoed %q (err %v), want PING", echo, err)
 	}
 	conn.Close()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("production chain did not return after the tunnel closed")
-	}
+	testwait.Recv(t, done, "production chain did not return after the tunnel closed")
 
 	if got := logs.attrMap(t, 0)["status"]; got != int64(http.StatusSwitchingProtocols) {
 		t.Fatalf("logged upgrade status = %v, want 101", got)

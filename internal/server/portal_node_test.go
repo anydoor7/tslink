@@ -18,6 +18,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -136,21 +137,13 @@ func TestPortalInteractiveEnrollmentAndCancellation(t *testing.T) {
 			s.syncPortal(context.Background(), &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner"})
 			run := s.portalRun
 			if cancelEnrollment {
-				select {
-				case <-entered:
-				case <-time.After(time.Second):
-					t.Fatal("portal enrollment never started")
-				}
+				testwait.Recv(t, entered, "portal enrollment never started")
 				s.closePortal()
 				if s.portalState.State != "disabled" || s.portalRetryPending.Load() {
 					t.Fatal("cancelled enrollment published a stale failure or retry")
 				}
 			} else {
-				select {
-				case <-run.done:
-				case <-time.After(time.Second):
-					t.Fatal("interactive enrollment did not finish")
-				}
+				testwait.Recv(t, run.done, "interactive enrollment did not finish")
 				if !fake.startCalled || fake.upCalled || s.portalState.URL != "https://home.tailnet.ts.net" {
 					t.Fatalf("interactive portal=%+v", s.portalState)
 				}

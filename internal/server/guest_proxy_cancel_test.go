@@ -89,7 +89,7 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 						t.Fatal(err)
 					}
 					releaseRead = f.holdCounterFlush()
-					<-transportCanceled
+					testwait.Recv(t, transportCanceled, "revocation canceled the proxy transport")
 					deliverResult()
 					want = http.StatusUnauthorized
 				} else {

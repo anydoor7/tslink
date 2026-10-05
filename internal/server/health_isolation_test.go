@@ -12,6 +12,7 @@ import (
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestHealthCyclePublishesOtherResultsAndCancelsWithStuckProbe(t *testing.T) {
@@ -37,26 +38,13 @@ func TestHealthCyclePublishesOtherResultsAndCancelsWithStuckProbe(t *testing.T) 
 		})
 	}()
 	t.Cleanup(func() { cancel(); close(release); <-done; <-exited })
-	deadline := time.After(5 * time.Second)
-	for {
+	testwait.Until(t, "completed fast probe published despite slow probe", func() bool {
 		s.mu.RLock()
-		state := s.healthStates["fast"].Health
-		s.mu.RUnlock()
-		if state.State == health.Healthy {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("completed fast probe hidden by slow probe")
-		case <-time.After(time.Millisecond):
-		}
-	}
+		defer s.mu.RUnlock()
+		return s.healthStates["fast"].Health.State == health.Healthy
+	})
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("monitor shutdown waits for uninterruptible I/O")
-	}
+	testwait.Recv(t, done, "monitor shutdown waits for uninterruptible I/O")
 }
 
 func TestBoundedHealthReadRetainsSlotAcrossTimeouts(t *testing.T) {

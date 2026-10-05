@@ -27,6 +27,7 @@ import (
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/local"
 )
 
@@ -301,11 +302,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				case <-time.After(bound):
 					t.Errorf("stop blocked for %s behind GetCertificate; shutdown context=%v", time.Since(start), ctx.Err())
 					unblock()
-					select {
-					case <-stopped:
-					case <-time.After(5 * time.Second):
-						t.Fatal("stop did not finish after provider release")
-					}
+					testwait.Recv(t, stopped, "stop did not finish after provider release")
 				}
 				select {
 				case err := <-connected:
@@ -806,11 +803,7 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 					case <-time.After(time.Until(deadline)):
 						_ = conn.Close()
 						_ = srv.Close()
-						select {
-						case <-closed:
-						case <-time.After(bound):
-							t.Fatal("connection-close join did not finish after forced transport shutdown")
-						}
+						testwait.Recv(t, closed, "connection-close join did not finish after forced transport shutdown")
 						t.Fatal("server did not dispose of the request body and close the connection before the hang guard")
 					}
 					if got := len(limited.sem); got != 0 {

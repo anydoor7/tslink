@@ -24,6 +24,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
@@ -122,7 +123,7 @@ func requestAccess(t *testing.T, url, method, body string) int {
 	req.Header.Set("Authorization", "Bearer header-token-secret")
 	req.Header.Set("Cookie", "session=cookie-secret")
 	req.Header.Set("User-Agent", "agent-header-secret")
-	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: testwait.Budget(t)}).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestAccessFunnelTLSIdentity(t *testing.T) {
 				req, _ := http.NewRequest("GET", "https://"+raw.Addr().String()+"/private?token=query-token-secret", nil)
 				req.Header.Set("Tailscale-Ingress-Target", "spoofed-target-secret")
 				req.Header.Set("X-TSLink-User", "spoofed-user-secret")
-				resp, err := (&http.Client{Transport: tr, Timeout: 3 * time.Second}).Do(req)
+				resp, err := (&http.Client{Transport: tr, Timeout: testwait.Budget(t)}).Do(req)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -301,11 +302,7 @@ func TestAccessFunnelTLSIdentity(t *testing.T) {
 				if resp.StatusCode != 204 || (resp.ProtoMajor == 2) != h2 || !<-priorSeen {
 					t.Fatalf("TLS/context protocol %s status %d", resp.Proto, resp.StatusCode)
 				}
-				select {
-				case <-completed:
-				case <-time.After(time.Second):
-					t.Fatal("access event did not enqueue")
-				}
+				testwait.Recv(t, completed, "access event did not enqueue")
 				e := oneAccess(t, dir, store)
 				wantLogin := "alice"
 				if public {
@@ -405,11 +402,11 @@ func TestAccessTCPRealListener(t *testing.T) {
 	}()
 	svc := registry.Service{Name: "db", Type: registry.TypeTCP, Target: backend.Addr().String()}
 	s, store, dir, url := setupAccessNode(t, svc, whoIsUser("alice", "laptop"), accesslog.Options{}, nil, nil)
-	c, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), time.Second)
+	c, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), testwait.Budget(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetDeadline(time.Now().Add(3 * time.Second))
+	c.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	c.Write([]byte("tcp-body-secret"))
 	c.(*net.TCPConn).CloseWrite()
 	out, err := io.ReadAll(c)
@@ -474,7 +471,7 @@ func TestAccessTCPRealConnectionCap(t *testing.T) {
 		<-acceptDone
 	})
 	for range tcpMaxActiveConnections {
-		c, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), time.Second)
+		c, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), testwait.Budget(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -482,16 +479,16 @@ func TestAccessTCPRealConnectionCap(t *testing.T) {
 		select {
 		case peer := <-accepted:
 			peers = append(peers, peer)
-		case <-time.After(3 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Fatal("allowed connection did not reach the backend")
 		}
 	}
-	refused, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), time.Second)
+	refused, err := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), testwait.Budget(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer refused.Close()
-	refused.SetReadDeadline(time.Now().Add(3 * time.Second))
+	refused.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 	var b [1]byte
 	if n, err := refused.Read(b[:]); n != 0 || err != io.EOF {
 		t.Fatalf("connection cap did not close the socket: %d %v", n, err)
@@ -529,10 +526,11 @@ func TestAccessServingWithSaturatedWriter(t *testing.T) {
 	})
 	<-entered
 	store.Record(accesslog.Event{App: "queued", Kind: "guest", Decision: "denied", Reason: "people"})
-	start := time.Now()
+	// The enrichment worker stays blocked until after the response, so a
+	// serving path that waited for the writer would never respond.
 	code := requestAccess(t, url+"/", "GET", "")
 	close(release)
-	if code != 200 || time.Since(start) > time.Second {
+	if code != 200 {
 		t.Fatalf("saturation slowed serving status %d", code)
 	}
 	drainAccess(t, store)
@@ -637,7 +635,7 @@ func TestAccessPathReloadFingerprintAndBodyFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.ContentLength = -1
-	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: testwait.Budget(t)}).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,24 +671,16 @@ func TestAccessTCPShutdownDrainsClose(t *testing.T) {
 	}()
 	svc := registry.Service{Name: "db", Type: registry.TypeTCP, Target: backend.Addr().String()}
 	s, store, dir, url := setupAccessNode(t, svc, whoIsUser("alice", "laptop"), accesslog.Options{}, nil, nil)
-	c, e := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), time.Second)
+	c, e := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), testwait.Budget(t))
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer c.Close()
 	c.Write([]byte("payload"))
-	select {
-	case <-received:
-	case <-time.After(3 * time.Second):
-		t.Fatal("backend did not receive payload")
-	}
+	testwait.Recv(t, received, "backend did not receive payload")
 	s.stopNodeLocked("db")
 	drainAccess(t, store)
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("backend did not close")
-	}
+	testwait.Recv(t, done, "backend did not close")
 	r, e := accesslog.Query(dir, accesslog.Filter{})
 	if e != nil || len(r.Events) != 2 || store.Health().Drops != 0 {
 		t.Fatalf("shutdown %+v %v %+v", r, e, store.Health())
@@ -717,11 +707,11 @@ func TestAccessUpgradeRealListener(t *testing.T) {
 	defer backend.Close()
 	svc := registry.Service{Name: "app", Type: registry.TypeProxy, Target: backend.URL}
 	_, store, dir, url := setupAccessNode(t, svc, whoIsUser("alice", "laptop"), accesslog.Options{}, nil, nil)
-	c, e := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), time.Second)
+	c, e := net.DialTimeout("tcp", strings.TrimPrefix(url, "http://"), testwait.Budget(t))
 	if e != nil {
 		t.Fatal(e)
 	}
-	c.SetDeadline(time.Now().Add(3 * time.Second))
+	c.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	io.WriteString(c, "GET /socket?token=query-token-secret HTTP/1.1\r\nHost: app\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
 	reader := bufio.NewReader(c)
 	resp, e := http.ReadResponse(reader, nil)
@@ -737,10 +727,7 @@ func TestAccessUpgradeRealListener(t *testing.T) {
 	}
 	c.Close()
 	// The reverse proxy completes once the upgraded connection closes.
-	deadline := time.Now().Add(3 * time.Second)
-	for store.Health().LastWrite == nil && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "upgrade access record written", func() bool { return store.Health().LastWrite != nil })
 	ev := oneAccess(t, dir, store)
 	if ev.Status != 101 || ev.BytesIn != int64(len(buf)) || ev.BytesOut <= int64(len(buf)) {
 		t.Fatalf("upgrade count %+v", ev)

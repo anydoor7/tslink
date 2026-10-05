@@ -21,6 +21,7 @@ import (
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -362,11 +363,7 @@ func restartRequestPortal(t *testing.T, f *portalFixture, p *registry.PortalConf
 	f.fake.ln = ln
 	f.addr = ln.Addr().String()
 	f.s.syncPortal(t.Context(), p)
-	select {
-	case <-f.s.portalRun.done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("restart stalled")
-	}
+	testwait.Recv(t, f.s.portalRun.done, "restart stalled")
 	if f.s.portalState.State != "running" {
 		t.Fatal(f.s.portalState)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // startEchoServer starts a TCP server that echoes back everything it receives.
@@ -92,11 +93,7 @@ func TestHandleTCPConn_Bidirectional(t *testing.T) {
 		t.Fatalf("got %q, want %q", buf, msg)
 	}
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("handleTCPConn did not return")
-	}
+	testwait.Recv(t, done, "handleTCPConn did not return")
 }
 
 func TestServeTCP_ClosedListener(t *testing.T) {
@@ -114,11 +111,7 @@ func TestServeTCP_ClosedListener(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("serveTCP did not return for closed listener")
-	}
+	testwait.Recv(t, done, "serveTCP did not return for closed listener")
 }
 
 func TestServeTCP_ForwardsToBackend(t *testing.T) {
@@ -173,11 +166,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 	if err := proxyLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("proxy listener Close() error = %v", err)
 	}
-	select {
-	case <-serveDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("serveTCP did not wait for its connection handler")
-	}
+	testwait.Recv(t, serveDone, "serveTCP did not wait for its connection handler")
 }
 
 func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
@@ -247,11 +236,7 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 		}
 	}
 
-	select {
-	case <-serveDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("serveTCP did not return after node stop")
-	}
+	testwait.Recv(t, serveDone, "serveTCP did not return after node stop")
 }
 
 func TestServeTCP_NonFatalAcceptError(t *testing.T) {
@@ -278,11 +263,7 @@ func TestServeTCP_NonFatalAcceptError(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("serveTCP did not return")
-	}
+	testwait.Recv(t, done, "serveTCP did not return")
 }
 
 // errorListener is a net.Listener that returns configurable errors from Accept.
@@ -396,11 +377,7 @@ func TestHandleTCPConn_UnreachableBackend(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("handleTCPConn should return quickly for unreachable backend")
-	}
+	testwait.Recv(t, done, "handleTCPConn should return quickly for unreachable backend")
 }
 
 func TestHandleTCPConn_DialsBackendWithTimeoutContext(t *testing.T) {
@@ -436,11 +413,7 @@ func TestHandleTCPConn_DialsBackendWithTimeoutContext(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("handleTCPConn did not return after dial error")
-	}
+	testwait.Recv(t, done, "handleTCPConn did not return after dial error")
 	if !seenDeadline {
 		t.Fatal("dial context was not observed")
 	}

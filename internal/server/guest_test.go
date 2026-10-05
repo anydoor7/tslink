@@ -95,7 +95,10 @@ func newGuestFixture(t *testing.T, pin string, h2, public bool) *guestFixture {
 	} else {
 		f.tlsConfig.NextProtos = []string{"http/1.1"}
 	}
-	f.client = &http.Client{Transport: &http.Transport{TLSClientConfig: cert.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), ForceAttemptHTTP2: h2}, Timeout: testwait.Budget(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// The client timeout is only a backstop for a hung synchronous request.
+	// It must outlast every testwait guard in the test, or it would end a
+	// stream the product failed to end and let that guard pass vacuously.
+	f.client = &http.Client{Transport: &http.Transport{TLSClientConfig: cert.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), ForceAttemptHTTP2: h2}, Timeout: 2 * testwait.Budget(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	t.Cleanup(f.client.CloseIdleConnections)
 	f.fake = &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, whoIsUser("alice", "laptop"), nil), status: funnelEnabledStatus("app.tailnet.ts.net.")}}
 	originalNew, originalNow := newTSNetServerFn, serverNowFn

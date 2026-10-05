@@ -22,6 +22,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -81,11 +82,7 @@ func newPortalFixture(t *testing.T) portalFixture {
 	}
 	s.syncPortal(context.Background(), portal)
 	run := s.portalRun
-	select {
-	case <-run.done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("portal startup stalled")
-	}
+	testwait.Recv(t, run.done, "portal startup stalled")
 	if s.portalState.State != "running" {
 		t.Fatalf("portal did not start: %+v", s.portalState)
 	}
