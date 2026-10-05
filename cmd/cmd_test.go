@@ -854,7 +854,7 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 
 	oldInspect := inspectStoredCredentialsFn
 	oldDelete := deleteStoredCredentialsFn
-	apiKey := "tskey-api-xxx"
+	apiKey := "tskey-api-<test-only-xxx>"
 	clientSecret := ""
 	deleted := false
 	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
@@ -976,7 +976,7 @@ func TestLogoutUserFailsClosedOnCredentialDeleteFailure(t *testing.T) {
 		deleteStoredCredentialsFn = oldDelete
 	})
 
-	apiKey := "tskey-api-xxx"
+	apiKey := "tskey-api-<test-only-xxx>"
 	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
 		return logoutCredentialStatus(apiKey != "", false), nil
 	}
@@ -1191,7 +1191,7 @@ func TestGetStatus_Running_CredentialStoredIsNotAuthenticated(t *testing.T) {
 
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return 42, nil }
-	getAPIKeyFn = func() (string, error) { return "tskey-api-xxx", nil }
+	getAPIKeyFn = func() (string, error) { return "tskey-api-<test-only-xxx>", nil }
 	hasClientSecretFn = func() bool { return false }
 
 	dir := t.TempDir()

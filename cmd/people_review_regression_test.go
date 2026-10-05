@@ -100,7 +100,7 @@ func reviewPeopleAPI(t *testing.T, paths sharePaths) *reviewInviteAPI {
 	}))
 	t.Cleanup(api.Close)
 	t.Setenv(tailapi.APIBaseURLEnv, api.URL)
-	t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-review")
+	t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-review>")
 	reviewRefreshProof(t, paths)
 	return a
 }

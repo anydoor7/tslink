@@ -72,7 +72,7 @@ func TestServeUserSuppliedAuthKeyDefaultFollowsCredentialOrder(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "authkey"), []byte("tskey-auth-USER-SUPPLIED"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := credentials.SetAPIKey("tskey-api-TEST-PLACEHOLDER"); err != nil {
+			if err := credentials.SetAPIKey("tskey-api-<test-only-TEST-PLACEHOLDER>"); err != nil {
 				t.Fatal(err)
 			}
 		}},

@@ -32,7 +32,7 @@ func readMetaFile(t *testing.T) string {
 }
 
 func TestFingerprintIsShortStableAndValueFree(t *testing.T) {
-	const value = "tskey-api-FAKE-fingerprint-input"
+	const value = "tskey-api-<test-only-FAKE-fingerprint-input>"
 	fp := Fingerprint(value)
 	if len(fp) != fingerprintHexLength {
 		t.Fatalf("Fingerprint() = %q, want %d hex chars", fp, fingerprintHexLength)
@@ -52,11 +52,11 @@ func TestFingerprintIsShortStableAndValueFree(t *testing.T) {
 }
 
 func TestNewSlotMetadataDefaultsAndSources(t *testing.T) {
-	apiMeta, err := NewSlotMetadata(SlotAPIKey, "tskey-api-FAKE", StoredOptions{Now: metaTestNow, Verified: true})
+	apiMeta, err := NewSlotMetadata(SlotAPIKey, "tskey-api-<test-only-FAKE>", StoredOptions{Now: metaTestNow, Verified: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if apiMeta.Kind != KindAPIAccessToken || apiMeta.Fingerprint != Fingerprint("tskey-api-FAKE") || !apiMeta.StoredAt.Equal(metaTestNow) {
+	if apiMeta.Kind != KindAPIAccessToken || apiMeta.Fingerprint != Fingerprint("tskey-api-<test-only-FAKE>") || !apiMeta.StoredAt.Equal(metaTestNow) {
 		t.Fatalf("api metadata = %+v", apiMeta)
 	}
 	if apiMeta.ExpiresAt == nil || !apiMeta.ExpiresAt.Equal(metaTestNow.Add(APIKeyAssumedMaxLifetime)) || apiMeta.ExpiresAtSource != ExpirySourceAssumedMax {
@@ -67,7 +67,7 @@ func TestNewSlotMetadataDefaultsAndSources(t *testing.T) {
 	}
 
 	explicit := metaTestNow.Add(30 * 24 * time.Hour)
-	userMeta, err := NewSlotMetadata(SlotAPIKey, "tskey-api-FAKE", StoredOptions{Now: metaTestNow, ExpiresAt: &explicit})
+	userMeta, err := NewSlotMetadata(SlotAPIKey, "tskey-api-<test-only-FAKE>", StoredOptions{Now: metaTestNow, ExpiresAt: &explicit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestNewSlotMetadataDefaultsAndSources(t *testing.T) {
 
 func TestMetadataRoundTripNeverStoresValue(t *testing.T) {
 	setup(t)
-	const value = "tskey-api-FAKE-roundtrip-value-9f3a"
+	const value = "tskey-api-<test-only-FAKE-roundtrip-value-9f3a>"
 	meta, previous, err := RecordCredentialStored(SlotAPIKey, value, StoredOptions{Now: metaTestNow, Verified: true})
 	if err != nil {
 		t.Fatalf("RecordCredentialStored() error = %v", err)
@@ -170,12 +170,12 @@ func TestLoadMetadataCorruptVariants(t *testing.T) {
 				t.Fatalf("LoadMetadata() error = %v, want ErrMetadataCorrupt", err)
 			}
 			// Corrupt metadata classifies present slots as unknown and never blocks.
-			inv := DescribeSlots(SlotValues{APIKey: "tskey-api-FAKE"}, metaTestNow, true)
+			inv := DescribeSlots(SlotValues{APIKey: "tskey-api-<test-only-FAKE>"}, metaTestNow, true)
 			if inv.MetadataError == nil || inv.APIKey.ExpiryState != ExpiryStateUnknown || inv.ExpiryState != ExpiryStateUnknown {
 				t.Fatalf("inventory = %+v, want unknown with metadata error", inv)
 			}
 			// A commit self-heals the corrupt file.
-			if _, _, err := RecordCredentialStored(SlotAPIKey, "tskey-api-FAKE", StoredOptions{Now: metaTestNow}); err != nil {
+			if _, _, err := RecordCredentialStored(SlotAPIKey, "tskey-api-<test-only-FAKE>", StoredOptions{Now: metaTestNow}); err != nil {
 				t.Fatalf("RecordCredentialStored() over corrupt file error = %v", err)
 			}
 			if _, err := LoadMetadata(); err != nil {
@@ -210,7 +210,7 @@ func TestLoadMetadataRepairsInsecurePermissions(t *testing.T) {
 
 func TestDeleteSlotMetadataAndRemoveFile(t *testing.T) {
 	setup(t)
-	for slot, value := range map[string]string{SlotAPIKey: "tskey-api-FAKE", SlotClientSecret: "tskey-client-FAKE"} {
+	for slot, value := range map[string]string{SlotAPIKey: "tskey-api-<test-only-FAKE>", SlotClientSecret: "tskey-client-FAKE"} {
 		if _, _, err := RecordCredentialStored(slot, value, StoredOptions{Now: metaTestNow}); err != nil {
 			t.Fatal(err)
 		}
@@ -256,18 +256,18 @@ func TestDeleteSlotMetadataAndRemoveFile(t *testing.T) {
 
 func TestRecordVerificationOnlyTouchesKnownSlots(t *testing.T) {
 	setup(t)
-	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), VerifyResultOK, metaTestNow); err != nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-<test-only-FAKE>"), VerifyResultOK, metaTestNow); err != nil {
 		t.Fatalf("RecordVerification() without metadata error = %v", err)
 	}
 	if _, err := os.Stat(metaPath(t)); !os.IsNotExist(err) {
 		t.Fatal("verification must not invent a metadata record")
 	}
-	if _, _, err := RecordCredentialStored(SlotAPIKey, "tskey-api-FAKE", StoredOptions{Now: metaTestNow}); err != nil {
+	if _, _, err := RecordCredentialStored(SlotAPIKey, "tskey-api-<test-only-FAKE>", StoredOptions{Now: metaTestNow}); err != nil {
 		t.Fatal(err)
 	}
 	later := metaTestNow.Add(2 * time.Hour)
 	for _, result := range []string{VerifyResultOK, VerifyResultUnauthorized, VerifyResultForbidden, VerifyResultUnreachable} {
-		if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), result, later); err != nil {
+		if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-<test-only-FAKE>"), result, later); err != nil {
 			t.Fatalf("RecordVerification(%s) error = %v", result, err)
 		}
 		meta, err := ReadSlotMetadata(SlotAPIKey)
@@ -275,10 +275,10 @@ func TestRecordVerificationOnlyTouchesKnownSlots(t *testing.T) {
 			t.Fatalf("after %s: meta=%+v err=%v", result, meta, err)
 		}
 	}
-	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), "maybe", later); err == nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-<test-only-FAKE>"), "maybe", later); err == nil {
 		t.Fatal("unknown verification result must be rejected")
 	}
-	if err := RecordVerification("bogus", Fingerprint("tskey-api-FAKE"), VerifyResultOK, later); !errors.Is(err, ErrUnknownCredentialSlot) {
+	if err := RecordVerification("bogus", Fingerprint("tskey-api-<test-only-FAKE>"), VerifyResultOK, later); !errors.Is(err, ErrUnknownCredentialSlot) {
 		t.Fatalf("RecordVerification(bogus) error = %v", err)
 	}
 }
@@ -359,7 +359,7 @@ func TestDescribeSlotsNoCredentialsTouchesNoDisk(t *testing.T) {
 
 func TestDescribeSlotsBackfillPersistsOnceAndReanchorsOnFingerprintChange(t *testing.T) {
 	setup(t)
-	values := SlotValues{APIKey: "tskey-api-FAKE-backfill", ClientSecret: "tskey-client-FAKE-backfill"}
+	values := SlotValues{APIKey: "tskey-api-<test-only-FAKE-backfill>", ClientSecret: "tskey-client-FAKE-backfill"}
 	// A backfill is persisted only for the value a slot stores (B6a-2), so
 	// the fixture stores the values it describes, as status and doctor read
 	// them from the store.
@@ -407,10 +407,10 @@ func TestDescribeSlotsBackfillPersistsOnceAndReanchorsOnFingerprintChange(t *tes
 	}
 
 	// Rotating the value outside login (fingerprint mismatch) re-anchors.
-	if err := SetAPIKey("tskey-api-FAKE-rotated"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE-rotated>"); err != nil {
 		t.Fatal(err)
 	}
-	rotated := DescribeSlots(SlotValues{APIKey: "tskey-api-FAKE-rotated", ClientSecret: values.ClientSecret}, metaTestNow.Add(48*time.Hour), true)
+	rotated := DescribeSlots(SlotValues{APIKey: "tskey-api-<test-only-FAKE-rotated>", ClientSecret: values.ClientSecret}, metaTestNow.Add(48*time.Hour), true)
 	if len(rotated.Backfilled) != 1 || rotated.Backfilled[0] != SlotAPIKey || !rotated.APIKey.Metadata.StoredAt.Equal(metaTestNow.Add(48*time.Hour)) {
 		t.Fatalf("rotated inventory = %+v, want api-key re-anchored", rotated)
 	}
@@ -421,7 +421,7 @@ func TestDescribeSlotsBackfillPersistsOnceAndReanchorsOnFingerprintChange(t *tes
 
 func TestDescribeSlotsExpiryMatrix(t *testing.T) {
 	setup(t)
-	const key = "tskey-api-FAKE-matrix"
+	const key = "tskey-api-<test-only-FAKE-matrix>"
 	storedAt := metaTestNow.Add(-80 * 24 * time.Hour) // assumed max => 10 days left
 	if _, _, err := RecordCredentialStored(SlotAPIKey, key, StoredOptions{Now: storedAt}); err != nil {
 		t.Fatal(err)
@@ -447,13 +447,13 @@ func TestDescribeSlotsExpiryMatrix(t *testing.T) {
 func TestDescribeSlotsBackfillWriteFailureIsReportedNotFatal(t *testing.T) {
 	setup(t)
 	// The slot stores the value described, so the backfill reaches the write.
-	if err := SetAPIKey("tskey-api-FAKE"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE>"); err != nil {
 		t.Fatal(err)
 	}
 	old := metadataWriteFunc
 	t.Cleanup(func() { metadataWriteFunc = old })
 	metadataWriteFunc = func(string, []byte) error { return errors.New("disk full") }
-	inv := DescribeSlots(SlotValues{APIKey: "tskey-api-FAKE"}, metaTestNow, true)
+	inv := DescribeSlots(SlotValues{APIKey: "tskey-api-<test-only-FAKE>"}, metaTestNow, true)
 	if inv.BackfillError == nil || inv.APIKey.ExpiryState != ExpiryStateOK || len(inv.Backfilled) != 1 {
 		t.Fatalf("inventory = %+v, want classified with backfill error", inv)
 	}
@@ -461,7 +461,7 @@ func TestDescribeSlotsBackfillWriteFailureIsReportedNotFatal(t *testing.T) {
 
 func TestBackfillMetadataReadsStoredSlots(t *testing.T) {
 	setup(t)
-	if err := SetAPIKey("tskey-api-FAKE-stored"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE-stored>"); err != nil {
 		t.Fatal(err)
 	}
 	backfilled, err := BackfillMetadata(metaTestNow)
@@ -480,7 +480,7 @@ func TestBackfillMetadataReadsStoredSlots(t *testing.T) {
 
 func TestDeleteStoredCredentialKindStrictRemovesOnlyThatSlot(t *testing.T) {
 	setup(t)
-	if err := SetAPIKey("tskey-api-FAKE"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE>"); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveClientSecret("tskey-client-FAKE"); err != nil {
@@ -514,7 +514,7 @@ func TestMetadataPathResolutionErrorPropagates(t *testing.T) {
 	if err := RemoveMetadataFile(); err == nil {
 		t.Fatal("RemoveMetadataFile() error = nil, want path error")
 	}
-	if _, _, err := RecordCredentialStored(SlotAPIKey, "tskey-api-FAKE", StoredOptions{Now: metaTestNow}); err == nil {
+	if _, _, err := RecordCredentialStored(SlotAPIKey, "tskey-api-<test-only-FAKE>", StoredOptions{Now: metaTestNow}); err == nil {
 		t.Fatal("RecordCredentialStored() error = nil, want path error")
 	}
 	if err := WriteSlotMetadata(SlotAPIKey, SlotMetadata{}); err == nil {
@@ -526,7 +526,7 @@ func TestMetadataPathResolutionErrorPropagates(t *testing.T) {
 	if err := DeleteSlotMetadata(SlotAPIKey); err == nil {
 		t.Fatal("DeleteSlotMetadata() error = nil, want path error")
 	}
-	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), VerifyResultOK, metaTestNow); err == nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-<test-only-FAKE>"), VerifyResultOK, metaTestNow); err == nil {
 		t.Fatal("RecordVerification() error = nil, want path error")
 	}
 	if err := WriteSlotMetadata("bogus", SlotMetadata{}); !errors.Is(err, ErrUnknownCredentialSlot) {

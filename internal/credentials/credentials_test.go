@@ -139,7 +139,7 @@ func rejectingAPIClientFactory(t *testing.T) (TailscaleClientFactory, <-chan str
 	return func() (*tailscale.Client, error) {
 		return &tailscale.Client{
 			Tailnet: "-",
-			APIKey:  "tskey-api-placeholder",
+			APIKey:  "tskey-api-<test-only-placeholder>",
 			BaseURL: baseURL,
 			HTTP:    server.Client(),
 		}, nil
@@ -229,7 +229,7 @@ func TestSetAPIKey_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
 			if deleted {
 				return "", keyring.ErrNotFound
 			}
-			return "tskey-api-stale-synthetic", nil
+			return "tskey-api-<test-only-stale-synthetic>", nil
 		},
 		func(string, string, string) error { return errors.New("keyring write failed") },
 		func(string, string) error {
@@ -238,7 +238,7 @@ func TestSetAPIKey_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
 		},
 	)
 
-	backend, err := SetAPIKeyWithBackend("tskey-api-replacement-synthetic")
+	backend, err := SetAPIKeyWithBackend("tskey-api-<test-only-replacement-synthetic>")
 	if assertWindowsFileFallbackDisabled(t, backend, err, apiKeyPath(t)) {
 		if deleted {
 			t.Fatal("Windows policy deleted stale keyring material before refusing file fallback")
@@ -258,7 +258,7 @@ func TestSetAPIKey_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAPIKey() error = %v", err)
 	}
-	if got != "tskey-api-replacement-synthetic" {
+	if got != "tskey-api-<test-only-replacement-synthetic>" {
 		t.Fatal("GetAPIKey() returned stale keyring material after file fallback")
 	}
 }
@@ -266,12 +266,12 @@ func TestSetAPIKey_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
 func TestSetAPIKey_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *testing.T) {
 	setup(t)
 	stubKeyring(t,
-		func(string, string) (string, error) { return "tskey-api-stale-synthetic", nil },
+		func(string, string) (string, error) { return "tskey-api-<test-only-stale-synthetic>", nil },
 		func(string, string, string) error { return errors.New("keyring write failed") },
 		func(string, string) error { return errors.New("keyring delete failed") },
 	)
 
-	backend, err := SetAPIKeyWithBackend("tskey-api-replacement-synthetic")
+	backend, err := SetAPIKeyWithBackend("tskey-api-<test-only-replacement-synthetic>")
 	if assertWindowsFileFallbackDisabled(t, backend, err, apiKeyPath(t)) {
 		return
 	}
@@ -306,8 +306,8 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 		{
 			name:           "SetAPIKeyWithBackend",
 			keyringKey:     keychainAPIKey,
-			oldValue:       "tskey-api-matrix-old",
-			newValue:       "tskey-api-matrix-new",
+			oldValue:       "tskey-api-<test-only-matrix-old>",
+			newValue:       "tskey-api-<test-only-matrix-new>",
 			reportsBackend: true,
 			set:            SetAPIKeyWithBackend,
 			get:            GetAPIKey,
@@ -321,8 +321,8 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 		{
 			name:       "SetAPIKey",
 			keyringKey: keychainAPIKey,
-			oldValue:   "tskey-api-wrapper-matrix-old",
-			newValue:   "tskey-api-wrapper-matrix-new",
+			oldValue:   "tskey-api-<test-only-wrapper-matrix-old>",
+			newValue:   "tskey-api-<test-only-wrapper-matrix-new>",
 			set: func(value string) (CredentialBackend, error) {
 				return "", SetAPIKey(value)
 			},
@@ -536,7 +536,7 @@ func TestFileCredentialFallbackDisabledFailsClosed(t *testing.T) {
 	fileCredentialFallbackEnabledFunc = func() bool { return false }
 	t.Cleanup(func() { fileCredentialFallbackEnabledFunc = oldFallback })
 
-	err := SetAPIKey("tskey-api-fake")
+	err := SetAPIKey("tskey-api-<test-only-fake>")
 	if err == nil {
 		t.Fatal("SetAPIKey() error = nil, want fallback disabled error")
 	}
@@ -753,7 +753,7 @@ func TestInspectStoredCredentialsStrictKeyringReadFailure(t *testing.T) {
 
 func TestDeleteStoredCredentialsStrictKeyringDeleteFailureStillRemovesFiles(t *testing.T) {
 	setup(t)
-	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-file\n"), 0o600); err != nil {
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-<test-only-file>\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(api key) error = %v", err)
 	}
 	if err := os.WriteFile(clientSecretPath(t), []byte("tskey-client-file\n"), 0o600); err != nil {
@@ -777,10 +777,10 @@ func TestDeleteStoredCredentialsStrictKeyringDeleteFailureStillRemovesFiles(t *t
 
 func TestDeleteStoredCredentialsStrictDisabledKeyringLeavesResidualRisk(t *testing.T) {
 	setup(t)
-	if err := keyring.Set(keychainService, keychainAPIKey, "tskey-api-keyring"); err != nil {
+	if err := keyring.Set(keychainService, keychainAPIKey, "tskey-api-<test-only-keyring>"); err != nil {
 		t.Fatalf("keyring.Set(api) error = %v", err)
 	}
-	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-file\n"), 0o600); err != nil {
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-<test-only-file>\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(api key) error = %v", err)
 	}
 
@@ -953,7 +953,7 @@ func TestNewTailscaleClient_WithOAuthSecretExchangesTokenWithoutScopes(t *testin
 
 func TestNewTailscaleClient_OAuthTakesPrecedenceWhenBothCredentialsStored(t *testing.T) {
 	setup(t)
-	if err := SetAPIKey("tskey-api-should-not-win"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-should-not-win>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	if err := SaveClientSecret("tskey-client-preferred-clientsecret"); err != nil {
@@ -1038,7 +1038,7 @@ func TestNewTailscaleClient_NoKey(t *testing.T) {
 
 func TestNewTailscaleClientWithUserOwnedAPIKey_UsesAPIKeyWhenOAuthAlsoExists(t *testing.T) {
 	setup(t)
-	if err := SetAPIKey("tskey-api-placeholder"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-placeholder>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	if err := SaveClientSecret("tskey-client-placeholder-placeholder"); err != nil {
@@ -1049,7 +1049,7 @@ func TestNewTailscaleClientWithUserOwnedAPIKey_UsesAPIKeyWhenOAuthAlsoExists(t *
 	if err != nil {
 		t.Fatalf("NewTailscaleClientWithUserOwnedAPIKey() error = %v", err)
 	}
-	if client == nil || client.APIKey != "tskey-api-placeholder" || client.Auth != nil {
+	if client == nil || client.APIKey != "tskey-api-<test-only-placeholder>" || client.Auth != nil {
 		t.Fatalf("client = %+v, want API-key client even when OAuth is stored", client)
 	}
 }
@@ -1200,7 +1200,7 @@ func TestDeriveAuthKey_APICallError(t *testing.T) {
 func TestGetAuthKey_WithAPIKey_DeriveError(t *testing.T) {
 	setup(t)
 
-	if err := SetAPIKey("tskey-api-fake-key"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-fake-key>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -1328,7 +1328,7 @@ func TestHasStoredCredentialModes(t *testing.T) {
 		{
 			name: "api key",
 			setup: func(t *testing.T) {
-				if err := SetAPIKey("tskey-api-stored"); err != nil {
+				if err := SetAPIKey("tskey-api-<test-only-stored>"); err != nil {
 					t.Fatalf("SetAPIKey() error = %v", err)
 				}
 			},
@@ -1486,7 +1486,7 @@ func TestSaveClientSecret_Keychain(t *testing.T) {
 func TestSaveClientSecret_InvalidPrefix(t *testing.T) {
 	setup(t)
 
-	err := SaveClientSecret("tskey-api-wrong-prefix")
+	err := SaveClientSecret("tskey-api-<test-only-wrong-prefix>")
 	if err == nil {
 		t.Fatal("SaveClientSecret() error = nil, want error for invalid prefix")
 	}
@@ -1745,7 +1745,7 @@ func TestGetAuthKey_ClientSecretFirst(t *testing.T) {
 	setup(t)
 
 	// Set both API key and client secret
-	if err := SetAPIKey("tskey-api-fake"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-fake>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	if err := SaveClientSecret("tskey-client-my-secret"); err != nil {
@@ -1858,7 +1858,7 @@ func TestGetAuthKey_ClientSecretError(t *testing.T) {
 func TestDeriveAuthKey_Success(t *testing.T) {
 	setup(t)
 
-	if err := SetAPIKey("tskey-api-fake"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-fake>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -1905,7 +1905,7 @@ func TestDeriveAuthKey_Success(t *testing.T) {
 func TestGetAuthKey_DeriveSuccess(t *testing.T) {
 	setup(t)
 
-	if err := SetAPIKey("tskey-api-fake"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-fake>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 

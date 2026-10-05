@@ -42,7 +42,7 @@ import (
 // daemon-side write path; what it keeps is the entire read-and-authorize path,
 // which is where all three incidents actually live.
 
-const e2eFakeAPIKey = "tskey-api-e2e-placeholder-not-a-credential"
+const e2eFakeAPIKey = "tskey-api-<test-only-e2e-placeholder-not-a-credential>"
 
 func e2eTailnetEnv(configDir, baseURL string) []string {
 	env := e2eEnv(configDir)

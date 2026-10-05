@@ -157,7 +157,7 @@ func TestMainScrubsTheContributorEnvironmentAndMovesEveryHomeLocation(t *testing
 		env = append(env, kv[0]+"="+kv[1])
 	}
 	env = append(env,
-		"TSLINK_API_KEY=tskey-api-CANARY0827-notasecret",
+		"TSLINK_API_KEY=tskey-api-<test-only-CANARY0827-notasecret>",
 		"TSLINK_CLIENT_SECRET=tskey-client-CANARY0827-notasecret",
 		"TSLINK_DISABLE_KEYRING=1",
 		"TSLINK_API_BASE_URL=https://canary0827.invalid",

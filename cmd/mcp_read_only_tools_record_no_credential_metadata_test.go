@@ -17,7 +17,7 @@ import (
 
 // readOnlyFixtureAPIKey is the fake API key these tests store. It exists only
 // in the test keyring.
-const readOnlyFixtureAPIKey = "tskey-api-FAKE-read-only-fixture"
+const readOnlyFixtureAPIKey = "tskey-api-<test-only-FAKE-read-only-fixture>"
 
 // storeCredentialWithoutMetadata empties the test keyring, stores one fake API
 // key in it, and points TSLINK_CONFIG_DIR at a directory that does not exist

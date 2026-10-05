@@ -111,7 +111,7 @@ func TestReadTags_ClientError(t *testing.T) {
 
 func TestReadTags_ACLReadError(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -129,7 +129,7 @@ func TestReadTags_ACLReadError(t *testing.T) {
 
 func TestReadTags_SuccessWithTags(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestReadTags_SuccessWithTags(t *testing.T) {
 
 func TestReadTags_SuccessEmpty(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestEnsureTags_ClientError(t *testing.T) {
 
 func TestEnsureTags_ACLReadError(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -226,7 +226,7 @@ func TestEnsureTags_ACLReadError(t *testing.T) {
 
 func TestEnsureTags_ACLReadForbiddenIsClassified(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -241,7 +241,7 @@ func TestEnsureTags_ACLReadForbiddenIsClassified(t *testing.T) {
 
 func TestEnsureTags_AllExist(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -261,7 +261,7 @@ func TestEnsureTags_AllExist(t *testing.T) {
 
 func TestEnsureTags_CreatesMissing(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -300,7 +300,7 @@ func TestEnsureTags_CreatesMissing(t *testing.T) {
 
 func TestEnsureTags_NilTagOwners(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestEnsureTags_NilTagOwners(t *testing.T) {
 
 func TestEnsureTags_SetACLError(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -362,7 +362,7 @@ func TestEnsureTags_SetACLError(t *testing.T) {
 
 func TestEnsureTags_ACLWriteForbiddenIsClassified(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -385,7 +385,7 @@ func TestEnsureTags_ACLWriteForbiddenIsClassified(t *testing.T) {
 
 func TestEnsureTags_ETagConflictDoesNotRetryWithStalePolicy(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -873,7 +873,7 @@ func TestDeleteTag_ClientError(t *testing.T) {
 
 func TestDeleteTag_ACLReadError(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -891,7 +891,7 @@ func TestDeleteTag_ACLReadError(t *testing.T) {
 
 func TestDeleteTag_NotFound(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -914,7 +914,7 @@ func TestDeleteTag_NotFound(t *testing.T) {
 
 func TestDeleteTag_Success(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -1093,7 +1093,7 @@ func TestDeleteTag_RefusesAnyNonCanonicalNodeAttrsReference(t *testing.T) {
 
 func TestDeleteTag_SetACLError(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -1120,7 +1120,7 @@ func TestDeleteTag_SetACLError(t *testing.T) {
 
 func TestDeleteTag_ETagConflictDoesNotRetryWithStalePolicy(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 

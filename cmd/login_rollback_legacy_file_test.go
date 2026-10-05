@@ -22,14 +22,14 @@ func TestRolledBackLoginRestoresConflictingLegacyFile(t *testing.T) {
 	setupLoginTest(t)
 	useRealLoginTransaction(t)
 	mockAPIKeySuccess(t)
-	if err := credentials.SetAPIKey("tskey-api-FAKE-RING"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-FAKE-RING>"); err != nil {
 		t.Fatal(err)
 	}
 	path, err := config.APIKeyPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("tskey-api-FAKE-FILE"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-api-<test-only-FAKE-FILE>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if credentials.MigrateFromLegacy() {
@@ -44,21 +44,21 @@ func TestRolledBackLoginRestoresConflictingLegacyFile(t *testing.T) {
 	loginWriteSlotMetaFn = func(string, credentials.SlotMetadata) error {
 		return errors.New("synthetic metadata failure")
 	}
-	_, err = commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-NEW", loginReplaceOptions{Now: loginTestNow})
+	_, err = commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-NEW>", loginReplaceOptions{Now: loginTestNow})
 	if err == nil || !strings.Contains(err.Error(), "synthetic metadata failure") {
 		t.Fatalf("login did not fail through the metadata rollback path: %v", err)
 	}
 	if strings.Contains(err.Error(), "rollback failed") {
 		t.Fatalf("rollback failed: %v", err)
 	}
-	if key, err := credentials.GetAPIKey(); err != nil || key != "tskey-api-FAKE-RING" {
-		t.Fatalf("keyring restored=%v err=%v", key == "tskey-api-FAKE-RING", err)
+	if key, err := credentials.GetAPIKey(); err != nil || key != "tskey-api-<test-only-FAKE-RING>" {
+		t.Fatalf("keyring restored=%v err=%v", key == "tskey-api-<test-only-FAKE-RING>", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("rolled-back login lost the conflicting legacy file: %v", err)
 	}
-	if string(data) != "tskey-api-FAKE-FILE" {
+	if string(data) != "tskey-api-<test-only-FAKE-FILE>" {
 		t.Fatal("rolled-back login changed the conflicting legacy file's content")
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
@@ -71,17 +71,17 @@ func TestCommittedLoginStillRemovesLegacyFileCopy(t *testing.T) {
 	setupLoginTest(t)
 	useRealLoginTransaction(t)
 	mockAPIKeySuccess(t)
-	if err := credentials.SetAPIKey("tskey-api-FAKE-RING"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-FAKE-RING>"); err != nil {
 		t.Fatal(err)
 	}
 	path, err := config.APIKeyPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("tskey-api-FAKE-FILE"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-api-<test-only-FAKE-FILE>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-NEW", loginReplaceOptions{Now: loginTestNow}); err != nil {
+	if _, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-NEW>", loginReplaceOptions{Now: loginTestNow}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

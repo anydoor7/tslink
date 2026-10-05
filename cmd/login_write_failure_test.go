@@ -26,11 +26,11 @@ func (s *partialWriteLoginStore) Write(mode loginCredentialMode, value string) (
 func TestLoginRollsBackWriteThatFailedAfterMutation(t *testing.T) {
 	for _, mode := range []loginCredentialMode{loginCredentialModeAPIKey, loginCredentialModeClientSecret} {
 		t.Run(string(mode), func(t *testing.T) {
-			base := newRecordingCredentialStore("tskey-api-FAKE-OLD", "tskey-client-FAKE-OLD")
+			base := newRecordingCredentialStore("tskey-api-<test-only-FAKE-OLD>", "tskey-client-FAKE-OLD")
 			base.withMeta(loginCredentialModeAPIKey, loginTestNow)
 			base.withMeta(loginCredentialModeClientSecret, loginTestNow)
 			store := &partialWriteLoginStore{recordingCredentialStore: base}
-			candidate := "tskey-api-FAKE-NEW"
+			candidate := "tskey-api-<test-only-FAKE-NEW>"
 			if mode == loginCredentialModeClientSecret {
 				candidate = "tskey-client-FAKE-NEW"
 			}
@@ -38,7 +38,7 @@ func TestLoginRollsBackWriteThatFailedAfterMutation(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "synthetic post-write failure") {
 				t.Fatalf("write failure not returned: %v", err)
 			}
-			base.assertState(t, "tskey-api-FAKE-OLD", "tskey-client-FAKE-OLD")
+			base.assertState(t, "tskey-api-<test-only-FAKE-OLD>", "tskey-client-FAKE-OLD")
 			base.assertMetaMatchesValues(t)
 		})
 	}

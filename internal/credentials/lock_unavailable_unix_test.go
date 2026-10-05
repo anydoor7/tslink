@@ -31,7 +31,7 @@ func TestUnsupportedFileLockFallsBackToInProcessGate(t *testing.T) {
 			logs := captureCredentialLogs(t)
 
 			if err := WithMutationTransaction(func(tx *MutationTransaction) error {
-				_, err := tx.SetAPIKeyWithBackend("tskey-api-FAKE-nolock")
+				_, err := tx.SetAPIKeyWithBackend("tskey-api-<test-only-FAKE-nolock>")
 				return err
 			}); err != nil {
 				t.Fatalf("login transaction with %v: %v", errno, err)

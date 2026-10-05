@@ -118,13 +118,13 @@ func TestDoctorTailscaleSSHFindingsCarryActionableEvidence(t *testing.T) {
 func TestDoctorTailscaleSSHUnknownRedactsProbeEvidence(t *testing.T) {
 	env := newDoctorTestEnv(t, nil)
 	env.writeExactSnapshot(t)
-	stubDoctorTailscaleSSH(t, false, errors.New(`local api https://user:pass@127.0.0.1:1/localapi?token=tskey-api-secret-value failed`))
+	stubDoctorTailscaleSSH(t, false, errors.New(`local api https://user:pass@127.0.0.1:1/localapi?token=tskey-test-secret-value failed`))
 
 	var buf bytes.Buffer
 	if err := runDoctor(context.Background(), &buf, doctorOptions{}, true); err != nil {
 		t.Fatalf("runDoctor = %v, want nil for info-only findings", err)
 	}
-	assertDoctorOutputOmits(t, buf.String(), []string{"tskey-api-secret-value", "user:pass@"})
+	assertDoctorOutputOmits(t, buf.String(), []string{"tskey-test-secret-value", "user:pass@"})
 
 	finding := assertDoctorFinding(t, decodeDoctorJSON(t, buf.String()), inspect.WarningCodeTailscaleSSHUnknown)
 	if finding.Evidence["error"] == "" {

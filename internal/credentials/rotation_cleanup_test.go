@@ -12,12 +12,12 @@ import (
 
 func TestKeyringRotationReportsFallbackPathFailure(t *testing.T) {
 	setup(t)
-	const oldKey = "tskey-api-FAKE-OLD"
+	const oldKey = "tskey-api-<test-only-FAKE-OLD>"
 	if err := keyring.Set(keychainService, keychainAPIKey, oldKey); err != nil {
 		t.Fatal(err)
 	}
 	pathErr := errors.New("synthetic fallback path failure")
-	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-FAKE-NEW", func() (string, error) { return "", pathErr })
+	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-<test-only-FAKE-NEW>", func() (string, error) { return "", pathErr })
 	if !errors.Is(err, pathErr) || backend != "" {
 		t.Fatalf("backend=%q err=%v, want path failure", backend, err)
 	}
@@ -30,7 +30,7 @@ func TestKeyringRotationReportsFallbackPathFailure(t *testing.T) {
 func TestKeyringRotationMissingFallbackControl(t *testing.T) {
 	setup(t)
 	path := filepath.Join(t.TempDir(), "missing")
-	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-FAKE-NEW", func() (string, error) { return path, nil })
+	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-<test-only-FAKE-NEW>", func() (string, error) { return path, nil })
 	if err != nil || backend != CredentialBackendKeyring {
 		t.Fatalf("backend=%q err=%v", backend, err)
 	}
@@ -60,7 +60,7 @@ func TestOAuthKeyringRotationPathErrorAndMissingFallback(t *testing.T) {
 func TestKeyringRotationRollbackFailureReportsPartialState(t *testing.T) {
 	setup(t)
 	path := filepath.Join(t.TempDir(), "fallback")
-	if err := os.WriteFile(path, []byte("tskey-api-FAKE-OLD"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-api-<test-only-FAKE-OLD>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	oldRemove, oldDelete := credentialFileRemoveFunc, keyringDeleteFunc
@@ -69,11 +69,11 @@ func TestKeyringRotationRollbackFailureReportsPartialState(t *testing.T) {
 	deleteErr := errors.New("synthetic keyring rollback denied")
 	credentialFileRemoveFunc = func(string) error { return removeErr }
 	keyringDeleteFunc = func(string, string) error { return deleteErr }
-	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-FAKE-NEW", func() (string, error) { return path, nil })
+	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-<test-only-FAKE-NEW>", func() (string, error) { return path, nil })
 	if backend != "" || !errors.Is(err, ErrCredentialWritePartial) || !errors.Is(err, removeErr) || !errors.Is(err, deleteErr) {
 		t.Fatalf("partial commit not reported with both causes: backend=%q err=%v", backend, err)
 	}
-	if got, getErr := keyring.Get(keychainService, keychainAPIKey); getErr != nil || got != "tskey-api-FAKE-NEW" {
+	if got, getErr := keyring.Get(keychainService, keychainAPIKey); getErr != nil || got != "tskey-api-<test-only-FAKE-NEW>" {
 		t.Fatalf("partial state fixture did not retain new keyring value: present=%t err=%v", got != "", getErr)
 	}
 }
@@ -81,7 +81,7 @@ func TestKeyringRotationRollbackFailureReportsPartialState(t *testing.T) {
 func TestKeyringRotationKeepsUsableValueIfCleanupReportedErrorAfterRemoval(t *testing.T) {
 	setup(t)
 	path := filepath.Join(t.TempDir(), "fallback")
-	if err := os.WriteFile(path, []byte("tskey-api-FAKE-OLD"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-api-<test-only-FAKE-OLD>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	oldRemove := credentialFileRemoveFunc
@@ -93,11 +93,11 @@ func TestKeyringRotationKeepsUsableValueIfCleanupReportedErrorAfterRemoval(t *te
 		}
 		return removeErr
 	}
-	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-FAKE-NEW", func() (string, error) { return path, nil })
+	backend, err := storeCredentialWithBackendLocked("API key", keychainAPIKey, "tskey-api-<test-only-FAKE-NEW>", func() (string, error) { return path, nil })
 	if backend != "" || !errors.Is(err, ErrCredentialWritePartial) || !errors.Is(err, removeErr) {
 		t.Fatalf("uncertain cleanup not reported: backend=%q err=%v", backend, err)
 	}
-	if got, getErr := keyring.Get(keychainService, keychainAPIKey); getErr != nil || got != "tskey-api-FAKE-NEW" {
+	if got, getErr := keyring.Get(keychainService, keychainAPIKey); getErr != nil || got != "tskey-api-<test-only-FAKE-NEW>" {
 		t.Fatalf("new usable keyring value lost: present=%t err=%v", got != "", getErr)
 	}
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
@@ -113,7 +113,7 @@ func TestKeyringRotationCleanupFailurePreservesPreviousCredential(t *testing.T) 
 		get                          func() (string, error)
 		setPath                      func(func() (string, error)) func()
 	}{
-		{"api_no_prior_keyring", keychainAPIKey, "tskey-api-FAKE-OLD", "tskey-api-FAKE-NEW", false, SetAPIKeyWithBackend, GetAPIKey,
+		{"api_no_prior_keyring", keychainAPIKey, "tskey-api-<test-only-FAKE-OLD>", "tskey-api-<test-only-FAKE-NEW>", false, SetAPIKeyWithBackend, GetAPIKey,
 			func(fn func() (string, error)) func() {
 				old := apiKeyPathFunc
 				apiKeyPathFunc = fn

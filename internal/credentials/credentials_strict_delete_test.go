@@ -28,7 +28,7 @@ func skipIfRootCannotBeDeniedAccess(t *testing.T) {
 
 func TestInspectCredentialStrictReportsCredentialsThatArePresent(t *testing.T) {
 	setup(t)
-	if err := keyring.Set(keychainService, keychainAPIKey, "tskey-api-fake-inspect"); err != nil {
+	if err := keyring.Set(keychainService, keychainAPIKey, "tskey-api-<test-only-fake-inspect>"); err != nil {
 		t.Fatalf("keyring.Set() error = %v", err)
 	}
 	if err := os.WriteFile(clientSecretPath(t), []byte("tskey-client-fake-inspect\n"), 0o600); err != nil {
@@ -76,7 +76,7 @@ func TestInspectCredentialStrictTreatsBlankStoredValuesAsAbsent(t *testing.T) {
 
 func TestInspectCredentialStrictFailsClosedWhenKeyringIsDisabled(t *testing.T) {
 	setup(t)
-	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-fake-file\n"), 0o600); err != nil {
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-<test-only-fake-file>\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(api key) error = %v", err)
 	}
 	oldEnabled := keyringEnabledFunc
@@ -165,7 +165,7 @@ func TestDeleteCredentialFilePathStrictReportsAnUnreadableReadback(t *testing.T)
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	path := filepath.Join(dir, "apikey")
-	if err := os.WriteFile(path, []byte("tskey-api-fake-residual\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-api-<test-only-fake-residual>\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	if err := os.Chmod(dir, 0o000); err != nil {
@@ -194,7 +194,7 @@ func TestDeleteCredentialFilePathStrictSucceedsForAnAbsentOrRemovableFile(t *tes
 	}
 
 	present := filepath.Join(dir, "apikey")
-	if err := os.WriteFile(present, []byte("tskey-api-fake-removable\n"), 0o600); err != nil {
+	if err := os.WriteFile(present, []byte("tskey-api-<test-only-fake-removable>\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	if err := deleteCredentialFilePathStrict("API key", present); err != nil {

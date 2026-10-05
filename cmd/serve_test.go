@@ -371,7 +371,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 func TestMockServeDefaultsKeepsCredentialMutationLockInTempHome(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
-	if err := credentials.SetAPIKey("tskey-api-placeholder"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-placeholder>"); err != nil {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(dir, "credential-test.lock")

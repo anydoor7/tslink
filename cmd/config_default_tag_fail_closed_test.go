@@ -157,7 +157,7 @@ func TestLoginFailsClosedBeforeStoringOnAnUnreadableConfig(t *testing.T) {
 	loginVerifyAPIKeyFn = func(context.Context, string) error { reached++; return nil }
 	loginActivateClientSecretFn = func(context.Context, string) error { reached++; return nil }
 
-	if err := loginWithAPIKey(loginCmd, "tskey-api-synthetic"); registryCode(err) != registry.CodeConfigLoadFailed {
+	if err := loginWithAPIKey(loginCmd, "tskey-api-<test-only-synthetic>"); registryCode(err) != registry.CodeConfigLoadFailed {
 		t.Fatalf("login --api-key error = %v, want %s", err, registry.CodeConfigLoadFailed)
 	}
 	if err := loginWithClientSecret(loginCmd, "tskey-client-synthetic"); registryCode(err) != registry.CodeConfigLoadFailed {

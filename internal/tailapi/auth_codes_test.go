@@ -17,7 +17,7 @@ import (
 
 func TestEnsureTags_ACLRead401IsCodedUnauthorizedWithBootstrapNext(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -43,7 +43,7 @@ func TestEnsureTags_ACLRead401IsCodedUnauthorizedWithBootstrapNext(t *testing.T)
 
 func TestEnsureTags_ACLRead403KeepsSentinelAndAddsForbiddenCode(t *testing.T) {
 	aclSetup(t)
-	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -71,7 +71,7 @@ func TestEnsureTags_ACLWrite401And403AreCoded(t *testing.T) {
 	} {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			aclSetup(t)
-			if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+			if err := credentials.SetAPIKey("tskey-api-<test-only-test>"); err != nil {
 				t.Fatalf("SetAPIKey() error = %v", err)
 			}
 			aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -98,7 +98,7 @@ func TestEnsureTags_ACLWrite401And403AreCoded(t *testing.T) {
 func TestListDevicesPaths401BecomeAPITokenUnauthorized(t *testing.T) {
 	t.Run("cleanup", func(t *testing.T) {
 		setup(t)
-		mustSetAPIKey(t, "tskey-api-test")
+		mustSetAPIKey(t, "tskey-api-<test-only-test>")
 		withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 			return jsonResponse(http.StatusUnauthorized, `{"message":"invalid key"}`), nil
 		}))
@@ -110,7 +110,7 @@ func TestListDevicesPaths401BecomeAPITokenUnauthorized(t *testing.T) {
 	})
 	t.Run("adoption lookup 403", func(t *testing.T) {
 		setup(t)
-		mustSetAPIKey(t, "tskey-api-test")
+		mustSetAPIKey(t, "tskey-api-<test-only-test>")
 		withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 			return jsonResponse(http.StatusForbidden, `{"message":"forbidden"}`), nil
 		}))
@@ -122,7 +122,7 @@ func TestListDevicesPaths401BecomeAPITokenUnauthorized(t *testing.T) {
 	})
 	t.Run("network error stays uncoded", func(t *testing.T) {
 		setup(t)
-		mustSetAPIKey(t, "tskey-api-test")
+		mustSetAPIKey(t, "tskey-api-<test-only-test>")
 		withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 			return nil, errors.New("network down")
 		}))

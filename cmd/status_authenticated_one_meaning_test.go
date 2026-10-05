@@ -29,7 +29,7 @@ func TestAuthenticatedMeansANodeIsAuthorizedOnEverySurface(t *testing.T) {
 	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	svc := addStatusTestService(t, paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}})
 	withStatusURLSeams(t, true, 4242, startedAt)
-	getAPIKeyFn = func() (string, error) { return "tskey-api-FAKEFAKEFAKE-notreal", nil }
+	getAPIKeyFn = func() (string, error) { return "tskey-api-<test-only-FAKEFAKEFAKE-notreal>", nil }
 	restoreShareSeams(t)
 	sharePollableStatusFn = getPollableStatus
 	mcpStatus := func() mcpStatusSummary {

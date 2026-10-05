@@ -60,7 +60,7 @@ func TestFakeKeyringSetupsKeepCredentialMutationLockInTempHome(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.setup(t)
-			mustSetAPIKey(t, "tskey-api-placeholder")
+			mustSetAPIKey(t, "tskey-api-<test-only-placeholder>")
 			lockPath := filepath.Join(os.Getenv("HOME"), "credential-test.lock")
 			if _, err := os.Stat(lockPath); err != nil {
 				t.Fatalf("fake-keyring credential lock was not created inside temporary home %s: %v", lockPath, err)

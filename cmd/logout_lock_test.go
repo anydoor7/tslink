@@ -22,7 +22,7 @@ func TestLogoutWaitsForHeldCredentialLock(t *testing.T) {
 			dir := setupLoginTest(t)
 			useRealLoginTransaction(t)
 			mockAPIKeySuccess(t)
-			if _, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-held", loginReplaceOptions{Now: loginTestNow}); err != nil {
+			if _, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-held>", loginReplaceOptions{Now: loginTestNow}); err != nil {
 				t.Fatal(err)
 			}
 			held := make(chan struct{})

@@ -20,7 +20,7 @@ func TestStatusBackfillCannotReplaceLoginMetadataCommittedInsideTransaction(t *t
 		credentialMutationGate <- struct{}{}
 		t.Cleanup(func() { credentialMutationGate = oldGate })
 		setup(t)
-		const oldKey, newKey = "tskey-api-FAKE-K1", "tskey-api-FAKE-K2"
+		const oldKey, newKey = "tskey-api-<test-only-FAKE-K1>", "tskey-api-<test-only-FAKE-K2>"
 		if err := SetAPIKey(oldKey); err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +105,7 @@ func TestStatusBackfillCannotReplaceLoginMetadataCommittedInsideTransaction(t *t
 // A backfill whose slot record is unchanged under the lock is still saved.
 func TestStatusBackfillStillPersistsWhenNoWriterIntervenes(t *testing.T) {
 	setup(t)
-	const key = "tskey-api-FAKE-quiet"
+	const key = "tskey-api-<test-only-FAKE-quiet>"
 	if err := SetAPIKey(key); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestStatusBackfillOfPreRotationValueCannotReplaceRotatedRecord(t *testing.T
 		credentialMutationGate <- struct{}{}
 		t.Cleanup(func() { credentialMutationGate = oldGate })
 		setup(t)
-		const oldKey, newKey = "tskey-api-FAKE-pre", "tskey-api-FAKE-post"
+		const oldKey, newKey = "tskey-api-<test-only-FAKE-pre>", "tskey-api-<test-only-FAKE-post>"
 		if err := SetAPIKey(oldKey); err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func TestStatusBackfillOfPreRotationValueCannotReplaceRotatedRecord(t *testing.T
 // Every metadata read-modify-write waits for a running credential
 // transaction instead of interleaving with it.
 func TestMetadataWritersWaitForCredentialTransaction(t *testing.T) {
-	const key = "tskey-api-FAKE-writer"
+	const key = "tskey-api-<test-only-FAKE-writer>"
 	cases := []struct {
 		name string
 		op   func() error

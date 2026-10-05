@@ -19,7 +19,7 @@ import (
 var statusTestNow = time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 
 const (
-	statusFixtureAPIKey       = "tskey-api-FAKE-status-fixture"
+	statusFixtureAPIKey       = "tskey-api-<test-only-FAKE-status-fixture>"
 	statusFixtureClientSecret = "tskey-client-FAKE-status-fixture"
 )
 
@@ -200,7 +200,8 @@ func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 	t.Run("corrupt metadata", func(t *testing.T) {
 		pidPath, regPath, snapshotPath, handoffPath := statusTestPaths(t)
 		withStatusCredentialSeams(t, statusFixtureAPIKey, "", func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
-			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: tskey-api-FAKE-in-error"), now)
+			// Preserve the redactor's contiguous token shape with an invented kind.
+			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: tskey-test-FAKE-in-error"), now)
 		})
 		status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 		if err != nil {

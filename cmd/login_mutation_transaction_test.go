@@ -14,7 +14,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 	setupLoginTest(t)
 	loginMutationTransactionFn = credentials.WithMutationTransaction
 	mockAPIKeySuccess(t)
-	if err := credentials.SetAPIKey("tskey-api-before"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-before>"); err != nil {
 		t.Fatal(err)
 	}
 	writeMeta := loginWriteSlotMetaFn
@@ -28,7 +28,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 	}
 	commitDone := make(chan error, 1)
 	go func() {
-		_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-candidate", loginReplaceOptions{})
+		_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-candidate>", loginReplaceOptions{})
 		commitDone <- err
 	}()
 	select {
@@ -38,7 +38,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 	}
 	writerDone := make(chan error, 1)
 	go func() {
-		_, err := credentials.SetAPIKeyWithBackend("tskey-api-after-rollback")
+		_, err := credentials.SetAPIKeyWithBackend("tskey-api-<test-only-after-rollback>")
 		writerDone <- err
 	}()
 	select {
@@ -65,7 +65,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 		t.Fatal("concurrent credential writer remained blocked")
 	}
 	stored, err := credentials.GetAPIKey()
-	if err != nil || stored != "tskey-api-after-rollback" {
-		t.Fatalf("rollback overwrote later writer: later_writer_preserved=%v err=%v", stored == "tskey-api-after-rollback", err)
+	if err != nil || stored != "tskey-api-<test-only-after-rollback>" {
+		t.Fatalf("rollback overwrote later writer: later_writer_preserved=%v err=%v", stored == "tskey-api-<test-only-after-rollback>", err)
 	}
 }

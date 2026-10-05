@@ -37,7 +37,7 @@ func withInviteServer(t *testing.T, handler http.HandlerFunc) {
 		return newInviteHTTPClient(&tailscale.Client{
 			BaseURL: baseURL,
 			HTTP:    server.Client(),
-			APIKey:  "tskey-api-placeholder",
+			APIKey:  "tskey-api-<test-only-placeholder>",
 		}), nil
 	}
 	t.Cleanup(func() { inviteClientFn = old })
@@ -82,7 +82,7 @@ func assertInviteRequest(t *testing.T, req *http.Request, method, path, body str
 		t.Fatalf("request = %s %s, want %s %s", req.Method, req.URL.Path, method, path)
 	}
 	user, password, ok := req.BasicAuth()
-	if !ok || user != "tskey-api-placeholder" || password != "" {
+	if !ok || user != "tskey-api-<test-only-placeholder>" || password != "" {
 		t.Fatalf("BasicAuth = %q/%q ok=%v, want API-key placeholder as username and empty password", user, password, ok)
 	}
 	data, err := io.ReadAll(req.Body)

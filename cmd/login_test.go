@@ -123,7 +123,7 @@ func (s *fakeLoginTSNetServer) Close() error {
 
 func TestLoginCredentialFlow_APIToken_Success(t *testing.T) {
 	dir := setupLoginTest(t)
-	mockStdin(t, "1", "tskey-api-test-token-12345")
+	mockStdin(t, "1", "tskey-api-<test-only-test-token-12345>")
 	mockAPIKeySuccess(t)
 
 	err := loginCredentialFlow(loginCmd, dir)
@@ -223,7 +223,7 @@ func TestLoginCredentialFlow_ClientSecret_EmptyKey(t *testing.T) {
 
 func TestLoginCredentialFlow_ClientSecret_WrongPrefix(t *testing.T) {
 	dir := setupLoginTest(t)
-	mockStdin(t, "2", "tskey-api-wrong-type")
+	mockStdin(t, "2", "tskey-api-<test-only-wrong-type>")
 
 	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
@@ -250,7 +250,7 @@ func TestLoginCredentialFlow_ClientSecret_ClientIDRejected(t *testing.T) {
 
 func TestLoginCredentialFlow_APIToken_VerifyFails(t *testing.T) {
 	dir := setupLoginTest(t)
-	mockStdin(t, "1", "tskey-api-test-token-12345")
+	mockStdin(t, "1", "tskey-api-<test-only-test-token-12345>")
 
 	oldVerify := loginVerifyAPIKeyFn
 	t.Cleanup(func() {
@@ -337,7 +337,7 @@ func TestLoginCmd_ExplicitClientSecretBeatsEnvAPIKey(t *testing.T) {
 	t.Cleanup(func() {
 		resetLoginFlags(t)
 	})
-	t.Setenv("TSLINK_API_KEY", "tskey-api-from-env")
+	t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-from-env>")
 	mockClientSecretSuccess(t) // client secret is usable; activation succeeds
 
 	oldEnsure := loginEnsureTagsFn
@@ -377,7 +377,7 @@ func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
 	})
 	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
-	loginCmd.SetIn(strings.NewReader("tskey-api-from-stdin\n"))
+	loginCmd.SetIn(strings.NewReader("tskey-api-<test-only-from-stdin>\n"))
 	if err := loginCmd.Flags().Set("api-key-stdin", "true"); err != nil {
 		t.Fatalf("set api-key-stdin flag: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAPIKey() error = %v", err)
 	}
-	if savedKey != "tskey-api-from-stdin" {
+	if savedKey != "tskey-api-<test-only-from-stdin>" {
 		t.Fatalf("saved API key = %q, want trimmed stdin key", savedKey)
 	}
 }
@@ -400,7 +400,7 @@ func TestLoginCmd_RejectsMixedExplicitCredentials(t *testing.T) {
 	t.Cleanup(func() {
 		resetLoginFlags(t)
 	})
-	if err := loginCmd.Flags().Set("api-key", "tskey-api-explicit"); err != nil {
+	if err := loginCmd.Flags().Set("api-key", "tskey-api-<test-only-explicit>"); err != nil {
 		t.Fatalf("set api-key flag: %v", err)
 	}
 	if err := loginCmd.Flags().Set("client-secret", "tskey-client-explicit"); err != nil {
@@ -420,7 +420,7 @@ func TestLoginCredentialFlow_DoesNotMutateACLByDefault(t *testing.T) {
 	dir := setupLoginTest(t)
 	resetLoginFlags(t)
 	t.Cleanup(func() { resetLoginFlags(t) })
-	mockStdin(t, "1", "tskey-api-test-12345")
+	mockStdin(t, "1", "tskey-api-<test-only-test-12345>")
 	mockAPIKeySuccess(t)
 
 	old := loginEnsureTagsFn
@@ -443,7 +443,7 @@ func TestLoginCredentialFlow_ManageACLCreatesDefaultTag(t *testing.T) {
 	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
 		t.Fatalf("set manage-acl: %v", err)
 	}
-	mockStdin(t, "1", "tskey-api-test-12345")
+	mockStdin(t, "1", "tskey-api-<test-only-test-12345>")
 	mockAPIKeySuccess(t)
 
 	var ensuredTags []string
@@ -548,7 +548,7 @@ func TestLoginWithAPIKeyJSONReportsDegradedEnsureTags(t *testing.T) {
 	}
 
 	got := captureStdout(t, func() {
-		if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+		if err := loginWithAPIKey(loginCmd, "tskey-api-<test-only-new>"); err != nil {
 			t.Fatalf("loginWithAPIKey() error = %v", err)
 		}
 	})
@@ -588,7 +588,7 @@ func TestLoginWithAPIKeyJSONDefaultReturnsSideEffectPlanWithoutACLWrite(t *testi
 	}
 
 	got := captureStdout(t, func() {
-		if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+		if err := loginWithAPIKey(loginCmd, "tskey-api-<test-only-new>"); err != nil {
 			t.Fatalf("loginWithAPIKey() error = %v", err)
 		}
 	})
@@ -642,7 +642,7 @@ func TestLoginWithAPIKeyJSONReportsFileBackendAndDowngrade(t *testing.T) {
 	var stderr bytes.Buffer
 	loginCmd.SetErr(&stderr)
 	got := captureStdout(t, func() {
-		if err := loginWithAPIKey(loginCmd, "tskey-api-synthetic"); err != nil {
+		if err := loginWithAPIKey(loginCmd, "tskey-api-<test-only-synthetic>"); err != nil {
 			t.Fatalf("loginWithAPIKey() error = %v", err)
 		}
 	})
@@ -740,7 +740,7 @@ func TestLoginWithAPIKeyKeepsClientSecretByDefault(t *testing.T) {
 	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
 
-	if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+	if err := loginWithAPIKey(loginCmd, "tskey-api-<test-only-new>"); err != nil {
 		t.Fatalf("loginWithAPIKey() error = %v", err)
 	}
 
@@ -755,7 +755,7 @@ func TestLoginWithAPIKeyKeepsClientSecretByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAPIKey() error = %v", err)
 	}
-	if gotAPIKey != "tskey-api-new" {
+	if gotAPIKey != "tskey-api-<test-only-new>" {
 		t.Fatalf("api key = %q, want newly selected API key", gotAPIKey)
 	}
 	meta, err := credentials.LoadMetadata()
@@ -790,7 +790,7 @@ func TestLoginWithAPIKeyRetireOtherClearsClientSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+	if err := loginWithAPIKey(loginCmd, "tskey-api-<test-only-new>"); err != nil {
 		t.Fatalf("loginWithAPIKey() error = %v", err)
 	}
 
@@ -872,7 +872,7 @@ func TestLoginWithClientSecretKeepsAPIKeyByDefault(t *testing.T) {
 	resetLoginFlags(t)
 	mockClientSecretSuccess(t) // usable secret: activation succeeds and the API key is kept alongside it
 
-	if err := credentials.SetAPIKey("tskey-api-existing"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-existing>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -891,7 +891,7 @@ func TestLoginWithClientSecretKeepsAPIKeyByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAPIKey() error = %v", err)
 	}
-	if gotAPIKey != "tskey-api-existing" {
+	if gotAPIKey != "tskey-api-<test-only-existing>" {
 		t.Fatalf("api key = %q, want kept alongside the new client secret", gotAPIKey)
 	}
 	gotSecret, err := credentials.GetClientSecret()
@@ -908,7 +908,7 @@ func TestLoginWithClientSecretRetireOtherClearsAPIKey(t *testing.T) {
 	resetLoginFlags(t)
 	mockClientSecretSuccess(t)
 
-	if err := credentials.SetAPIKey("tskey-api-stale"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-stale>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 	oldEnsure := loginEnsureTagsFn

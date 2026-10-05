@@ -444,7 +444,7 @@ func TestOptionsAndSanitizer(t *testing.T) {
 	if SafePath("/"+strings.Repeat("x/", 5000)) != "/[redacted]" {
 		t.Fatal("oversize path was not bounded")
 	}
-	for _, path := range []string{"/token/short-secret", "/a/tskey-api-secret", "/a/abcdefghijklmnopqrstuvwxyz0123456789"} {
+	for _, path := range []string{"/token/short-secret", "/a/tskey-test-secret", "/a/abcdefghijklmnopqrstuvwxyz0123456789"} {
 		if strings.Contains(SafePath(path), "secret") || strings.Contains(SafePath(path), "abcdefghijklmnopqrstuvwxyz") {
 			t.Fatalf("token path not redacted %s", SafePath(path))
 		}

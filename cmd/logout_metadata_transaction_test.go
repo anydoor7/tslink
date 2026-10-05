@@ -26,7 +26,7 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 	dir := setupLoginTest(t)
 	useRealLoginTransaction(t)
 	mockAPIKeySuccess(t)
-	if _, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-old", loginReplaceOptions{Now: loginTestNow}); err != nil {
+	if _, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-old>", loginReplaceOptions{Now: loginTestNow}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,7 +40,7 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 		err := originalDelete()
 		loginStarted.Store(true)
 		go func() {
-			_, loginErr = commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-new",
+			_, loginErr = commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-new>",
 				loginReplaceOptions{Now: loginTestNow, ExpiresAt: &userExpiry, ExpiresAtSource: credentials.ExpirySourceUser})
 			close(loginFinished)
 		}()
@@ -84,14 +84,14 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 	}
 
 	key, err := credentials.GetAPIKey()
-	if err != nil || key != "tskey-api-FAKE-new" {
-		t.Fatalf("stored api key is new=%v err=%v, want the concurrent login's key", key == "tskey-api-FAKE-new", err)
+	if err != nil || key != "tskey-api-<test-only-FAKE-new>" {
+		t.Fatalf("stored api key is new=%v err=%v, want the concurrent login's key", key == "tskey-api-<test-only-FAKE-new>", err)
 	}
 	meta, err := credentials.ReadSlotMetadata(credentials.SlotAPIKey)
 	if err != nil || meta == nil {
 		t.Fatalf("LOST UPDATE: logout removed the metadata of a credential committed after its value delete: meta=%+v err=%v", meta, err)
 	}
-	if meta.Fingerprint != credentials.Fingerprint("tskey-api-FAKE-new") || meta.ExpiresAtSource != credentials.ExpirySourceUser {
+	if meta.Fingerprint != credentials.Fingerprint("tskey-api-<test-only-FAKE-new>") || meta.ExpiresAtSource != credentials.ExpirySourceUser {
 		t.Fatalf("metadata = %+v, want the concurrent login's record", meta)
 	}
 }
@@ -111,7 +111,7 @@ func TestLoginLogoutAndLogoutKindCompleteWithoutLockTimeout(t *testing.T) {
 		}
 	}
 	login := func() error {
-		_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-cycle", loginReplaceOptions{Now: loginTestNow})
+		_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-cycle>", loginReplaceOptions{Now: loginTestNow})
 		return err
 	}
 	opts := logoutOptions{PIDPath: filepath.Join(dir, "pid"), AuthKeyPath: filepath.Join(dir, "authkey"), NodesDir: filepath.Join(dir, "nodes"), ConfigDir: dir}
