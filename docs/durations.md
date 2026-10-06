@@ -84,7 +84,7 @@ require explicit `--regrant`; this resets expiry only, never a person's
 revocation tombstone. An expired acknowledged Funnel that has been downgraded
 to private can be reactivated with `--regrant`. Ordinary operator-disabled
 Funnel with a future deadline cannot be reactivated by this command.
-People `update` remains F1's explicit grant replacement/renewal operation;
+People `update` remains the people registry's explicit grant replacement/renewal operation;
 use `extend` for one app and its stricter re-grant guard. No invitations are sent.
 
 `extend` always emits the existing version-1 JSON envelope. Its data includes
@@ -110,5 +110,5 @@ The registry resolves and saves changes under its existing lock. Successful exte
 
 Credential expiry metadata, log windows, polling, health, request timeouts and
 keepalive are not share/access lifetimes. Their syntax and semantics are unchanged.
-F10 guest links and F12 approvals can call `Policy.Resolve` or `Policy.Check`
+Guest links and access-request approvals can call `Policy.Resolve` or `Policy.Check`
 with `Guest`, `Public` or `TailnetMember`; their workflows are not implemented here.
