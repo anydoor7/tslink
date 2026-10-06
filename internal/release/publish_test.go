@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+	"unicode"
 
 	yaml "go.yaml.in/yaml/v2"
 )
@@ -62,8 +63,10 @@ type caskConfig struct {
 		Name  string `yaml:"name"`
 		Token string `yaml:"token"`
 	} `yaml:"repository"`
-	SkipUpload string `yaml:"skip_upload"`
-	Caveats    string `yaml:"caveats"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	SkipUpload  string `yaml:"skip_upload"`
+	Caveats     string `yaml:"caveats"`
 }
 
 type releaseConfig struct {
@@ -71,6 +74,9 @@ type releaseConfig struct {
 		Prerelease string `yaml:"prerelease"`
 	} `yaml:"release"`
 	Casks []caskConfig `yaml:"homebrew_casks"`
+	Nfpms []struct {
+		Description string `yaml:"description"`
+	} `yaml:"nfpms"`
 }
 
 func goreleaserConfig(t *testing.T) releaseConfig {
@@ -301,6 +307,42 @@ func TestCaskCaveatsFitEveryPlatform(t *testing.T) {
 		}
 		if signed && strings.HasPrefix(strings.TrimSpace(text), "tslink is signed") {
 			t.Errorf("signed caveats claim Apple signing without naming macOS:\n%s", text)
+		}
+	}
+}
+
+// TestCaskDescFollowsHomebrewRules applies the Cask Cookbook `desc` rules that
+// brew audit enforces (rubocops/shared/desc_helper.rb): under 80 characters,
+// a capital first letter, no leading article, no cask name, no platform and
+// no full stop. The Linux packages carry the same description.
+func TestCaskDescFollowsHomebrewRules(t *testing.T) {
+	cfg := goreleaserConfig(t)
+	cask := cfg.Casks[0]
+	desc := cask.Description
+	words := strings.Fields(desc)
+	if len(words) == 0 {
+		t.Fatal("homebrew_casks description is empty")
+	}
+	first := words[0]
+	lower := strings.ToLower(desc)
+	for _, rule := range []struct {
+		broken bool
+		what   string
+	}{
+		{len([]rune(desc)) > 80, "is longer than 80 characters"},
+		{strings.TrimSpace(desc) != desc || strings.HasSuffix(desc, "."), "has surrounding spaces or a full stop"},
+		{!unicode.IsUpper([]rune(desc)[0]), "does not start with a capital letter"},
+		{strings.EqualFold(first, "a") || strings.EqualFold(first, "an") || strings.EqualFold(first, "the"), "starts with an article"},
+		{strings.Contains(lower, strings.ToLower(cask.Name)), "contains the cask name"},
+		{strings.Contains(lower, "macos") || strings.Contains(lower, "os x"), "contains the platform"},
+	} {
+		if rule.broken {
+			t.Errorf("cask desc %q %s", desc, rule.what)
+		}
+	}
+	for _, pkg := range cfg.Nfpms {
+		if pkg.Description != desc {
+			t.Errorf("nfpms description %q differs from the cask desc %q", pkg.Description, desc)
 		}
 	}
 }

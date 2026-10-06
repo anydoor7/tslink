@@ -116,7 +116,7 @@ nfpms:
     vendor: anydoor7
     homepage: "https://github.com/anydoor7/tslink"
     maintainer: "anydoor7 project maintainers"
-    description: "Private Tailscale gateway for local services"
+    description: "Share self-hosted apps over Tailscale with people, deadlines and guest links"
     license: "Apache-2.0"
     formats:
       - deb
@@ -154,7 +154,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/anydoor7/tslink"
-    description: "Private Tailscale gateway for local services"
+    description: "Share self-hosted apps over Tailscale with people, deadlines and guest links"
     skip_upload: auto
     commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
     # The darwin binaries are Developer ID signed and notarized by Apple (see
