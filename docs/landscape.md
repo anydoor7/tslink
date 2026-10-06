@@ -47,7 +47,7 @@ tslink add myapp --proxy localhost:3000
 - **TCP proxy**: expose databases, SSH, Redis, and other non-HTTP services
 - **HTTP access control**: `--allow user@example.com,tag:admin` for proxy and file services
 - **Safety diagnostics**: `tslink doctor`, `tslink status --urls`, and `tslink access explain` make local evidence and unknown external policy layers explicit
-- **Agent-ready automation**: every command except the stdio `tslink mcp` server accepts `--json` and answers with one versioned envelope; `tslink mcp` (stdio) and `tslink serve --mcp` (tailnet-only remote control plane) expose the same MCP tools
+- **Agent-ready automation**: every command in the published manifest except the stdio `tslink mcp` server accepts `--json` and answers with one versioned envelope; `tslink mcp` (stdio) and `tslink serve --mcp` (tailnet-only remote control plane) expose the same MCP tools
 - **Personal templates**: preview and apply small private service suites without overwriting existing services
 - **Headscale compatibility path**: advanced/self-hosted control-server use via `--control-url`
 - **Funnel guardrails**: public internet exposure is opt-in and requires explicit `--public` acknowledgement

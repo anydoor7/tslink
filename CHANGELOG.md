@@ -40,7 +40,7 @@ First public release. TSLink gives each app on your computer or server, whether 
 
 ### Agents and automation
 
-- Every command except `tslink mcp` accepts `--json` and returns a versioned `tslink.result` envelope. `tslink manifest --json` lists commands, flags, exit codes and error codes.
+- Every command in the published manifest except `tslink mcp` accepts `--json` and returns a versioned `tslink.result` envelope; Cobra's `help` and `completion` are not in the manifest and print plain text. `tslink manifest --json` lists those commands with their flags, exit codes and error codes.
 - `tslink mcp` is an MCP server over stdio. `tslink serve --mcp` adds a remote MCP endpoint on its own tailnet-only node; it is never published through Funnel.
 - Scoped roles `viewer`, `app-operator` and `people-manager` limit an agent to listed apps, a fixed set of tools and a maximum grant duration, while `owner` keeps full control. Use `tslink mcp --scope` locally, or `mcp.bindings` for remote callers, who are identified by Tailscale login or tag. `tslink mcp-audit` reads the journal of changes made through MCP.
 
