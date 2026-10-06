@@ -265,6 +265,68 @@ func TestRulesetConditionsComeFromDetail(t *testing.T) {
 	}
 }
 
+// tagRulesets serves one active refs/tags/v* ruleset per exclude list, as
+// GitHub returns them: summaries in the list, conditions in each detail.
+func tagRulesets(excludes ...string) fakeFetcher {
+	f := fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{}}
+	var list []string
+	for i, exclude := range excludes {
+		id := strconv.Itoa(7 + i)
+		list = append(list, `{"id":`+id+`,"enforcement":"active","target":"tag"}`)
+		f.resp["/repos/o/r/rulesets/"+id] = struct {
+			code int
+			body string
+			err  error
+		}{200, `{"id":` + id + `,"enforcement":"active","target":"tag","conditions":{"ref_name":{"include":["refs/tags/v*"],"exclude":` + exclude + `}},"rules":[{"type":"update"},{"type":"deletion"}]}`, nil}
+	}
+	f.resp["/repos/o/r/rulesets"] = struct {
+		code int
+		body string
+		err  error
+	}{200, "[" + strings.Join(list, ",") + "]", nil}
+	return f
+}
+
+// TestRulesetExclusionsDefeatReleaseTagCoverage: a ruleset whose exclusions
+// can match a v* release tag does not protect release tags, one with an
+// exclusion this tool cannot evaluate is UNKNOWN, and exclusions outside
+// refs/tags/v leave it READY.
+func TestRulesetExclusionsDefeatReleaseTagCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		excludes []string
+		want     Status
+	}{
+		{"no exclusions", []string{`[]`}, Ready},
+		{"exclusions omitted", []string{`null`}, Ready},
+		{"other tags excluded", []string{`["refs/tags/nightly-*"]`}, Ready},
+		{"branches excluded", []string{`["refs/heads/v*","~DEFAULT_BRANCH"]`}, Ready},
+		{"every release tag excluded", []string{`["refs/tags/v*"]`}, NotReady},
+		{"one release tag excluded", []string{`["refs/tags/nightly-*","refs/tags/v0.1.0"]`}, NotReady},
+		{"pre-release tags excluded", []string{`["refs/tags/v*-rc*"]`}, NotReady},
+		{"every tag excluded", []string{`["refs/tags/*"]`}, NotReady},
+		{"bare tag pattern excluded", []string{`["v*"]`}, NotReady},
+		{"all refs excluded", []string{`["~ALL"]`}, NotReady},
+		{"match beats an unclear exclusion", []string{`["refs/*/v*","refs/tags/v*"]`}, NotReady},
+		{"wildcard before the tag name", []string{`["refs/*/v*"]`}, Unknown},
+		{"class where the tag name starts", []string{`["refs/tags/[uvw]*"]`}, Unknown},
+		{"unknown token", []string{`["~NEW_TOKEN"]`}, Unknown},
+		{"another ruleset covers", []string{`["refs/tags/v*"]`, `[]`}, Ready},
+		{"another ruleset is unclear", []string{`["refs/tags/v*"]`, `["refs/*/v*"]`}, Unknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkRulesets(tagRulesets(tc.excludes...), "o/r")
+			if got.Status != tc.want {
+				t.Fatalf("exclusions %v: checkRulesets = %s (%s), want %s", tc.excludes, got.Status, got.Detail, tc.want)
+			}
+		})
+	}
+}
+
 func TestUnrelatedRulesetTargetIsNotReady(t *testing.T) {
 	f := fakeFetcher{resp: map[string]struct {
 		code int

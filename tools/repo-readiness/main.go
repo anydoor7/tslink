@@ -237,6 +237,8 @@ func checkRulesets(f Fetcher, repo string) Result {
 	}
 	_ = json.Unmarshal(body, &summaries)
 	activeTagV := 0
+	// A ruleset whose exclusions match release tags does not protect them.
+	var excluded, undecided []string
 	for _, summary := range summaries {
 		if summary.Enforcement != "active" || !rulesetTargetMayCoverTags(summary.Target) {
 			continue
@@ -254,20 +256,46 @@ func checkRulesets(f Fetcher, repo string) Result {
 			Conditions  struct {
 				RefName struct {
 					Include []string `json:"include"`
+					Exclude []string `json:"exclude"`
 				} `json:"ref_name"`
 			} `json:"conditions"`
 		}
 		if err := json.Unmarshal(body, &detail); err != nil {
 			return Result{"rulesets", Unknown, fmt.Sprintf("could not parse ruleset %d: %v", summary.ID, err)}
 		}
-		if detail.Enforcement == "active" && rulesetTargetsReleaseTags(detail.Target, detail.Conditions.RefName.Include) {
+		if detail.Enforcement != "active" || !rulesetTargetsReleaseTags(detail.Target, detail.Conditions.RefName.Include) {
+			continue
+		}
+		var matched, unclear []string
+		for _, exclude := range detail.Conditions.RefName.Exclude {
+			switch match, decided := excludeMayMatchReleaseTags(exclude); {
+			case match:
+				matched = append(matched, fmt.Sprintf("ruleset %d excludes %q", summary.ID, exclude))
+			case !decided:
+				unclear = append(unclear, fmt.Sprintf("ruleset %d excludes %q", summary.ID, exclude))
+			}
+		}
+		switch {
+		case len(matched) > 0:
+			excluded = append(excluded, matched...)
+		case len(unclear) > 0:
+			undecided = append(undecided, unclear...)
+		default:
 			activeTagV++
 		}
 	}
-	if activeTagV == 0 {
-		return Result{"rulesets", NotReady, "no active ruleset targets refs/tags/v*; unrelated rulesets are insufficient"}
+	if activeTagV > 0 {
+		return Result{"rulesets", Ready, fmt.Sprintf("%d active release-tag ruleset(s)", activeTagV)}
 	}
-	return Result{"rulesets", Ready, fmt.Sprintf("%d active release-tag ruleset(s)", activeTagV)}
+	// A ruleset with an exclusion this tool cannot evaluate may still cover
+	// every release tag.
+	if len(undecided) > 0 {
+		return Result{"rulesets", Unknown, "cannot tell whether these exclusions match release tags: " + strings.Join(undecided, "; ")}
+	}
+	if len(excluded) > 0 {
+		return Result{"rulesets", NotReady, "release tags are excluded: " + strings.Join(excluded, "; ")}
+	}
+	return Result{"rulesets", NotReady, "no active ruleset targets refs/tags/v*; unrelated rulesets are insufficient"}
 }
 
 func rulesetTargetMayCoverTags(target string) bool {
@@ -286,6 +314,44 @@ func rulesetTargetsReleaseTags(target string, includes []string) bool {
 		}
 	}
 	return false
+}
+
+// releaseTagPrefix starts the full ref of every release tag.
+const releaseTagPrefix = "refs/tags/v"
+
+// excludeMayMatchReleaseTags reports whether a ruleset exclude pattern can
+// match a refs/tags/v* release tag. GitHub matches fnmatch patterns against the
+// full ref; a bare pattern is also read as a tag name, as the include check
+// reads v*. decided is false when this check does not work out the pattern's
+// reach: an unknown ~ token, a wildcard before the tag name, or a class, brace
+// or escape where the tag name starts.
+func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
+	pattern = strings.TrimSpace(pattern)
+	switch {
+	case pattern == "":
+		return false, true
+	case pattern == "~ALL":
+		return true, true
+	case pattern == "~DEFAULT_BRANCH":
+		return false, true
+	case strings.HasPrefix(pattern, "~"):
+		return false, false
+	}
+	if !strings.HasPrefix(pattern, "refs/") {
+		pattern = "refs/tags/" + pattern
+	}
+	if strings.HasPrefix(pattern, releaseTagPrefix) {
+		return true, true
+	}
+	special := strings.IndexAny(pattern, `*?[{\`)
+	if special < 0 || !strings.HasPrefix(releaseTagPrefix, pattern[:special]) {
+		return false, true
+	}
+	// A wildcard where the tag name starts can match any release tag.
+	if special == len("refs/tags/") && (pattern[special] == '*' || pattern[special] == '?') {
+		return true, true
+	}
+	return false, false
 }
 
 func checkReleaseEnvironment(f Fetcher, repo string) Result {
