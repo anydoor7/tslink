@@ -139,6 +139,15 @@ func FlushGuestCounters(path string) error {
 			recordGuestCounterError(path, issues[0])
 			return issues[0]
 		}
+		// A commit since the unlocked check may already have folded and
+		// acknowledged the counters. Rewrite only if this save could still
+		// publish counters or clear a retained failure.
+		guestUsageState.Lock()
+		idle := len(guestUsageState.pending[path]) == 0 && guestUsageState.errors[path] == nil
+		guestUsageState.Unlock()
+		if idle {
+			return nil
+		}
 		return save(path, reg)
 	})
 	if err != nil {

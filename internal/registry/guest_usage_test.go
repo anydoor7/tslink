@@ -2,13 +2,16 @@ package registry
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/testwait"
 )
@@ -226,4 +229,214 @@ func TestGuestCounterFlushMissingAndCorruptRegistry(t *testing.T) {
 	if err != nil || reg.Guests[0].Uses != 1 {
 		t.Fatal("failed batch lost on recovery", err)
 	}
+}
+
+// inFlushWindow runs window once inside FlushGuestCounters, after its unlocked
+// pending check and before it tries the writer lock: where the gate monitor's
+// flush meets the commit that woke it.
+func inFlushWindow(t *testing.T, window func()) *bool {
+	t.Helper()
+	old := tryLockFn
+	t.Cleanup(func() { tryLockFn = old })
+	ran := false
+	tryLockFn = func(f *os.File) (bool, error) {
+		if !ran {
+			ran = true
+			window()
+		}
+		return old(f)
+	}
+	return &ran
+}
+
+// countRegistryPublications counts replacements in path's directory through
+// the post-rename directory sync. fail is consulted on each count.
+func countRegistryPublications(t *testing.T, path string, fail func() error) *int {
+	t.Helper()
+	count := 0
+	dir := filepath.Clean(filepath.Dir(path))
+	t.Cleanup(atomicfile.SetDirectorySyncForTest(func(d string) error {
+		if filepath.Clean(d) != dir {
+			return nil
+		}
+		count++
+		if fail != nil {
+			return fail()
+		}
+		return nil
+	}))
+	return &count
+}
+
+// registryIdentity reads the identity through a handle: on Windows a path Stat
+// loads the file ID lazily, at comparison time, after the rewrite under test.
+func registryIdentity(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	f, err := openRegistryFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+func twoGuests(t *testing.T, path string) (GuestView, GuestView) {
+	t.Helper()
+	first, _, err := CreateGuest(path, guestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := CreateGuest(path, guestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return first, second
+}
+
+func TestGuestCounterFlushSkipsCountersACommitFolded(t *testing.T) {
+	path := guestRegistry(t)
+	view, other := twoGuests(t, path)
+	if _, reason := CheckGuest(path, "photos", view.ID, guestTestNow, true, true); reason != "allowed" {
+		t.Fatal(reason)
+	}
+	publications := countRegistryPublications(t, path, nil)
+	var folded os.FileInfo
+	var before int
+	ran := inFlushWindow(t, func() {
+		if _, err := RevokeGuest(path, other.ID, guestTestNow); err != nil {
+			t.Fatal(err)
+		}
+		folded = registryIdentity(t, path)
+		before = *publications
+	})
+	if err := FlushGuestCounters(path); err != nil {
+		t.Fatal(err)
+	}
+	if !*ran {
+		t.Fatal("flush returned before its window: the unlocked check saw no counters")
+	}
+	if before == 0 {
+		t.Fatal("publication probe missed the window commit")
+	}
+	if len(snapshotGuestUsage(path)) != 0 || GuestCounterError(path) != nil {
+		t.Fatal("window commit did not fold and confirm the counters")
+	}
+	reg, _, err := guestPreflight(path)
+	if err != nil || reg.Guests[0].Uses != 1 || reg.Guests[0].Sessions != 1 || !reg.Guests[1].Revoked {
+		t.Fatal("window commit state", err)
+	}
+	if got := *publications - before; got != 0 {
+		t.Fatalf("flush rewrote the registry %d time(s) with nothing pending", got)
+	}
+	if !os.SameFile(folded, registryIdentity(t, path)) {
+		t.Fatal("flush replaced the registry file with nothing pending")
+	}
+
+	// Control: the same probes see a flush that has counters to publish.
+	if _, reason := CheckGuest(path, "photos", view.ID, guestTestNow.Add(time.Minute), true, false); reason != "allowed" {
+		t.Fatal(reason)
+	}
+	if err := FlushGuestCounters(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := *publications - before; got != 1 {
+		t.Fatalf("publication probe saw %d rewrites for one flush with counters", got)
+	}
+	if os.SameFile(folded, registryIdentity(t, path)) {
+		t.Fatal("identity probe missed a rewrite")
+	}
+	reg, _, err = guestPreflight(path)
+	if err != nil || reg.Guests[0].Uses != 2 || reg.Guests[0].Sessions != 1 {
+		t.Fatal("control flush did not publish", err)
+	}
+	t.Logf("window commit published %d time(s); flush after it: 0 rewrites, same file; control flush: 1 rewrite, new file", before)
+}
+
+func TestGuestCounterFlushPublishesCountersRecordedAfterItsCheck(t *testing.T) {
+	path := guestRegistry(t)
+	view, other := twoGuests(t, path)
+	if _, reason := CheckGuest(path, "photos", view.ID, guestTestNow, true, true); reason != "allowed" {
+		t.Fatal(reason)
+	}
+	publications := countRegistryPublications(t, path, nil)
+	var before int
+	ran := inFlushWindow(t, func() {
+		if _, err := RevokeGuest(path, other.ID, guestTestNow); err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshotGuestUsage(path)) != 0 {
+			t.Fatal("window commit left the first batch pending")
+		}
+		before = *publications
+		if _, reason := CheckGuest(path, "photos", view.ID, guestTestNow.Add(time.Minute), true, false); reason != "allowed" {
+			t.Fatal(reason)
+		}
+	})
+	if err := FlushGuestCounters(path); err != nil {
+		t.Fatal(err)
+	}
+	if !*ran {
+		t.Fatal("flush returned before its window: the unlocked check saw no counters")
+	}
+	if got := *publications - before; got != 1 {
+		t.Fatalf("flush published %d time(s) for counters recorded in its window", got)
+	}
+	reg, _, err := guestPreflight(path)
+	last := reg.Guests[0].LastUsedAt
+	if err != nil || reg.Guests[0].Uses != 2 || reg.Guests[0].Sessions != 1 || last == nil || !last.Equal(guestTestNow.Add(time.Minute)) {
+		t.Fatal("counters recorded after the unlocked check were not persisted", err)
+	}
+	if len(snapshotGuestUsage(path)) != 0 || GuestCounterError(path) != nil {
+		t.Fatal("persisted batch not acknowledged as durable")
+	}
+	t.Log("commit folded 1 use/1 session in the window; 1 use recorded after it was flushed: disk 2 uses/1 session, nothing pending")
+}
+
+func TestGuestCounterFlushConfirmsAPublicationTheCommitLeftUnconfirmed(t *testing.T) {
+	path := guestRegistry(t)
+	view, other := twoGuests(t, path)
+	if _, reason := CheckGuest(path, "photos", view.ID, guestTestNow, true, true); reason != "allowed" {
+		t.Fatal(reason)
+	}
+	syncFailure := errors.New("injected directory fsync failure")
+	failing := true
+	publications := countRegistryPublications(t, path, func() error {
+		if failing {
+			return syncFailure
+		}
+		return nil
+	})
+	var before int
+	ran := inFlushWindow(t, func() {
+		if _, err := RevokeGuest(path, other.ID, guestTestNow); !atomicfile.IsPublished(err) || !errors.Is(err, syncFailure) {
+			t.Fatal("window commit was not published with unconfirmed durability", err)
+		}
+		// Acknowledged out of pending; only the retained failure remains.
+		if len(snapshotGuestUsage(path)) != 0 || !atomicfile.IsPublished(GuestCounterError(path)) {
+			t.Fatal("window state is not a published, unconfirmed batch")
+		}
+		failing = false
+		before = *publications
+	})
+	if err := FlushGuestCounters(path); err != nil {
+		t.Fatal(err)
+	}
+	if !*ran {
+		t.Fatal("flush returned before its window: the unlocked check saw no counters")
+	}
+	if got := *publications - before; got != 1 {
+		t.Fatalf("flush published %d time(s) to confirm an unconfirmed batch", got)
+	}
+	if GuestCounterError(path) != nil {
+		t.Fatal("successful flush left the durability failure retained")
+	}
+	reg, _, err := guestPreflight(path)
+	if err != nil || reg.Guests[0].Uses != 1 || reg.Guests[0].Sessions != 1 || !reg.Guests[1].Revoked {
+		t.Fatal("confirmed batch changed or reapplied", err)
+	}
+	t.Log("commit published 1 use/1 session with a failed directory sync; flush rewrote once and cleared the failure; disk 1 use/1 session")
 }
