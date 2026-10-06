@@ -2,18 +2,38 @@
 
 ## Before you begin
 
-You need Go 1.26.6+, Git, a Tailscale account with
-[MagicDNS and HTTPS enabled](https://tailscale.com/docs/how-to/set-up-https-certificates),
+You need a Tailscale account with
+[MagicDNS and HTTPS enabled](https://tailscale.com/docs/how-to/set-up-https-certificates)
 and a receiving device signed into your tailnet. Tailnet policy must allow the connection.
 TSLink embeds Tailscale on the publishing host, so no separate Tailscale installation is needed there.
+Building from source also needs Go 1.26.6+ and Git.
 
 ## Install
 
 The installation and page-creation examples below use **bash or zsh**.
 For Windows requirements, see [platform support](platforms.md).
 
-Prebuilt releases and a Homebrew cask
-have not been published; install from source:
+On macOS and Linux, install the Homebrew cask. Keep the fully qualified name:
+Homebrew 6 and later refuse an unqualified cask from a third-party tap they do not trust,
+and naming the cask in full trusts it. The macOS binary is signed with a Developer ID
+certificate and notarized by Apple.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+To upgrade, run `brew upgrade --cask tslink`. If TSLink runs as a background service,
+run `tslink install` again afterwards so the service starts the upgraded binary.
+
+On Windows, download `tslink_<version>_windows_<arch>.zip` from the
+[latest release](https://github.com/anydoor7/tslink/releases/latest), check it against
+`checksums.txt`, and run `tslink install` from the extracted folder to start TSLink at sign-in.
+The zip is not Authenticode-signed; its integrity comes from the Sigstore-signed checksums
+and build-provenance attestations described in [Verify a release](verify-release.md).
+Linux `.deb` and `.rpm` packages are on the same release page; see
+[Release artifacts](release-artifacts.md).
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

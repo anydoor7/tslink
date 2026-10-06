@@ -1,8 +1,8 @@
 # Release Artifacts
 
-There is no public tag/release or populated Homebrew tap yet. Before the first
-published release/readback, install from source. After that external gate
-passes, GitHub Releases are expected to publish these installable artifacts:
+Stable releases, starting with v0.1.0, publish the installable artifacts below
+on GitHub Releases and update the `anydoor7/homebrew-tap` cask. Installing from
+source with Git and Go remains an alternative.
 
 After a stable release is published and the `anydoor7/homebrew-tap` repository is populated, install with Homebrew on macOS or Linux:
 
