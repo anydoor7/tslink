@@ -14,9 +14,11 @@ import (
 	yaml "go.yaml.in/yaml/v2"
 )
 
-// stableOnly is the release.yml predicate for a stable tag. Hyphenated tags
-// are pre-releases, matching GoReleaser's semver pre-release detection used by
-// `release.prerelease: auto` and `homebrew_casks.skip_upload: auto`.
+// stableOnly is the release.yml predicate for a stable tag. The publish job's
+// first step rejects tags with +build metadata, so in every tag that gets
+// further a hyphen starts SemVer's pre-release field, which GoReleaser's
+// `release.prerelease: auto` and `homebrew_casks.skip_upload: auto` read.
+// TestReleaseTagStepExecutes runs that step.
 const stableOnly = "${{ !contains(github.ref_name, '-') }}"
 
 const (
@@ -258,10 +260,12 @@ func TestStableCredentialGateExecutes(t *testing.T) {
 	}
 }
 
-// TestPrereleaseTagsStayPrereleases keeps the three pre-release decisions
-// aligned: GitHub marks hyphenated tags as pre-releases (never latest), the
-// cask skips the tap for them, and release.yml applies its stable-only
-// credential requirements to the same tags.
+// TestPrereleaseTagsStayPrereleases pins the three pre-release decisions:
+// GoReleaser marks tags with a SemVer pre-release field as pre-releases (never
+// latest), the cask skips the tap for them, and release.yml applies its
+// stable-only credential requirements to tags without a hyphen. The last
+// agrees with the first two only for tags without +build metadata, which
+// TestReleaseTagStepExecutes shows the publish job's first step enforces.
 func TestPrereleaseTagsStayPrereleases(t *testing.T) {
 	cfg := goreleaserConfig(t)
 	if cfg.Release.Prerelease != "auto" {
@@ -274,6 +278,88 @@ func TestPrereleaseTagsStayPrereleases(t *testing.T) {
 		if strings.Contains(step.If, "github.ref_name") && step.If != stableOnly {
 			t.Errorf("publish step %q uses tag predicate %q, want %s", step.Name, step.If, stableOnly)
 		}
+	}
+}
+
+// The tag check is the script step that reads the tag and writes no notes.
+func tagCheckIndex(t *testing.T, steps []publishStep) int {
+	return stepIndex(t, steps, "release tag check", func(s publishStep) bool {
+		return s.Env["TAG"] == refNameExpr && s.Env["RELEASE_NOTES"] == "" && s.Run != ""
+	})
+}
+
+// semverPrerelease returns the pre-release field of a SemVer tag: the text
+// after the first hyphen of the version before any +build metadata.
+func semverPrerelease(tag string) string {
+	version, _, _ := strings.Cut(tag, "+")
+	_, prerelease, _ := strings.Cut(version, "-")
+	return prerelease
+}
+
+// TestReleaseTagStepExecutes runs the checked-in tag check, which must come
+// before every other publish step. It accepts only SemVer versions without
+// build metadata, and for each tag it accepts, the hyphen test in stableOnly
+// must classify the tag as SemVer does. v0.1.0+build-1 shows why "+" is
+// refused: GoReleaser publishes it as a stable release, but stableOnly would
+// skip the signing gate and the tap token for it.
+func TestReleaseTagStepExecutes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executes the ubuntu publish step with bash; covered on Linux and macOS")
+	}
+	steps := publishSteps(t)
+	check := tagCheckIndex(t, steps)
+	if check != 0 {
+		t.Fatalf("release tag check is publish step %d, want the first step", check)
+	}
+	step := steps[check]
+	if step.If != "" {
+		t.Errorf("release tag check runs only if %q; every tag must pass it", step.If)
+	}
+	if strings.Contains(step.Run, "${{") {
+		t.Errorf("release tag check interpolates an expression; pass values through env:\n%s", step.Run)
+	}
+	for _, tc := range []struct {
+		tag        string
+		ok         bool
+		prerelease bool
+	}{
+		{tag: "v0.1.0", ok: true},
+		{tag: "v10.20.30", ok: true},
+		{tag: "v0.2.0-rc.1", ok: true, prerelease: true},
+		{tag: "v1.0.0-alpha-beta.0a.0", ok: true, prerelease: true},
+		{tag: "v0.1.0+build-1"},
+		{tag: "v0.1.0+build"},
+		{tag: "v0.1.0-rc.1+build-1"},
+		{tag: "v01.0.0"},
+		{tag: "v0.01.0"},
+		{tag: "v1.0.0-rc.01"},
+		{tag: "v1.0.0-"},
+		{tag: "v1.0.0-rc..1"},
+		{tag: "0.1.0"},
+		{tag: "v0.1"},
+		{tag: "v0.1.0.1"},
+		{tag: "release-v0.1.0"},
+	} {
+		t.Run(tc.tag, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", step.Run)
+			cmd.Dir = t.TempDir()
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TAG=" + tc.tag}
+			out, err := cmd.CombinedOutput()
+			if !tc.ok {
+				if err == nil || !strings.Contains(string(out), "::error::") || !strings.Contains(string(out), tc.tag) {
+					t.Fatalf("tag %s: want a failure naming it, got err=%v\n%s", tc.tag, err, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("tag %s rejected: %v\n%s", tc.tag, err, out)
+			}
+			// stableOnly is !contains(github.ref_name, '-').
+			hyphenated := strings.Contains(tc.tag, "-")
+			if semver := semverPrerelease(tc.tag) != ""; hyphenated != semver || semver != tc.prerelease {
+				t.Fatalf("tag %s: stableOnly treats it as a pre-release: %v; SemVer: %v; want %v", tc.tag, hyphenated, semver, tc.prerelease)
+			}
+		})
 	}
 }
 

@@ -36,6 +36,24 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # Only a SemVer version tag without build metadata can publish. GoReleaser
+      # reads a pre-release from SemVer's pre-release field, but build
+      # metadata may contain hyphens too: v0.1.0+build-1 is a stable version
+      # with a hyphen. Without "+", any hyphen in an accepted tag starts the
+      # pre-release field, so the steps below that treat hyphenated tags as
+      # pre-releases agree with GoReleaser's prerelease: auto and
+      # skip_upload: auto.
+      - name: Require a SemVer release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver="^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?$"
+          if ! [[ "${TAG}" =~ ${semver} ]]; then
+            echo "::error::Tag ${TAG} is not a release version: use vMAJOR.MINOR.PATCH with an optional -pre-release and no +build metadata"
+            exit 1
+          fi
       - name: Require repository release authorization
         env:
           TSLINK_RELEASE_PUBLISH_ENABLED: ${{ vars.TSLINK_RELEASE_PUBLISH_ENABLED }}

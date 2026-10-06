@@ -52,8 +52,10 @@ checksum:
   name_template: "checksums.txt"
 
 # A tag with a pre-release suffix (v0.2.0-rc.1) becomes a GitHub pre-release
-# and never the latest release. release.yml treats the same hyphenated tags as
-# pre-releases, and homebrew_casks skip_upload: auto keeps them out of the tap.
+# and never the latest release, and homebrew_casks skip_upload: auto keeps it
+# out of the tap. release.yml publishes only tags without +build metadata, so
+# a hyphen there always starts the pre-release field and its hyphen test for
+# pre-releases picks the same tags.
 release:
   prerelease: auto
 
