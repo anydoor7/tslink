@@ -481,9 +481,10 @@ func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []st
 	return nil
 }
 
-// lockFn, unlockFn, and marshalFn are test hooks.
+// lockFn, tryLockFn, unlockFn, and marshalFn are test hooks.
 var (
 	lockFn    = filelock.Lock
+	tryLockFn = filelock.TryLock
 	unlockFn  = filelock.Unlock
 	marshalFn = json.MarshalIndent
 )
@@ -1436,7 +1437,7 @@ func tryWithLock(regPath string, fn func() error) (bool, error) {
 		return false, err
 	}
 	defer lockFile.Close()
-	acquired, err := filelock.TryLock(lockFile)
+	acquired, err := tryLockFn(lockFile)
 	if err != nil || !acquired {
 		return acquired, err
 	}
