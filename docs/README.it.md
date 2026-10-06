@@ -5,9 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Condividi le tue app self-hosted con le persone che scegli, per tutto il tempo che vuoi.</strong></p>
+<p align="center"><strong>Dai a ogni app sul tuo computer o server un proprio indirizzo privato nella tua rete Tailscale, e decidi chi può raggiungerla.</strong></p>
 
-TSLink assegna a ogni app sul tuo computer o server un proprio indirizzo Tailscale privato. Concedi l'accesso a persone specifiche fino a una scadenza, invia un link ospite per browser a chi non usa Tailscale e revoca l'uno o l'altro con un solo comando. Fallo tu o tramite un agente IA limitato al ruolo che gli assegni. Progetto indipendente che funziona con Tailscale.
+Apri le tue app web, cartelle, API di modelli e database dal tuo telefono e dal tuo portatile, con controlli di salute e cronologia accessi per ciascuna. Anche i tuoi agenti IA possono pubblicarle e controllarle, entro il ruolo che gli assegni. Quando qualcun altro deve entrare, concedi l'accesso a una persona specifica fino a una data, oppure apri un'app web a Internet per un periodo limitato.
+
+**Richiede Tailscale.** Ti serve un account Tailscale (gratuito per uso personale), e ogni dispositivo che apre un'app privata deve avere l'app Tailscale; ospiti e visitatori pubblici hanno bisogno solo di un browser. TSLink è un progetto indipendente, non realizzato né approvato da Tailscale. [Requisiti](#requirements)
 
 <p align="center"><a href="#quickstart">Avvio rapido</a> · <a href="#agents">Per gli agenti</a> · <a href="comparison.md">Confronto con Serve, ngrok e Cloudflare</a> · <a href="#documentation">Documentazione</a></p>
 <p align="center">
@@ -16,16 +18,53 @@ TSLink assegna a ogni app sul tuo computer o server un proprio indirizzo Tailsca
 
 <a id="use-cases"></a>
 
-## Le tue app a portata di mano
+## Cosa puoi fare
 
-| Cosa ti serve | Cosa offre TSLink |
+### Raggiungere le tue app
+
+- **Un indirizzo per ogni app.** `tslink share 3000`, `tslink share ./photos` o `tslink add db --tcp localhost:5432` dà a un'app web, una cartella, un file o un servizio TCP un proprio indirizzo privato nella tua tailnet (la tua rete Tailscale privata), ad esempio `https://photos.<tailnet>.ts.net`. Ogni app è un dispositivo Tailscale separato, quindi apri le app per nome invece che per indirizzo IP e porta.
+- **Private, a meno che tu non scelga diversamente.** Le app restano dentro la tua tailnet, e le sue regole decidono quali dispositivi possono connettersi. Nulla arriva su Internet finché non crei un link ospite o pubblichi un'app.
+- **Tutto in un posto.** `tslink status --urls` elenca ogni app su questo computer, e una home page privata facoltativa mostra indirizzo e stato di ciascuna. [Portale](portal.md)
+- **Saperlo quando qualcosa si rompe.** I controlli di salute in background possono avvisarti tramite un comando o un webhook quando un'app si ferma o torna attiva, o quando il suo accesso a Tailscale sta per scadere. La cronologia accessi mostra chi ha aperto quale app e quando, comprese le richieste rifiutate. [Salute e avvisi](health-and-alerts.md) · [Cronologia accessi](access-log.md)
+- **App comuni pronte all'uso.** Le ricette coprono 15 app self-hosted, tra cui Home Assistant, Jellyfin, Immich e Ollama, e `tslink apps detect` trova le app già in esecuzione. Le app di foto e video ricevono [limiti di caricamento](sharing.md) adatti ai file grandi. [Ricette per app](apps.md) · [IA locale](local-ai.md)
+
+### Lascia lavorare i tuoi agenti
+
+Un agente che avvia un server di sviluppo, un'anteprima o un'API di modello locale la lascia su `localhost`, dove il tuo telefono e gli altri computer non possono aprirla. TSLink permette all'agente di pubblicarla in privato, dirti l'indirizzo esatto e poi rimuoverla, entro i limiti che stabilisci.
+
+- **Condividi, controlla, annulla.** `share` restituisce il nome registrato e l'URL esatto oppure un link di accesso da aprire. `url --wait` e `status` segnalano quando l'app è attiva, e `remove` (`unshare` in MCP) la rimuove. [Guida per agenti](agent-quickstart.md)
+- **Fatto per l'automazione.** I comandi accettano `--json` e restituiscono un risultato con versione e codici di errore stabili. `tslink mcp` offre le stesse operazioni a un client MCP locale, e `tslink serve --mcp` agli agenti sugli altri tuoi dispositivi attraverso la tailnet. [Automazione JSON](json-automation.md) · [MCP remoto](remote-mcp.md)
+- **Autorità limitata.** Un agente che esegui tu agisce come proprietario. Agli altri agenti dai un ruolo ridotto (`viewer`, `app-operator` o `people-manager`) che copre solo le app che indichi e limita la durata massima di ogni accesso che concedono. Le modifiche fatte tramite MCP vengono registrate e `tslink mcp-audit` le mostra. I ruoli limitano gli strumenti di TSLink, non la shell o i file dell'agente stesso. [Permessi MCP](mcp-scopes.md)
+
+### Condividi con le persone che scegli
+
+- **Persone specifiche, fino a una data.** `tslink people add alice@example.com --apps photos,notes --for 7d` consente a quell'account Tailscale di aprire quelle app web e di file fino alla scadenza. `people update`, `extend` e `people remove` modificano o chiudono l'accesso; dopo la rimozione la sua richiesta successiva viene rifiutata, ma ciò che ha già scaricato non si può recuperare. [Persone](people.md) · [Durate](durations.md)
+- **Qualcuno fuori dalla tua tailnet.** Aggiungi `--invite --print-links` per ottenere un messaggio pronto da inviare con un invito dispositivo per ogni app (serve un token API di proprietà di un utente). `--qr` stampa un codice per configurare il telefono.
+- **Richieste.** Le persone nella tua tailnet possono chiedere più tempo, o l'accesso a un'app che hai segnato come richiedibile, dalla home page. Approvi con una durata in un solo comando. [Richieste di accesso](requests.md)
+
+### Apri un'app web a Internet, per un po'
+
+- **Link ospite.** `tslink guest create photos --for 3d --public --print-link` crea un link per browser a un'app web, con PIN facoltativo, che puoi revocare singolarmente. Gli ospiti non hanno bisogno di un account Tailscale. Chiunque abbia il link può usarlo, quindi non dimostra chi ha visitato. [Ospiti](guest-links.md)
+- **Un URL pubblico aperto.** `tslink add preview --proxy localhost:3000 --funnel --public` pubblica un'app web per chiunque abbia il suo URL. Scade dopo 24 ore, a meno che tu non imposti un'altra durata con `--funnel-ttl`. [Funnel](funnel.md)
+- Entrambi passano da Tailscale Funnel, scadono sempre (da 1 ora a 7 giorni, a meno che tu non alzi il limite) e funzionano solo per le app web. Cartelle, file e servizi TCP restano privati.
+
+Tutto quanto sopra è incluso nella v0.1.0.
+
+<a id="requirements"></a>
+
+## Requisiti
+
+TSLink è costruito su Tailscale. È un progetto indipendente, non realizzato né approvato da Tailscale, e si applicano i termini e i [piani](https://tailscale.com/pricing) di Tailscale.
+
+| Chi | Cosa serve |
 |---|---|
-| Usare le tue app da più dispositivi | Indirizzi privati per dashboard domestiche, pagine web solo locali, file, API di modelli e servizi TCP su PC o server. |
-| Condividere con persone specifiche | App HTTP/file selezionate, identità Tailscale verificata, scadenza e revoca. I destinatari usano Tailscale. [Persone](people.md) |
-| Accogliere visite dal browser | Link ospite a scadenza con PIN facoltativo per app proxy HTTP, oppure HTTPS esplicitamente pubblico tramite Funnel. I link sono inoltrabili e non verificano l'identità. [Ospiti](guest-links.md) |
-| Gestire un insieme di app | Inventario per host, portale privato, controlli di salute e avvisi, cronologia accessi e gestione CLI/MCP con ruoli, ambiti per app e registrazioni di audit. [Portale](portal.md) · [Permessi MCP](mcp-scopes.md) |
+| Tu | Un account Tailscale con [MagicDNS e HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) attivati. Il piano Personal gratuito è per uso non commerciale. |
+| Il computer o server che esegue le tue app | Solo TSLink. Include Tailscale, quindi non serve un'installazione separata. Ogni nuova app chiede un accesso dal browser e, se la tua tailnet lo richiede, l'approvazione del dispositivo. |
+| Gli altri tuoi dispositivi | L'app Tailscale, collegata alla tua tailnet. |
+| Le persone che scegli | L'app Tailscale e il proprio account. Possono entrare nella tua tailnet, il che aggiunge un utente al tuo piano, oppure accettare un invito dispositivo per ogni app. Le regole della tua tailnet devono consentire loro l'accesso. |
+| Ospiti e visitatori pubblici | Un browser. La tua tailnet deve consentire Funnel, che Tailscale considera ancora in beta. |
 
-[Ricette per app](apps.md), [limiti di caricamento](sharing.md), [durate flessibili](durations.md) e [QR e richieste di accesso](requests.md) semplificano la manutenzione. Sono inclusi nella v0.1.0.
+Attivare HTTPS pubblica il nome della tua tailnet e i nomi dei tuoi dispositivi, compreso quello di ogni app, in un registro pubblico dei certificati: scegli quindi nomi di app che non ti dispiace far vedere.
 
 <a id="installation"></a>
 <a id="quickstart"></a>

@@ -5,9 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Chia sẻ ứng dụng tự lưu trữ với những người bạn chọn, trong khoảng thời gian bạn muốn.</strong></p>
+<p align="center"><strong>Cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của bạn một địa chỉ riêng trong mạng Tailscale của bạn, và tự quyết định ai được truy cập.</strong></p>
 
-TSLink cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của bạn một địa chỉ Tailscale riêng tư. Cấp quyền cho người được chỉ định đến một thời hạn, gửi liên kết khách trên trình duyệt cho người không dùng Tailscale, và thu hồi bất kỳ quyền nào bằng một lệnh duy nhất. Tự làm hoặc giao cho tác tử AI chỉ hoạt động trong vai trò bạn cấp. Dự án độc lập hoạt động cùng Tailscale.
+Mở ứng dụng web, thư mục, API mô hình và cơ sở dữ liệu từ chính điện thoại và laptop của bạn, kèm kiểm tra tình trạng và lịch sử truy cập cho từng ứng dụng. Tác tử AI của bạn cũng có thể công bố và kiểm tra chúng, trong phạm vi vai trò bạn giao. Khi người khác cần vào, hãy cấp quyền cho một người cụ thể đến một ngày nhất định, hoặc mở một ứng dụng web ra internet công khai trong thời gian giới hạn.
+
+**Cần Tailscale.** Bạn cần một tài khoản Tailscale (miễn phí cho cá nhân), và mỗi thiết bị mở ứng dụng riêng tư cần có ứng dụng Tailscale; khách và người truy cập công khai chỉ cần trình duyệt. TSLink là dự án độc lập, không do Tailscale làm ra hay xác nhận. [Yêu cầu](#requirements)
 
 <p align="center"><a href="#quickstart">Bắt đầu nhanh</a> · <a href="#agents">Dành cho tác tử</a> · <a href="comparison.md">So sánh với Serve, ngrok và Cloudflare</a> · <a href="#documentation">Tài liệu</a></p>
 <p align="center">
@@ -16,16 +18,53 @@ TSLink cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của b�
 
 <a id="use-cases"></a>
 
-## Ứng dụng luôn trong tầm tay
+## Bạn có thể làm gì
 
-| Nhu cầu | TSLink cung cấp |
+### Truy cập ứng dụng của chính bạn
+
+- **Mỗi ứng dụng một địa chỉ.** `tslink share 3000`, `tslink share ./photos` hoặc `tslink add db --tcp localhost:5432` cấp cho một ứng dụng web, thư mục, tệp hoặc dịch vụ TCP một địa chỉ riêng tư trong tailnet của bạn (mạng Tailscale riêng của bạn), ví dụ `https://photos.<tailnet>.ts.net`. Mỗi ứng dụng là một thiết bị Tailscale riêng, nên bạn mở ứng dụng bằng tên thay vì địa chỉ IP và số cổng.
+- **Riêng tư trừ khi bạn chọn khác.** Ứng dụng ở trong tailnet của bạn, và chính sách của tailnet quyết định thiết bị nào được kết nối. Không có gì ra internet công khai cho đến khi bạn tạo liên kết khách hoặc công bố một ứng dụng.
+- **Xem tất cả ở một nơi.** `tslink status --urls` liệt kê mọi ứng dụng trên máy này, và một trang chủ riêng tư tùy chọn hiển thị địa chỉ và tình trạng của từng ứng dụng. [Cổng](portal.md)
+- **Biết ngay khi có sự cố.** Kiểm tra tình trạng chạy nền có thể báo cho bạn qua một lệnh hoặc webhook khi ứng dụng ngừng hoạt động hay chạy lại, hoặc khi phiên đăng nhập Tailscale của nó sắp hết hạn. Lịch sử truy cập cho thấy ai đã mở ứng dụng nào và khi nào, kể cả các yêu cầu bị từ chối. [Tình trạng và cảnh báo](health-and-alerts.md) · [Lịch sử truy cập](access-log.md)
+- **Ứng dụng phổ biến dùng được ngay.** Có công thức cho 15 ứng dụng tự lưu trữ, gồm Home Assistant, Jellyfin, Immich và Ollama, và `tslink apps detect` tìm các ứng dụng đang chạy sẵn. Ứng dụng ảnh và video có [giới hạn tải lên](sharing.md) phù hợp với tệp lớn. [Công thức cấu hình](apps.md) · [AI cục bộ](local-ai.md)
+
+### Để tác tử làm việc với chúng
+
+Tác tử khởi động máy chủ phát triển, bản xem trước hay API mô hình cục bộ sẽ để nó trên `localhost`, nơi điện thoại và các máy tính khác của bạn không mở được. TSLink cho phép tác tử công bố nó ở chế độ riêng tư, báo cho bạn địa chỉ chính xác và gỡ xuống sau đó, trong giới hạn bạn đặt ra.
+
+- **Chia sẻ, kiểm tra, hoàn tác.** `share` trả về tên đã đăng ký, kèm URL chính xác hoặc một liên kết đăng nhập để bạn mở. `url --wait` và `status` báo khi ứng dụng đã hoạt động, còn `remove` (trong MCP là `unshare`) gỡ nó xuống. [Hướng dẫn tác tử](agent-quickstart.md)
+- **Làm ra cho tự động hóa.** Các lệnh nhận `--json` và trả về kết quả có phiên bản cùng mã lỗi ổn định. `tslink mcp` cung cấp cùng các thao tác cho một ứng dụng khách MCP cục bộ, còn `tslink serve --mcp` cung cấp cho tác tử trên các thiết bị khác của bạn qua tailnet. [Tự động hóa JSON](json-automation.md) · [MCP từ xa](remote-mcp.md)
+- **Quyền hạn có giới hạn.** Tác tử do chính bạn chạy hoạt động với tư cách chủ sở hữu. Hãy giao cho các tác tử khác một vai trò thu hẹp (`viewer`, `app-operator` hoặc `people-manager`), chỉ áp dụng cho những ứng dụng bạn chỉ định và giới hạn thời hạn tối đa của mọi quyền mà tác tử cấp. Các thay đổi thực hiện qua MCP đều được ghi lại, và `tslink mcp-audit` hiển thị chúng. Vai trò chỉ giới hạn công cụ của TSLink, không giới hạn shell hay tệp của chính tác tử. [Quyền MCP](mcp-scopes.md)
+
+### Chia sẻ với người bạn chọn
+
+- **Người cụ thể, đến một ngày nhất định.** `tslink people add alice@example.com --apps photos,notes --for 7d` cho phép tài khoản Tailscale đó mở các ứng dụng web và tệp này đến hạn. `people update`, `extend` và `people remove` dùng để thay đổi hoặc chấm dứt quyền; sau khi gỡ, yêu cầu tiếp theo của người đó bị từ chối, nhưng những gì họ đã tải về thì không thu hồi được. [Người dùng](people.md) · [Thời hạn](durations.md)
+- **Người ở ngoài tailnet của bạn.** Thêm `--invite --print-links` để nhận một tin nhắn soạn sẵn, gồm lời mời thiết bị cho từng ứng dụng (cần API token thuộc sở hữu của người dùng). `--qr` in ra mã để thiết lập trên điện thoại.
+- **Yêu cầu.** Người trong tailnet của bạn có thể xin thêm thời gian, hoặc xin quyền vào một ứng dụng bạn đánh dấu là cho phép yêu cầu, ngay từ trang chủ. Bạn duyệt bằng một lệnh kèm thời hạn. [Yêu cầu truy cập](requests.md)
+
+### Mở ứng dụng web ra internet trong một thời gian
+
+- **Liên kết khách.** `tslink guest create photos --for 3d --public --print-link` tạo một liên kết trình duyệt tới một ứng dụng web, có thể kèm PIN, và bạn có thể thu hồi riêng từng liên kết. Khách không cần tài khoản Tailscale. Ai có liên kết cũng dùng được, nên nó không chứng minh được ai đã truy cập. [Liên kết khách](guest-links.md)
+- **URL công khai mở.** `tslink add preview --proxy localhost:3000 --funnel --public` công bố một ứng dụng web cho bất kỳ ai có URL. URL hết hạn sau 24 giờ, trừ khi bạn đặt thời hạn khác bằng `--funnel-ttl`. [Funnel](funnel.md)
+- Cả hai đều chạy qua Tailscale Funnel, luôn hết hạn (từ 1 giờ đến 7 ngày, trừ khi bạn nâng giới hạn) và chỉ dùng được cho ứng dụng web. Thư mục, tệp và dịch vụ TCP vẫn giữ riêng tư.
+
+Mọi thứ ở trên đều có trong v0.1.0.
+
+<a id="requirements"></a>
+
+## Yêu cầu
+
+TSLink được xây dựng trên Tailscale. Đây là dự án độc lập, không do Tailscale làm ra hay xác nhận, và các điều khoản cùng [gói dịch vụ](https://tailscale.com/pricing) của Tailscale vẫn áp dụng.
+
+| Ai | Cần gì |
 |---|---|
-| Dùng ứng dụng trên nhiều thiết bị | Địa chỉ riêng cho bảng điều khiển tại nhà, trang web chỉ chạy cục bộ, tệp, API mô hình và dịch vụ TCP trên PC hoặc máy chủ. |
-| Chia sẻ với người cụ thể | Chọn ứng dụng HTTP/tệp, xác minh danh tính đăng nhập Tailscale, đặt hạn và thu hồi quyền. Người nhận cần Tailscale. [Người dùng](people.md) |
-| Cho khách mở bằng trình duyệt | Liên kết có hạn với PIN tùy chọn cho ứng dụng proxy HTTP, hoặc HTTPS công khai qua Funnel khi chủ động bật. Liên kết có thể chuyển tiếp, không xác minh danh tính. [Liên kết khách](guest-links.md) |
-| Quản lý một nhóm ứng dụng | Danh mục theo máy chủ, cổng riêng, kiểm tra tình trạng và cảnh báo, lịch sử truy cập, CLI/MCP với vai trò tác tử, phạm vi ứng dụng và bản ghi kiểm toán. [Cổng](portal.md) · [Quyền MCP](mcp-scopes.md) |
+| Bạn | Một tài khoản Tailscale đã bật [MagicDNS và HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Gói Personal miễn phí dành cho mục đích phi thương mại. |
+| Máy tính hoặc máy chủ chạy ứng dụng của bạn | Chỉ cần TSLink. TSLink đã có sẵn Tailscale nên không phải cài riêng. Mỗi ứng dụng mới sẽ yêu cầu đăng nhập qua trình duyệt, và phê duyệt thiết bị nếu tailnet của bạn bắt buộc. |
+| Các thiết bị khác của bạn | Ứng dụng Tailscale, đã đăng nhập vào tailnet của bạn. |
+| Người bạn chọn | Ứng dụng Tailscale và tài khoản đăng nhập của chính họ. Họ hoặc tham gia tailnet của bạn, tức là thêm một người dùng vào gói của bạn, hoặc chấp nhận lời mời thiết bị cho từng ứng dụng. Chính sách tailnet của bạn phải cho phép họ truy cập. |
+| Khách và người truy cập công khai | Một trình duyệt. Tailnet của bạn phải cho phép Funnel, tính năng mà Tailscale vẫn xếp vào bản beta. |
 
-[Công thức cấu hình](apps.md), [giới hạn tải lên](sharing.md), [thời hạn linh hoạt](durations.md) và [hướng dẫn QR, yêu cầu truy cập](requests.md) giúp bảo trì hằng ngày. Các tính năng này có trong v0.1.0.
+Bật HTTPS sẽ công bố tên tailnet và tên thiết bị của bạn, kể cả tên của từng ứng dụng, trong một nhật ký chứng chỉ công khai, vì vậy hãy chọn tên ứng dụng mà bạn không ngại người khác nhìn thấy.
 
 <a id="installation"></a>
 <a id="quickstart"></a>

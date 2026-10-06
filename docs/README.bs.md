@@ -5,9 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Dijelite svoje self-hosted aplikacije s osobama koje izaberete, onoliko dugo koliko želite.</strong></p>
+<p align="center"><strong>Dajte svakoj aplikaciji na vašem računaru ili serveru vlastitu privatnu adresu u vašoj Tailscale mreži i sami odlučite ko joj može pristupiti.</strong></p>
 
-TSLink svakoj aplikaciji na vašem računaru ili serveru daje vlastitu privatnu Tailscale adresu. Dajte odabranim osobama pristup do određenog roka, pošaljite link za goste u pregledniku nekome ko ne koristi Tailscale i opozovite jedno ili drugo jednom naredbom. Uradite to sami ili putem AI agenta ograničenog na ulogu koju mu dodijelite. Nezavisan projekat koji radi s Tailscaleom.
+Otvarajte svoje web aplikacije, foldere, API-je modela i baze podataka sa vlastitog telefona i laptopa, uz provjeru stanja i historiju pristupa za svaku. Vaši AI agenti ih također mogu objavljivati i provjeravati, u okviru uloge koju im date. Kada nekom drugom treba pristup, dajte ga određenoj osobi do nekog datuma ili otvorite web aplikaciju prema javnom internetu na ograničeno vrijeme.
+
+**Potreban je Tailscale.** Treba vam Tailscale račun (besplatan za ličnu upotrebu), a svaki uređaj koji otvara privatnu aplikaciju treba Tailscale aplikaciju; gostima i javnim posjetiocima treba samo preglednik. TSLink je nezavisan projekat koji Tailscale nije napravio niti podržao. [Zahtjevi](#requirements)
 
 <p align="center"><a href="#quickstart">Brzi početak</a> · <a href="#agents">Za agente</a> · <a href="comparison.md">Poređenje sa Serve, ngrok i Cloudflare</a> · <a href="#documentation">Dokumentacija</a></p>
 <p align="center">
@@ -16,16 +18,53 @@ TSLink svakoj aplikaciji na vašem računaru ili serveru daje vlastitu privatnu 
 
 <a id="use-cases"></a>
 
-## Vaše aplikacije nadohvat ruke
+## Šta možete raditi
 
-| Šta vam treba | Šta TSLink nudi |
+### Pristup vlastitim aplikacijama
+
+- **Adresa za svaku aplikaciju.** `tslink share 3000`, `tslink share ./photos` ili `tslink add db --tcp localhost:5432` daje web aplikaciji, folderu, datoteci ili TCP servisu vlastitu privatnu adresu u vašem tailnetu (vašoj privatnoj Tailscale mreži), npr. `https://photos.<tailnet>.ts.net`. Svaka aplikacija je zaseban Tailscale uređaj, pa aplikacije otvarate po imenu umjesto po IP adresi i portu.
+- **Privatno dok ne odlučite drugačije.** Aplikacije ostaju unutar vašeg tailneta, a njegova politika određuje koji se uređaji mogu povezati. Ništa ne izlazi na javni internet dok ne napravite link za goste ili objavite aplikaciju.
+- **Sve na jednom mjestu.** `tslink status --urls` prikazuje sve aplikacije na ovom računaru, a opcionalna privatna početna stranica prikazuje adresu i stanje svake aplikacije. [Portal](portal.md)
+- **Saznajte kad nešto prestane raditi.** Provjere stanja u pozadini mogu vas upozoriti putem naredbe ili webhooka kada aplikacija padne ili se vrati, ili kada njena Tailscale prijava uskoro ističe. Historija pristupa pokazuje ko je i kada otvorio koju aplikaciju, uključujući odbijene zahtjeve. [Stanje i upozorenja](health-and-alerts.md) · [Historija pristupa](access-log.md)
+- **Česte aplikacije spremne za rad.** Recepti pokrivaju 15 self-hosted aplikacija, među njima Home Assistant, Jellyfin, Immich i Ollama, a `tslink apps detect` pronalazi aplikacije koje već rade. Aplikacije za fotografije i video dobijaju [ograničenja slanja](sharing.md) prilagođena velikim datotekama. [Recepti za aplikacije](apps.md) · [Lokalni AI](local-ai.md)
+
+### Neka vaši agenti rade s njima
+
+Agent koji pokrene razvojni server, pregled ili lokalni API modela ostavlja ga na `localhost`, gdje ga vaš telefon i drugi računari ne mogu otvoriti. TSLink omogućava agentu da ga privatno objavi, kaže vam tačnu adresu i zatim ga ukloni, u granicama koje vi postavite.
+
+- **Podijeli, provjeri, poništi.** `share` vraća ime koje je registrovao i tačan URL ili link za prijavu koji trebate otvoriti. `url --wait` i `status` javljaju kada je aplikacija dostupna, a `remove` (u MCP-u `unshare`) je uklanja. [Vodič za agente](agent-quickstart.md)
+- **Napravljeno za automatizaciju.** Naredbe prihvataju `--json` i vraćaju verzionisan rezultat sa stabilnim kodovima grešaka. `tslink mcp` nudi iste operacije lokalnom MCP klijentu, a `tslink serve --mcp` agentima na vašim drugim uređajima kroz tailnet. [JSON automatizacija](json-automation.md) · [Udaljeni MCP](remote-mcp.md)
+- **Ograničene ovlasti.** Agent koji sami pokrećete djeluje kao vlasnik. Drugim agentima dajte ograničenu ulogu (`viewer`, `app-operator` ili `people-manager`) koja pokriva samo aplikacije koje navedete i ograničava koliko dugo može trajati svaki pristup koji odobre. Promjene napravljene kroz MCP se bilježe, a `tslink mcp-audit` ih prikazuje. Uloge ograničavaju TSLink alate, a ne vlastitu ljusku ili datoteke agenta. [MCP ovlasti](mcp-scopes.md)
+
+### Dijelite s osobama koje izaberete
+
+- **Određene osobe, do datuma.** `tslink people add alice@example.com --apps photos,notes --for 7d` omogućava toj Tailscale prijavi da otvara te web i datotečne aplikacije do roka. `people update`, `extend` i `people remove` mijenjaju ili završavaju pristup; nakon uklanjanja sljedeći zahtjev te osobe se odbija, ali ono što je već preuzela ne može se vratiti. [Osobe](people.md) · [Trajanje](durations.md)
+- **Neko izvan vašeg tailneta.** Dodajte `--invite --print-links` da dobijete jednu poruku spremnu za slanje, s pozivnicom za uređaj za svaku aplikaciju (za ovo treba API token u vlasništvu korisnika). `--qr` ispisuje kod za podešavanje na telefonu.
+- **Zahtjevi.** Osobe u vašem tailnetu mogu s početne stranice tražiti više vremena ili pristup aplikaciji koju ste označili kao dostupnu na zahtjev. Odobravate jednom naredbom uz trajanje. [Zahtjevi za pristup](requests.md)
+
+### Otvorite web aplikaciju prema internetu na neko vrijeme
+
+- **Linkovi za goste.** `tslink guest create photos --for 3d --public --print-link` pravi link za preglednik do jedne web aplikacije, opcionalno s PIN-om, koji možete opozvati zasebno. Gostima ne treba Tailscale račun. Link može koristiti svako ko ga ima, pa ne dokazuje ko je posjetio aplikaciju. [Gosti](guest-links.md)
+- **Otvoren javni URL.** `tslink add preview --proxy localhost:3000 --funnel --public` objavljuje web aplikaciju za svakoga ko zna njen URL. Ističe nakon 24 sata, osim ako s `--funnel-ttl` postavite drugo trajanje. [Funnel](funnel.md)
+- Oboje ide kroz Tailscale Funnel, uvijek ističe (od 1 sata do 7 dana, osim ako povećate ograničenje) i radi samo za web aplikacije. Folderi, datoteke i TCP servisi ostaju privatni.
+
+Sve navedeno dolazi s verzijom v0.1.0.
+
+<a id="requirements"></a>
+
+## Zahtjevi
+
+TSLink je izgrađen na Tailscaleu. To je nezavisan projekat koji Tailscale nije napravio niti podržao, a vrijede Tailscaleovi uslovi i [planovi](https://tailscale.com/pricing).
+
+| Ko | Šta treba |
 |---|---|
-| Korištenje vlastitih aplikacija na više uređaja | Privatne adrese za kućne kontrolne ploče, lokalne web stranice, datoteke, API-je modela i TCP servise na računaru ili serveru. |
-| Dijeljenje s određenim osobama | Odabrane HTTP/datotečne aplikacije, provjeren Tailscale identitet, rok i opoziv pristupa. Primaoci koriste Tailscale. [Osobe](people.md) |
-| Posjeta kroz preglednik | Vremenski ograničeni linkovi s opcionalnim PIN-om za HTTP proxy aplikacije ili izričito javni HTTPS putem Funnela. Linkovi se mogu proslijediti i ne potvrđuju identitet. [Gosti](guest-links.md) |
-| Upravljanje skupom aplikacija | Popis po hostu, privatni portal, provjere stanja i upozorenja, historija pristupa te CLI/MCP upravljanje s ulogama agenata, ograničenjem na aplikacije i revizijskim zapisima. [Portal](portal.md) · [MCP ovlasti](mcp-scopes.md) |
+| Vi | Tailscale račun s uključenim [MagicDNS i HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Besplatni Personal plan je za nekomercijalnu upotrebu. |
+| Računar ili server na kojem rade vaše aplikacije | Samo TSLink. Sadrži Tailscale, pa nema posebne instalacije. Svaka nova aplikacija traži prijavu u pregledniku i odobrenje uređaja ako ga vaš tailnet zahtijeva. |
+| Vaši drugi uređaji | Tailscale aplikacija, prijavljena u vaš tailnet. |
+| Osobe koje izaberete | Tailscale aplikacija i vlastita prijava. Ili se pridruže vašem tailnetu, što dodaje korisnika u vaš plan, ili prihvate pozivnicu za uređaj za svaku aplikaciju. Politika vašeg tailneta mora im dozvoliti pristup. |
+| Gosti i javni posjetioci | Preglednik. Vaš tailnet mora dozvoliti Funnel, koji Tailscale i dalje vodi kao beta. |
 
-[Recepti za aplikacije](apps.md), [ograničenja slanja](sharing.md), [fleksibilno trajanje](durations.md) i [QR upute i zahtjevi za pristup](requests.md) olakšavaju održavanje. Ove mogućnosti dolaze s verzijom v0.1.0.
+Uključivanje HTTPS-a objavljuje ime vašeg tailneta i imena uređaja, uključujući ime svake aplikacije, u javnom zapisniku certifikata, pa birajte imena aplikacija za koja vam ne smeta da ih drugi vide.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
