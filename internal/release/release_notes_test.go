@@ -103,6 +103,52 @@ First line of 1.2.0.
 - Last section, read to the end of the file.
 `
 
+// runReleaseNotesStep runs the extraction script in dir for tag and returns
+// the notes it wrote, or its output and error.
+func runReleaseNotesStep(t *testing.T, script, dir, tag string) (notes, out []byte, err error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "release-notes.md")
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TAG=" + tag, "RELEASE_NOTES=" + path}
+	if out, err = cmd.CombinedOutput(); err != nil {
+		return nil, out, err
+	}
+	notes, err = os.ReadFile(path)
+	return notes, out, err
+}
+
+// TestChangelogVersionsHaveReleaseNotes runs the step for every version
+// heading in the repository's CHANGELOG.md. A v* tag cannot be moved, so a
+// section that is empty or duplicated must fail here, before anyone tags.
+func TestChangelogVersionsHaveReleaseNotes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executes the ubuntu publish step with bash; covered on Linux and macOS")
+	}
+	steps := publishSteps(t)
+	script := steps[releaseNotesIndex(t, steps)].Run
+	root := repoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		heading, ok := strings.CutPrefix(line, "## [")
+		version, _, closed := strings.Cut(heading, "]")
+		if !ok || !closed || version == "Unreleased" {
+			continue
+		}
+		versions++
+		if _, out, err := runReleaseNotesStep(t, script, root, "v"+version); err != nil {
+			t.Errorf("CHANGELOG.md ## [%s] cannot become release notes: %v\n%s", version, err, out)
+		}
+	}
+	if versions == 0 {
+		t.Fatal("CHANGELOG.md has no version sections")
+	}
+}
+
 // TestReleaseNotesStepExecutes runs the checked-in extraction script against
 // a fixture CHANGELOG.md. It must write exactly the version's section and
 // fail, naming the problem, when the section is missing, empty or ambiguous.
@@ -130,11 +176,7 @@ func TestReleaseNotesStepExecutes(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "CHANGELOG.md"), []byte(changelogFixture), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			notes := filepath.Join(t.TempDir(), "release-notes.md")
-			cmd := exec.Command("bash", "-c", script)
-			cmd.Dir = dir
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TAG=" + tc.tag, "RELEASE_NOTES=" + notes}
-			out, err := cmd.CombinedOutput()
+			got, out, err := runReleaseNotesStep(t, script, dir, tc.tag)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(string(out), "::error::") || !strings.Contains(string(out), tc.wantErr) {
 					t.Fatalf("tag %s: want a failure naming %q, got err=%v\n%s", tc.tag, tc.wantErr, err, out)
@@ -143,10 +185,6 @@ func TestReleaseNotesStepExecutes(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("tag %s rejected: %v\n%s", tc.tag, err, out)
-			}
-			got, err := os.ReadFile(notes)
-			if err != nil {
-				t.Fatal(err)
 			}
 			if string(got) != tc.want {
 				t.Fatalf("tag %s notes:\n%q\nwant:\n%q", tc.tag, got, tc.want)
