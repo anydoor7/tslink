@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-คุณต้องมีสิทธิ์เข้าถึงที่เก็บโค้ด **บัญชี Tailscale** และ [MagicDNS กับ HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) อุปกรณ์ที่เข้าถึงแบบส่วนตัวต้องใช้ Tailscale และได้รับอนุญาตตามนโยบายเครือข่าย TSLink ฝัง Tailscale ไว้บนโฮสต์ของแอป
+คุณต้องมี **บัญชี Tailscale** และ [MagicDNS กับ HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) อุปกรณ์ที่เข้าถึงแบบส่วนตัวต้องใช้ Tailscale และได้รับอนุญาตตามนโยบายเครือข่าย TSLink ฝัง Tailscale ไว้บนโฮสต์ของแอป
 
 เมื่อแอปทำงานอยู่ที่พอร์ต 3000 แล้ว:
 

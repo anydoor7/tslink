@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Depoya erişim, **Tailscale hesabı**, [MagicDNS ve HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) gerekir. Özel erişim sağlayan cihazlarda Tailscale ve ağ politikası izni bulunmalıdır. TSLink, uygulama sunucusunda Tailscale'i içerir.
+**Tailscale hesabı** ve [MagicDNS ve HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) gerekir. Özel erişim sağlayan cihazlarda Tailscale ve ağ politikası izni bulunmalıdır. TSLink, uygulama sunucusunda Tailscale'i içerir.
 
 Uygulamanız 3000 portunda zaten çalışıyorsa:
 

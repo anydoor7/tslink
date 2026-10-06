@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Bạn cần quyền truy cập kho mã, **tài khoản Tailscale**, [MagicDNS và HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Thiết bị truy cập riêng cần Tailscale và quyền theo chính sách mạng. TSLink nhúng Tailscale trên máy chạy ứng dụng.
+Bạn cần **tài khoản Tailscale** và [MagicDNS và HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Thiết bị truy cập riêng cần Tailscale và quyền theo chính sách mạng. TSLink nhúng Tailscale trên máy chạy ứng dụng.
 
 Khi ứng dụng đã chạy ở cổng 3000:
 

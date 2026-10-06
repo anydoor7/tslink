@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-রিপোজিটরিতে প্রবেশাধিকার, একটি **Tailscale অ্যাকাউন্ট** এবং [MagicDNS ও HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) দরকার। ব্যক্তিগতভাবে যুক্ত ডিভাইসে Tailscale ও নেটওয়ার্ক নীতির অনুমতি থাকতে হবে। অ্যাপের হোস্টে TSLink-এর মধ্যেই Tailscale রয়েছে।
+একটি **Tailscale অ্যাকাউন্ট** এবং [MagicDNS ও HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) দরকার। ব্যক্তিগতভাবে যুক্ত ডিভাইসে Tailscale ও নেটওয়ার্ক নীতির অনুমতি থাকতে হবে। অ্যাপের হোস্টে TSLink-এর মধ্যেই Tailscale রয়েছে।
 
 অ্যাপটি আগে থেকেই 3000 পোর্টে চললে:
 

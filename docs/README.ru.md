@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Нужны доступ к репозиторию, **аккаунт Tailscale**, [MagicDNS и HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Для приватного доступа на принимающем устройстве нужны Tailscale и разрешение сетевой политики. На хосте приложений Tailscale встроен в TSLink.
+Нужны **аккаунт Tailscale** и [MagicDNS и HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Для приватного доступа на принимающем устройстве нужны Tailscale и разрешение сетевой политики. На хосте приложений Tailscale встроен в TSLink.
 
 Если приложение уже работает на порту 3000:
 

@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-저장소 접근 권한, **Tailscale 계정**, [MagicDNS와 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)가 필요합니다. 비공개 접속 기기는 Tailscale과 네트워크 정책의 허용이 필요합니다. 앱 호스트에는 TSLink가 Tailscale을 내장합니다.
+**Tailscale 계정**과 [MagicDNS와 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)가 필요합니다. 비공개 접속 기기는 Tailscale과 네트워크 정책의 허용이 필요합니다. 앱 호스트에는 TSLink가 Tailscale을 내장합니다.
 
 앱이 이미 3000 포트에서 실행 중이라면:
 

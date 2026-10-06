@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Você precisa de acesso ao repositório, uma **conta Tailscale** e [MagicDNS e HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Dispositivos de acesso privado precisam de Tailscale e permissão na política de rede. O TSLink incorpora Tailscale no host dos apps.
+Você precisa de uma **conta Tailscale** e [MagicDNS e HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Dispositivos de acesso privado precisam de Tailscale e permissão na política de rede. O TSLink incorpora Tailscale no host dos apps.
 
 Com seu app já rodando na porta 3000:
 

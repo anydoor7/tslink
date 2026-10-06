@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Trebaju vam pristup repozitoriju, **Tailscale račun** te [MagicDNS i HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Uređaji za privatni pristup trebaju Tailscale i dozvolu mrežne politike. TSLink ugrađuje Tailscale na host aplikacija.
+Trebaju vam **Tailscale račun** te [MagicDNS i HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Uređaji za privatni pristup trebaju Tailscale i dozvolu mrežne politike. TSLink ugrađuje Tailscale na host aplikacija.
 
 Ako vaša aplikacija već radi na portu 3000:
 

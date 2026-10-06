@@ -43,7 +43,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-تحتاج إلى إذن للوصول إلى المستودع، و**حساب Tailscale**، و[MagicDNS وHTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). أجهزة الوصول الخاص تحتاج Tailscale وإذن سياسة الشبكة. يدمج TSLink برنامج Tailscale في مضيف التطبيقات.
+تحتاج إلى **حساب Tailscale** و[MagicDNS وHTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). أجهزة الوصول الخاص تحتاج Tailscale وإذن سياسة الشبكة. يدمج TSLink برنامج Tailscale في مضيف التطبيقات.
 
 إذا كان تطبيقك يعمل بالفعل على المنفذ 3000:
 

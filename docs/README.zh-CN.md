@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-你需要仓库访问权限、**Tailscale 账户**以及 [MagicDNS 和 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)。私有访问的接收设备需要 Tailscale 和网络策略许可。应用主机上的 Tailscale 由 TSLink 内嵌提供。
+你需要 **Tailscale 账户**以及 [MagicDNS 和 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)。私有访问的接收设备需要 Tailscale 和网络策略许可。应用主机上的 Tailscale 由 TSLink 内嵌提供。
 
 假设应用已在 3000 端口运行：
 

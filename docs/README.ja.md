@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-リポジトリへのアクセス権、**Tailscale アカウント**、[MagicDNS と HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)が必要です。プライベート接続する端末には Tailscale とポリシー上の許可が必要です。ホスト側の Tailscale は TSLink に内蔵されています。
+**Tailscale アカウント**と [MagicDNS と HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)が必要です。プライベート接続する端末には Tailscale とポリシー上の許可が必要です。ホスト側の Tailscale は TSLink に内蔵されています。
 
 アプリがポート 3000 ですでに動いている場合：
 

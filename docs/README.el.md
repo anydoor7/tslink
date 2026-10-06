@@ -41,7 +41,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Χρειάζεστε πρόσβαση στο αποθετήριο, **λογαριασμό Tailscale**, [MagicDNS και HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Οι συσκευές ιδιωτικής πρόσβασης χρειάζονται Tailscale και άδεια από την πολιτική δικτύου. Το TSLink ενσωματώνει το Tailscale στο μηχάνημα των εφαρμογών.
+Χρειάζεστε **λογαριασμό Tailscale** και [MagicDNS και HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Οι συσκευές ιδιωτικής πρόσβασης χρειάζονται Tailscale και άδεια από την πολιτική δικτύου. Το TSLink ενσωματώνει το Tailscale στο μηχάνημα των εφαρμογών.
 
 Αν η εφαρμογή εκτελείται ήδη στη θύρα 3000:
 
