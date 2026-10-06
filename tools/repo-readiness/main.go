@@ -408,8 +408,11 @@ func matchSegments(pattern, ref []string) bool {
 }
 
 // negateWithCaret rewrites the "[!" that opens a class, which fnmatch negates,
-// as "[^", the negation path.Match reads. It follows classes as path.Match
-// reads them, so a "[!" inside an open class is left alone.
+// as "[^", the negation path.Match reads. It skips escaped bytes and keeps a
+// class open until its closing "]", so a "[!" inside an open class is left
+// alone. A "]" right after the opener is kept as a member, as fnmatch reads
+// it; path.Match rejects such a class, so it matches nothing either way, and
+// witnessTrusted rejects that shape.
 func negateWithCaret(segment string) string {
 	var b strings.Builder
 	inClass := false
@@ -427,7 +430,8 @@ func negateWithCaret(segment string) string {
 				i++
 				b.WriteByte('^')
 			}
-			// A "]" first in a class is a member, not its end.
+			// fnmatch reads a "]" first in a class as a member; path.Match
+			// rejects it.
 			if i+1 < len(segment) && segment[i+1] == ']' {
 				i++
 				b.WriteByte(']')
