@@ -358,8 +358,9 @@ func TestFullRefWildcardExclusionsAreNotReady(t *testing.T) {
 }
 
 type fnmatchCase struct {
-	Pattern string `json:"pattern"`
-	Witness string `json:"witness"`
+	Pattern string          `json:"pattern"`
+	Witness string          `json:"witness"`
+	Fnmatch map[string]bool `json:"fnmatch"`
 }
 
 // fnmatchCorpus reads the Ruby File.fnmatch results in
@@ -380,17 +381,48 @@ func fnmatchCorpus(t *testing.T) []fnmatchCase {
 		if c.Witness != "" {
 			matching++
 		}
+		// Each row holds File.fnmatch's result against exactly the witnesses.
+		if len(c.Fnmatch) != len(releaseTagWitnesses) {
+			t.Fatalf("corpus pattern %q has %d File.fnmatch results, want one per witness", c.Pattern, len(c.Fnmatch))
+		}
+		for _, ref := range releaseTagWitnesses {
+			if _, ok := c.Fnmatch[ref]; !ok {
+				t.Fatalf("corpus pattern %q has no File.fnmatch result against witness %s", c.Pattern, ref)
+			}
+		}
 	}
-	if len(corpus) != 134 || matching != 80 {
-		t.Fatalf("corpus has %d patterns, %d matching a release ref; want 134 and 80", len(corpus), matching)
+	if len(corpus) != 159 || matching != 96 {
+		t.Fatalf("corpus has %d patterns, %d matching a release ref; want 159 and 96", len(corpus), matching)
 	}
 	return corpus
 }
 
+// TestTrustedExclusionsMatchTheWitnessesAsFnmatchDoes: for every corpus
+// pattern witnessTrusted accepts, fnmatchPathname gives File.fnmatch's result
+// against every witness, so a witness match it trusts is one File.fnmatch
+// makes. witnessTrusted accepts exactly the corpus patterns outside
+// untrustedExclusions, so the whitelist cannot widen or narrow unnoticed.
+func TestTrustedExclusionsMatchTheWitnessesAsFnmatchDoes(t *testing.T) {
+	for _, c := range fnmatchCorpus(t) {
+		trusted := witnessTrusted(c.Pattern)
+		if listed := slices.Contains(untrustedExclusions, c.Pattern); trusted == listed {
+			t.Errorf("exclusion %q: witnessTrusted = %t, want %t", c.Pattern, trusted, !listed)
+		}
+		if !trusted {
+			continue
+		}
+		for _, ref := range releaseTagWitnesses {
+			if got := fnmatchPathname(c.Pattern, ref); got != c.Fnmatch[ref] {
+				t.Errorf("trusted exclusion %q against %s: fnmatchPathname = %t, File.fnmatch = %t", c.Pattern, ref, got, c.Fnmatch[ref])
+			}
+		}
+	}
+}
+
 // TestExclusionsTheFnmatchOracleMatchesAreNeverReady: no exclusion that
 // File.fnmatch matches against a release ref lets its ruleset count, and the
-// witnesses prove every such match in the corpus except those through an
-// unsure range, which stay UNKNOWN.
+// witnesses prove every such match in the corpus except those outside the
+// witnessTrusted grammar, which stay UNKNOWN.
 func TestExclusionsTheFnmatchOracleMatchesAreNeverReady(t *testing.T) {
 	falseReady, unknown := 0, 0
 	for _, c := range fnmatchCorpus(t) {
@@ -403,7 +435,7 @@ func TestExclusionsTheFnmatchOracleMatchesAreNeverReady(t *testing.T) {
 			falseReady++
 			t.Errorf("false READY: exclusion %q matches %s (%s)", c.Pattern, c.Witness, got.Detail)
 		case Unknown:
-			if slices.Contains(unsureRangeExclusions, c.Pattern) {
+			if slices.Contains(untrustedExclusions, c.Pattern) {
 				continue
 			}
 			unknown++
@@ -430,11 +462,25 @@ func TestFnmatchOracleRejectionsAreNotMatches(t *testing.T) {
 	}
 }
 
-// unsureRangeExclusions are the corpus patterns with a bracket range that
-// path.Match may read differently from File.fnmatch: descending, or with an
-// escaped or non-ASCII endpoint. File.fnmatch matches the first three against
-// no release ref and the rest against refs/tags/v0.1.0.
-var unsureRangeExclusions = []string{
+// untrustedExclusions are the corpus patterns outside the witnessTrusted
+// grammar. The first eight have a "/" in a class, which fnmatchPathname splits
+// at. The next seven have a range that path.Match may read differently from
+// File.fnmatch: descending, or with an escaped or non-ASCII endpoint. The next
+// six have another class member the grammar leaves out: a "[!" inside a
+// class, or a "[", "]" or "-". Then come an escape, a range from a digit to a
+// letter, which both read alike, and [!], which File.fnmatch reads as any
+// character and path.Match rejects. File.fnmatch matches [t-a], [!z-a],
+// [\s-\u], the fullwidth range, [0-z] and [!] against refs/tags/v0.1.0, and
+// the others against no release ref.
+var untrustedExclusions = []string{
+	"refs[/]tags/v*",
+	"refs[/]/tags/v*",
+	"refs[/x]tags/v*",
+	"refs[/x]/tags/v*",
+	"refs/tags[/]v*",
+	"refs/tags[/]/v*",
+	"refs/tags[/x]v*",
+	"refs/tags[/x]/v*",
 	"refs/[!t-a]ags/v*",
 	"refs/[^t-a]ags/v*",
 	"refs/tags/[!v-a]*",
@@ -442,20 +488,30 @@ var unsureRangeExclusions = []string{
 	"refs/[!z-a]ags/v*",
 	`refs/[\s-\u]ags/v*`,
 	"refs/[!\uff41-\uff5a]ags/v*",
+	"refs/tags/v[![!-9]*",
+	"refs/tags/v[![!-z]*",
+	"refs/tags/v[[]*",
+	"refs/tags/v[]]*",
+	"refs/tags/v[a-]*",
+	"refs/tags/v[-a]*",
+	`refs/tags/v[0-9]\*`,
+	"refs/tags/v[0-z]*",
+	"refs/tags/v[!]*",
 }
 
-// TestExclusionsWithUnsureRangesAreUnknown: path.Match reads the descending
+// TestExclusionsOutsideTheWhitelistAreUnknown: a witness match by a pattern
+// outside the witnessTrusted grammar proves nothing, so such an exclusion
+// stays undecided whatever File.fnmatch says. path.Match reads the descending
 // range t-a as empty, so [!t-a] matches the t of tags, while File.fnmatch
 // reads it as t and a and matches refs/[!t-a]ags/v* against no release ref.
-// A witness match through such a range, or through one with an escaped or
-// non-ASCII endpoint, proves nothing, so the exclusion stays undecided
-// whatever File.fnmatch says.
-func TestExclusionsWithUnsureRangesAreUnknown(t *testing.T) {
+// Rewriting the inner "[!" of v[![!-9] as well gave path.Match the descending
+// range ^-9 and a match File.fnmatch does not make either.
+func TestExclusionsOutsideTheWhitelistAreUnknown(t *testing.T) {
 	witnesses := map[string]string{}
 	for _, c := range fnmatchCorpus(t) {
 		witnesses[c.Pattern] = c.Witness
 	}
-	for _, pattern := range unsureRangeExclusions {
+	for _, pattern := range untrustedExclusions {
 		witness, ok := witnesses[pattern]
 		if !ok {
 			t.Errorf("exclusion %q is not in the fnmatch corpus", pattern)
@@ -464,6 +520,25 @@ func TestExclusionsWithUnsureRangesAreUnknown(t *testing.T) {
 		got := checkRulesets(tagRulesets(jsonStringArray([]string{pattern})), "o/r")
 		if got.Status != Unknown {
 			t.Errorf("exclusion %q, File.fnmatch witness %q: checkRulesets = %s (%s), want UNKNOWN", pattern, witness, got.Status, got.Detail)
+		}
+	}
+}
+
+// TestNegationRewriteOpensClassesOnly: only a "[!" that opens a class becomes
+// "[^". The inner "[!" of v[![!-9]* stays, so path.Match reads the ascending
+// range !-9 that File.fnmatch reads, not the descending ^-9.
+func TestNegationRewriteOpensClassesOnly(t *testing.T) {
+	for segment, want := range map[string]string{
+		"v[!0-9]*":   "v[^0-9]*",
+		"v[![!-9]*":  "v[^[!-9]*",
+		"v[a[!b]*":   "v[a[!b]*",
+		"v[a]![!b]*": "v[a]![^b]*",
+		"v[!]![!a]*": "v[^]![!a]*",
+		`v\[![!a]*`:  `v\[![^a]*`,
+		`v[\]![!a]*`: `v[\]![!a]*`,
+	} {
+		if got := negateWithCaret(segment); got != want {
+			t.Errorf("negateWithCaret(%q) = %q, want %q", segment, got, want)
 		}
 	}
 }

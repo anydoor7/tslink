@@ -23,7 +23,6 @@ import (
 	"path"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // releaseCandidateAggregateContext is the status-check context that the
@@ -329,11 +328,13 @@ var releaseTagWitnesses = []string{"refs/tags/v0.1.0", "refs/tags/v1.2.3-rc.1", 
 // match a refs/tags/v* release tag. GitHub matches fnmatch patterns against the
 // full ref; a pattern without a slash is read as a tag name instead, as the
 // include check reads v*, since as a full ref it could match no ref. A pattern
-// matches when it is a literal release ref or matches a witness without an
-// unsure range, and does not match only when it provably cannot reach
-// refs/tags/v. decided is false otherwise: an unknown ~ token, a pattern that
-// may match release tags no witness stands for, such as refs/tags/v9*, a
-// pattern with an unsure range, such as refs/[!t-a]ags/v*, or a slash pattern
+// matches when it is a literal release ref, or when witnessTrusted accepts it
+// and it matches a witness. It does not match only when it provably cannot
+// reach refs/tags/v: it is a literal other ref, or its literal start rules out
+// refs/tags/v. decided is false for everything else: an unknown ~ token, a
+// pattern that may match release tags no witness stands for, such as
+// refs/tags/v9*, a pattern outside the witnessTrusted grammar, such as
+// refs/[!t-a]ags/v*, whose witness matches prove nothing, or a slash pattern
 // without a literal refs/ start, whose refs part may be a wildcard or class.
 func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	pattern = strings.TrimSpace(pattern)
@@ -350,7 +351,7 @@ func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	if !strings.Contains(pattern, "/") {
 		pattern = "refs/tags/" + pattern
 	}
-	if !hasUnsureRange(pattern) {
+	if witnessTrusted(pattern) {
 		for _, ref := range releaseTagWitnesses {
 			if fnmatchPathname(pattern, ref) {
 				return true, true
@@ -375,18 +376,14 @@ func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	return false, true
 }
 
-// fnmatchPathname approximates Ruby's File.fnmatch(pattern, ref,
-// File::FNM_PATHNAME), which GitHub uses for ruleset patterns, for refs with
-// no segment starting with a dot. It matches segment by segment with
+// fnmatchPathname matches ref against pattern segment by segment with
 // path.Match, so nothing matches a slash, and a "**" segment before another
-// spans any number of segments. It is not exact either way. It misses matches
-// File.fnmatch makes, as through a class containing a slash or the descending
-// range t-a, which File.fnmatch reads as t and a and path.Match as empty. Its
-// negation [!t-a] therefore makes a match File.fnmatch does not. So
-// excludeMayMatchReleaseTags trusts its matches only for patterns without an
-// unsure range, which hasUnsureRange reports. A match it misses or does not
-// trust leaves the pattern undecided unless its literal start rules out
-// refs/tags/v, in which case File.fnmatch cannot match a release tag either.
+// spans any number of segments. For a pattern witnessTrusted accepts it agrees
+// with Ruby's File.fnmatch(pattern, ref, File::FNM_PATHNAME), which GitHub
+// uses for ruleset patterns, on the release witnesses. Outside that grammar
+// the two can differ either way, as on the descending range t-a, which
+// path.Match reads as empty and File.fnmatch as t and a, so a result there
+// proves nothing.
 func fnmatchPathname(pattern, ref string) bool {
 	return matchSegments(strings.Split(pattern, "/"), strings.Split(ref, "/"))
 }
@@ -410,65 +407,107 @@ func matchSegments(pattern, ref []string) bool {
 	return err == nil && matched && matchSegments(pattern[1:], ref[1:])
 }
 
-// negateWithCaret rewrites a class opened with "[!", which fnmatch negates,
-// as "[^", the negation path.Match reads.
+// negateWithCaret rewrites the "[!" that opens a class, which fnmatch negates,
+// as "[^", the negation path.Match reads. It follows classes as path.Match
+// reads them, so a "[!" inside an open class is left alone.
 func negateWithCaret(segment string) string {
 	var b strings.Builder
+	inClass := false
 	for i := 0; i < len(segment); i++ {
 		b.WriteByte(segment[i])
 		switch {
 		case segment[i] == '\\' && i+1 < len(segment):
 			i++
 			b.WriteByte(segment[i])
-		case segment[i] == '[' && strings.HasPrefix(segment[i+1:], "!"):
-			i++
-			b.WriteByte('^')
+		case inClass:
+			inClass = segment[i] != ']'
+		case segment[i] == '[':
+			inClass = true
+			if i+1 < len(segment) && (segment[i+1] == '!' || segment[i+1] == '^') {
+				i++
+				b.WriteByte('^')
+			}
+			// A "]" first in a class is a member, not its end.
+			if i+1 < len(segment) && segment[i+1] == ']' {
+				i++
+				b.WriteByte(']')
+			}
 		}
 	}
 	return b.String()
 }
 
-// hasUnsureRange reports whether a class in pattern has a range that
-// path.Match and File.fnmatch may read differently: a descending one, which
-// path.Match reads as empty and File.fnmatch as its two endpoints, or one with
-// an escaped or non-ASCII endpoint, whose order or decoding may differ. It
-// reads classes as path.Match does; only a pattern path.Match accepts can
-// match a witness.
-func hasUnsureRange(pattern string) bool {
+// witnessTrusted reports whether pattern lies inside the narrow grammar in
+// which fnmatchPathname and File.fnmatch with FNM_PATHNAME agree on the
+// release witnesses, so that a witness match proves a release tag excluded.
+// The pattern is printable ASCII with no backslash, brace or "]" outside a
+// class, where "*", "?" and "**" may appear. Every "[" opens a class of an
+// optional "!" or "^", one or more members and a closing "]"; a member is a
+// letter, digit, "." or "_", or a range whose endpoints are both digits, both
+// lowercase or both uppercase letters, the start not above the end. Anything
+// else, such as an unterminated or empty class or a "[", "]", "-" or "/" in a
+// class, is outside it, and excludeMayMatchReleaseTags leaves a pattern
+// outside it undecided unless its literal start rules out refs/tags/v.
+func witnessTrusted(pattern string) bool {
 	for i := 0; i < len(pattern); i++ {
-		switch pattern[i] {
-		case '\\':
-			i++
-		case '[':
-			i++
-			if i < len(pattern) && (pattern[i] == '!' || pattern[i] == '^') {
-				i++
+		c := pattern[i]
+		if c == '[' {
+			n := trustedClassLen(pattern[i:])
+			if n == 0 {
+				return false
 			}
-			for i < len(pattern) && pattern[i] != ']' {
-				lo, loSure, n := classChar(pattern[i:])
-				i += n
-				if i+1 < len(pattern) && pattern[i] == '-' && pattern[i+1] != ']' {
-					hi, hiSure, n := classChar(pattern[i+1:])
-					i += 1 + n
-					if !loSure || !hiSure || lo > hi {
-						return true
-					}
-				}
-			}
+			i += n - 1
+			continue
+		}
+		if c < ' ' || c > '~' || strings.IndexByte(`\]{}`, c) >= 0 {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
-// classChar reads the class character s starts with and returns it with its
-// width in s; sure is false if it is escaped or not ASCII.
-func classChar(s string) (c rune, sure bool, width int) {
-	if s[0] == '\\' && len(s) > 1 {
-		c, width = utf8.DecodeRuneInString(s[1:])
-		return c, false, 1 + width
+// trustedClassLen returns the length of the class that s opens if the class
+// is in the witnessTrusted grammar, and 0 otherwise.
+func trustedClassLen(s string) int {
+	i := 1
+	if i < len(s) && (s[i] == '!' || s[i] == '^') {
+		i++
 	}
-	c, width = utf8.DecodeRuneInString(s)
-	return c, c < utf8.RuneSelf, width
+	members := 0
+	for i < len(s) && s[i] != ']' {
+		lo := s[i]
+		switch {
+		case i+2 < len(s) && s[i+1] == '-':
+			hi := s[i+2]
+			if rangeKind(lo) == 0 || rangeKind(lo) != rangeKind(hi) || lo > hi {
+				return 0
+			}
+			i += 3
+		case rangeKind(lo) != 0 || lo == '.' || lo == '_':
+			i++
+		default:
+			return 0
+		}
+		members++
+	}
+	if members == 0 || i == len(s) {
+		return 0
+	}
+	return i + 1
+}
+
+// rangeKind tells digits, lowercase letters and uppercase letters apart, the
+// kinds whose ranges witnessTrusted accepts, and is 0 for any other byte.
+func rangeKind(c byte) int {
+	switch {
+	case '0' <= c && c <= '9':
+		return 1
+	case 'a' <= c && c <= 'z':
+		return 2
+	case 'A' <= c && c <= 'Z':
+		return 3
+	}
+	return 0
 }
 
 func checkReleaseEnvironment(f Fetcher, repo string) Result {
