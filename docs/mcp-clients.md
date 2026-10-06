@@ -1,7 +1,8 @@
 # Connecting an MCP client
 
-TSLink speaks MCP over two transports. Both expose the same 19 tools from one
-registry, so a client written against either works against the other.
+TSLink speaks MCP over two transports. Both serve the same tool registry, so a
+client written against either works against the other. An owner session lists
+44 tools and scoped roles list fewer; the live `tools/list` is authoritative.
 
 | | `tslink mcp` | `tslink serve --mcp` |
 |---|---|---|
