@@ -55,10 +55,11 @@ jobs:
           check-latest: true
           cache: true
           cache-dependency-path: go.sum
-      - name: Require Homebrew tap token for stable tags
+      - name: Require signing and tap credentials for stable tags
         if: ${{ !contains(github.ref_name, '-') }}
         env:
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_APP_CLIENT_ID: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          HOMEBREW_TAP_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -78,8 +79,8 @@ jobs:
             echo "::error::MACOS_SIGN_P12 and MACOS_NOTARY_KEY must be base64-encoded blobs (store the .p8 as base64, not PEM text)"
             exit 1
           fi
-          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
-            echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to anydoor7/homebrew-tap"
+          if [ -z "${HOMEBREW_TAP_APP_CLIENT_ID}" ] || [ -z "${HOMEBREW_TAP_APP_PRIVATE_KEY}" ]; then
+            echo "::error::Stable releases require the Homebrew tap GitHub App: variable HOMEBREW_TAP_APP_CLIENT_ID and secret HOMEBREW_TAP_APP_PRIVATE_KEY in the release environment, for an App installed on anydoor7/homebrew-tap with Contents read/write"
             exit 1
           fi
       - name: Install cosign
@@ -90,6 +91,21 @@ jobs:
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: v1.44.0
+      # The tap is a separate repository, so the job's GITHUB_TOKEN cannot
+      # write to it. The token minted here expires after one hour and is
+      # limited to the tap's contents. Minting fails unless the App is
+      # installed on the tap with Contents write, so a missing or wrong tap
+      # credential stops the job before GoReleaser publishes the release.
+      - name: Mint Homebrew tap token
+        id: tap-token
+        if: ${{ !contains(github.ref_name, '-') }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: anydoor7
+          repositories: homebrew-tap
+          permission-contents: write
       - name: Release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -100,9 +116,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pre-release tags may leave this empty because skip_upload: auto skips
-          # tap upload; stable tags are checked above before installing tools.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Empty on pre-release tags, where skip_upload: auto skips the tap.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
           # macOS Developer ID signing + notarization (see .goreleaser.yml
           # `notarize`). Leaving MACOS_SIGN_P12 empty disables the step; the
           # stable-tag gate above refuses that, pre-release tags may run unsigned.
