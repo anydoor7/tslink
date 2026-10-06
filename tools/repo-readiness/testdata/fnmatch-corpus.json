@@ -506,5 +506,33 @@
   {
     "pattern": "refs/tags/v[0-9]*",
     "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[!t-a]ags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/[^t-a]ags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/[!v-a]*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/[t-a]ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[!z-a]ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[\\s-\\u]ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[!ａ-ｚ]ags/v*",
+    "witness": "refs/tags/v0.1.0"
   }
 ]

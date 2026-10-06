@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -380,15 +381,16 @@ func fnmatchCorpus(t *testing.T) []fnmatchCase {
 			matching++
 		}
 	}
-	if len(corpus) != 127 || matching != 76 {
-		t.Fatalf("corpus has %d patterns, %d matching a release ref; want 127 and 76", len(corpus), matching)
+	if len(corpus) != 134 || matching != 80 {
+		t.Fatalf("corpus has %d patterns, %d matching a release ref; want 134 and 80", len(corpus), matching)
 	}
 	return corpus
 }
 
 // TestExclusionsTheFnmatchOracleMatchesAreNeverReady: no exclusion that
 // File.fnmatch matches against a release ref lets its ruleset count, and the
-// witnesses prove every such match in the corpus.
+// witnesses prove every such match in the corpus except those through an
+// unsure range, which stay UNKNOWN.
 func TestExclusionsTheFnmatchOracleMatchesAreNeverReady(t *testing.T) {
 	falseReady, unknown := 0, 0
 	for _, c := range fnmatchCorpus(t) {
@@ -401,6 +403,9 @@ func TestExclusionsTheFnmatchOracleMatchesAreNeverReady(t *testing.T) {
 			falseReady++
 			t.Errorf("false READY: exclusion %q matches %s (%s)", c.Pattern, c.Witness, got.Detail)
 		case Unknown:
+			if slices.Contains(unsureRangeExclusions, c.Pattern) {
+				continue
+			}
 			unknown++
 			t.Errorf("exclusion %q matches %s: checkRulesets = UNKNOWN (%s), want NOT_READY", c.Pattern, c.Witness, got.Detail)
 		}
@@ -421,6 +426,44 @@ func TestFnmatchOracleRejectionsAreNotMatches(t *testing.T) {
 		}
 		if match, _ := excludeMayMatchReleaseTags(c.Pattern); match {
 			t.Errorf("exclusion %q matches no release ref, but counts as matching", c.Pattern)
+		}
+	}
+}
+
+// unsureRangeExclusions are the corpus patterns with a bracket range that
+// path.Match may read differently from File.fnmatch: descending, or with an
+// escaped or non-ASCII endpoint. File.fnmatch matches the first three against
+// no release ref and the rest against refs/tags/v0.1.0.
+var unsureRangeExclusions = []string{
+	"refs/[!t-a]ags/v*",
+	"refs/[^t-a]ags/v*",
+	"refs/tags/[!v-a]*",
+	"refs/[t-a]ags/v*",
+	"refs/[!z-a]ags/v*",
+	`refs/[\s-\u]ags/v*`,
+	"refs/[!\uff41-\uff5a]ags/v*",
+}
+
+// TestExclusionsWithUnsureRangesAreUnknown: path.Match reads the descending
+// range t-a as empty, so [!t-a] matches the t of tags, while File.fnmatch
+// reads it as t and a and matches refs/[!t-a]ags/v* against no release ref.
+// A witness match through such a range, or through one with an escaped or
+// non-ASCII endpoint, proves nothing, so the exclusion stays undecided
+// whatever File.fnmatch says.
+func TestExclusionsWithUnsureRangesAreUnknown(t *testing.T) {
+	witnesses := map[string]string{}
+	for _, c := range fnmatchCorpus(t) {
+		witnesses[c.Pattern] = c.Witness
+	}
+	for _, pattern := range unsureRangeExclusions {
+		witness, ok := witnesses[pattern]
+		if !ok {
+			t.Errorf("exclusion %q is not in the fnmatch corpus", pattern)
+			continue
+		}
+		got := checkRulesets(tagRulesets(jsonStringArray([]string{pattern})), "o/r")
+		if got.Status != Unknown {
+			t.Errorf("exclusion %q, File.fnmatch witness %q: checkRulesets = %s (%s), want UNKNOWN", pattern, witness, got.Status, got.Detail)
 		}
 	}
 }

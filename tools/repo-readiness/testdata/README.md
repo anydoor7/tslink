@@ -3,17 +3,22 @@
 `fnmatch-corpus.json` lists ruleset ref patterns and, for each, the first release
 ref that Ruby's `File.fnmatch(pattern, ref, File::FNM_PATHNAME)` matches, or `""`
 when it matches none. GitHub documents that ruleset patterns use this function with
-this flag. `TestExclusionsTheFnmatchOracleMatchesAreNeverReady` and
-`TestFnmatchOracleMismatchesAreNotMatches` in `../main_test.go` read it.
+this flag. `TestExclusionsTheFnmatchOracleMatchesAreNeverReady`,
+`TestFnmatchOracleRejectionsAreNotMatches` and
+`TestExclusionsWithUnsureRangesAreUnknown` in `../main_test.go` read it.
 
 The refs tried, in this order, are `refs/tags/v0.1.0`, `refs/tags/v1.0.0-rc.1`,
 `refs/tags/v10.20.30`, `refs/tags/v1.0.0-0` and `refs/tags/v1.0.0-0a`. The patterns
 are the readiness test cases, the five full-ref wildcards from the PR #34 re-review,
 and, for every character of `refs/tags/v`, that character replaced by and prefixed
-with `*`, `?`, `[c]`, `[cx]` and `**`, each followed by `*`.
+with `*`, `?`, `[c]`, `[cx]` and `**`, each followed by `*`. The last seven are
+bracket ranges that Go's `path.Match` may read differently from `File.fnmatch`:
+descending ones, which `File.fnmatch` reads as their two endpoints and `path.Match`
+as empty, and ones with escaped or non-ASCII endpoints.
 
-The file was generated with Ruby 2.6.10 by the script below and checked in
-unchanged; rerunning the script reproduces it byte for byte.
+The file was generated with Ruby 2.6.10 (`ruby 2.6.10p210`, macOS `/usr/bin/ruby`)
+by saving the script below as `gen.rb` in this directory and running `ruby gen.rb`,
+and checked in unchanged; rerunning the script reproduces it byte for byte.
 
 ```ruby
 require 'json'
@@ -33,6 +38,8 @@ prefix.each_char.with_index do |letter, i|
   end
 end
 patterns += ['refs/tags/[' + 'v' + ']*', 'refs/[t]ags/v*', 'refs/[x]ags/v*', 'refs/tags/v/**', 'refs/tags/v[0-9]*']
+patterns += ['refs/[!t-a]ags/v*', 'refs/[^t-a]ags/v*', 'refs/tags/[!v-a]*', 'refs/[t-a]ags/v*',
+             'refs/[!z-a]ags/v*', 'refs/[\\s-\\u]ags/v*', "refs/[!\uff41-\uff5a]ags/v*"]
 tags = ['refs/tags/v0.1.0', 'refs/tags/v1.0.0-rc.1', 'refs/tags/v10.20.30', 'refs/tags/v1.0.0-0', 'refs/tags/v1.0.0-0a']
 rows = patterns.uniq.map do |pattern|
   witness = tags.find { |tag| File.fnmatch(pattern, tag, File::FNM_PATHNAME) }
@@ -41,6 +48,6 @@ end
 File.write('fnmatch-corpus.json', JSON.pretty_generate(rows) + "\n")
 ```
 
-It holds 127 patterns, 76 of which match a release ref.
+It holds 134 patterns, 80 of which match a release ref.
 
-SHA-256: `e0b1a73e68dca086d28bdcd9638e89c95e53c2f8cd2240f5f9143500270263e0`
+SHA-256: `d67fcfeb325706e6cd022923b55c50a37f6d3e17139b989ef3e53df2e603a819`

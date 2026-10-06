@@ -23,6 +23,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // releaseCandidateAggregateContext is the status-check context that the
@@ -328,11 +329,12 @@ var releaseTagWitnesses = []string{"refs/tags/v0.1.0", "refs/tags/v1.2.3-rc.1", 
 // match a refs/tags/v* release tag. GitHub matches fnmatch patterns against the
 // full ref; a pattern without a slash is read as a tag name instead, as the
 // include check reads v*, since as a full ref it could match no ref. A pattern
-// matches when it matches a witness or is a literal release ref, and does not
-// match only when it provably cannot reach refs/tags/v. decided is false
-// otherwise: an unknown ~ token, a pattern that may match release tags no
-// witness stands for, such as refs/tags/v9*, or a slash pattern without a
-// literal refs/ start, whose refs part may be a wildcard or class.
+// matches when it is a literal release ref or matches a witness without an
+// unsure range, and does not match only when it provably cannot reach
+// refs/tags/v. decided is false otherwise: an unknown ~ token, a pattern that
+// may match release tags no witness stands for, such as refs/tags/v9*, a
+// pattern with an unsure range, such as refs/[!t-a]ags/v*, or a slash pattern
+// without a literal refs/ start, whose refs part may be a wildcard or class.
 func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	pattern = strings.TrimSpace(pattern)
 	switch {
@@ -348,9 +350,11 @@ func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	if !strings.Contains(pattern, "/") {
 		pattern = "refs/tags/" + pattern
 	}
-	for _, ref := range releaseTagWitnesses {
-		if fnmatchPathname(pattern, ref) {
-			return true, true
+	if !hasUnsureRange(pattern) {
+		for _, ref := range releaseTagWitnesses {
+			if fnmatchPathname(pattern, ref) {
+				return true, true
+			}
 		}
 	}
 	if !strings.HasPrefix(pattern, "refs/") {
@@ -371,13 +375,18 @@ func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	return false, true
 }
 
-// fnmatchPathname reports whether ref matches pattern as Ruby's
-// File.fnmatch(pattern, ref, File::FNM_PATHNAME) does, which GitHub uses for
-// ruleset patterns, for refs with no segment starting with a dot. It matches
-// segment by segment with path.Match, so nothing matches a slash, and a "**"
-// segment before another spans any number of segments. Where it may still
-// differ, as for a class containing a slash, it reports no match; it serves
-// only to prove that an exclusion matches.
+// fnmatchPathname approximates Ruby's File.fnmatch(pattern, ref,
+// File::FNM_PATHNAME), which GitHub uses for ruleset patterns, for refs with
+// no segment starting with a dot. It matches segment by segment with
+// path.Match, so nothing matches a slash, and a "**" segment before another
+// spans any number of segments. It is not exact either way. It misses matches
+// File.fnmatch makes, as through a class containing a slash or the descending
+// range t-a, which File.fnmatch reads as t and a and path.Match as empty. Its
+// negation [!t-a] therefore makes a match File.fnmatch does not. So
+// excludeMayMatchReleaseTags trusts its matches only for patterns without an
+// unsure range, which hasUnsureRange reports. A match it misses or does not
+// trust leaves the pattern undecided unless its literal start rules out
+// refs/tags/v, in which case File.fnmatch cannot match a release tag either.
 func fnmatchPathname(pattern, ref string) bool {
 	return matchSegments(strings.Split(pattern, "/"), strings.Split(ref, "/"))
 }
@@ -417,6 +426,49 @@ func negateWithCaret(segment string) string {
 		}
 	}
 	return b.String()
+}
+
+// hasUnsureRange reports whether a class in pattern has a range that
+// path.Match and File.fnmatch may read differently: a descending one, which
+// path.Match reads as empty and File.fnmatch as its two endpoints, or one with
+// an escaped or non-ASCII endpoint, whose order or decoding may differ. It
+// reads classes as path.Match does; only a pattern path.Match accepts can
+// match a witness.
+func hasUnsureRange(pattern string) bool {
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '\\':
+			i++
+		case '[':
+			i++
+			if i < len(pattern) && (pattern[i] == '!' || pattern[i] == '^') {
+				i++
+			}
+			for i < len(pattern) && pattern[i] != ']' {
+				lo, loSure, n := classChar(pattern[i:])
+				i += n
+				if i+1 < len(pattern) && pattern[i] == '-' && pattern[i+1] != ']' {
+					hi, hiSure, n := classChar(pattern[i+1:])
+					i += 1 + n
+					if !loSure || !hiSure || lo > hi {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// classChar reads the class character s starts with and returns it with its
+// width in s; sure is false if it is escaped or not ASCII.
+func classChar(s string) (c rune, sure bool, width int) {
+	if s[0] == '\\' && len(s) > 1 {
+		c, width = utf8.DecodeRuneInString(s[1:])
+		return c, false, 1 + width
+	}
+	c, width = utf8.DecodeRuneInString(s)
+	return c, c < utf8.RuneSelf, width
 }
 
 func checkReleaseEnvironment(f Fetcher, repo string) Result {
