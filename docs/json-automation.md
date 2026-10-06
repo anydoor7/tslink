@@ -2,7 +2,7 @@
 
 ## JSON Automation
 
-Every command except the stdio `tslink mcp` server accepts `--json` and writes one versioned envelope to stdout, so owner-side automation is the same CLI with one flag. There is no REST server, dashboard, or member-facing service directory; JSON views are redacted rather than raw registry records.
+Every command in the published manifest except the stdio `tslink mcp` server accepts `--json` and writes one versioned envelope to stdout, so owner-side automation is the same CLI with one flag. Cobra's `help` and `completion` commands are not in the manifest and print plain text. There is no REST server or dashboard; members see their permitted apps only through the private [home portal](portal.md). JSON views are redacted rather than raw registry records.
 
 ```bash
 # List services registered on this machine
@@ -32,7 +32,7 @@ tslink template apply local-web --dry-run --json
 tslink template apply local-web --yes --json
 ```
 
-The same operations are available to MCP clients through `tslink mcp` (stdio) and the remote control plane described below; `tslink manifest --json` prints the machine-readable description of every command, flag, exit code, and error code.
+The same operations are available to MCP clients through `tslink mcp` (stdio) and the remote control plane described below; `tslink manifest --json` prints the machine-readable description of every published command, flag, exit code, and error code.
 
 All `--json` output uses the same versioned envelope. `command` names the command that produced it. Public view `data.schema_version` is the integer `1`:
 

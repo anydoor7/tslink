@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Користуйтеся своїми застосунками й керуйте ними звідусіль.<br>Залишайте їх приватними або діліться на власних умовах.</strong></p>
+<p align="center"><strong>Діліться своїми self-hosted застосунками з тими, кого оберете, і на стільки, на скільки вирішите.</strong></p>
 
-Ваші застосунки на власному комп'ютері чи хмарному сервері: відкривайте їх через зашифровану приватну мережу або свідомо обирайте гостьові посилання для браузера чи публічний доступ. Керуйте самі або через агента.
+TSLink дає кожному застосунку на вашому комп'ютері чи сервері власну приватну адресу Tailscale. Надавайте доступ конкретним людям до визначеного строку, надсилайте гостьове посилання для браузера тим, хто не користується Tailscale, і відкликайте будь-який із цих доступів однією командою. Робіть це самі або через ШІ-агента, обмеженого призначеною вами роллю. Незалежний проєкт, що працює з Tailscale.
 
-<p align="center"><a href="#quickstart">Швидкий старт</a> · <a href="#agents">Для агентів</a> · <a href="#documentation">Документація</a></p>
+<p align="center"><a href="#quickstart">Швидкий старт</a> · <a href="#agents">Для агентів</a> · <a href="comparison.md">Порівняння із Serve, ngrok і Cloudflare</a> · <a href="#documentation">Документація</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <strong>Українська</strong> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | Відвідування через браузер | Тимчасові посилання з необов'язковим PIN для HTTP-проксі-застосунків або явно публічний HTTPS через Funnel. Посилання можна переслати; воно не підтверджує особу. [Гостьові посилання](guest-links.md) |
 | Обслуговування набору застосунків | Перелік на кожному хості, приватний портал, перевірки стану й сповіщення, історія доступу та CLI/MCP-керування з ролями агентів, межами за застосунками й записами аудиту. [Портал](portal.md) · [Права MCP](mcp-scopes.md) |
 
-[Рецепти застосунків](apps.md), [ліміти завантаження](sharing.md), [гнучкі строки](durations.md) та [QR-інструкції й запити доступу](requests.md) спрощують обслуговування. Ці функції вже є в цьому вихідному коді.
+[Рецепти застосунків](apps.md), [ліміти завантаження](sharing.md), [гнучкі строки](durations.md) та [QR-інструкції й запити доступу](requests.md) спрощують обслуговування. Ці функції входять до v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Швидкий старт
 
-Встановіть із вихідного коду за допомогою **Git і Go 1.26.6+**. Готові збірки й Homebrew ще не опубліковані. Команди використовують bash/zsh. [Налаштування macOS, Linux і Windows](platforms.md)
+На macOS і Linux встановіть через Homebrew. Двійковий файл для macOS підписано сертифікатом Developer ID і нотаризовано Apple. Щоб згодом оновитися, виконайте `brew upgrade --cask tslink`, а потім знову `tslink install`, якщо TSLink працює як фонова служба.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+У Windows завантажте `tslink_<version>_windows_<arch>.zip` з [останнього релізу](https://github.com/anydoor7/tslink/releases/latest), звірте його з `checksums.txt` і виконайте `tslink install`, щоб TSLink запускався під час входу в систему. Архів zip не має підпису Authenticode; [перевірте реліз](verify-release.md) за підписаними контрольними сумами та атестаціями. Пакети `.deb` і `.rpm` для Linux є на тій самій сторінці релізу. Для збирання з вихідного коду потрібні **Git і Go 1.26.6+**. Команди нижче використовують bash/zsh; див. [Налаштування macOS, Linux і Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
@@ -41,7 +47,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Потрібні доступ до репозиторію, **обліковий запис Tailscale**, [MagicDNS і HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Для приватного доступу пристроям потрібні Tailscale і дозвіл мережевої політики. На хості застосунків Tailscale вбудовано в TSLink.
+Потрібні **обліковий запис Tailscale** і [MagicDNS і HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Для приватного доступу пристроям потрібні Tailscale і дозвіл мережевої політики. На хості застосунків Tailscale вбудовано в TSLink.
 
 Якщо застосунок уже працює на порту 3000:
 

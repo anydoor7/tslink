@@ -36,6 +36,26 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # Only a SemVer version tag without build metadata can publish. GoReleaser
+      # reads a pre-release from SemVer's pre-release field, but build
+      # metadata may contain hyphens too: v0.1.0+build-1 is a stable version
+      # with a hyphen. Without "+", any hyphen in an accepted tag starts the
+      # pre-release field, so the steps below that treat hyphenated tags as
+      # pre-releases agree with GoReleaser's prerelease: auto and
+      # skip_upload: auto.
+      - name: Require a SemVer release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Byte ranges: in a UTF-8 locale, [A-Za-z] can also match letters such as é.
+          LC_ALL=C
+          identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver="^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?$"
+          if ! [[ "${TAG}" =~ ${semver} ]]; then
+            echo "::error::Tag ${TAG} is not a release version: use vMAJOR.MINOR.PATCH with an optional -pre-release and no +build metadata"
+            exit 1
+          fi
       - name: Require repository release authorization
         env:
           TSLINK_RELEASE_PUBLISH_ENABLED: ${{ vars.TSLINK_RELEASE_PUBLISH_ENABLED }}
@@ -49,16 +69,50 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The release body is the curated CHANGELOG.md section for the tag's
+      # version, not GoReleaser's commit list. Every tag needs exactly one
+      # non-empty section, pre-releases included, so a missing one stops the
+      # job before anything is published. The file goes to the runner's temp
+      # directory: GoReleaser --clean wipes dist/, and an untracked file in
+      # the checkout would make GoReleaser refuse a dirty git state.
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+          RELEASE_NOTES: ${{ runner.temp }}/release-notes.md
+        run: |
+          set -euo pipefail
+          heading="## [${TAG#v}]"
+          # Both passes drop a trailing CR, so CRLF lines read like LF lines.
+          sections="$(awk -v heading="${heading}" '{ sub(/\r$/, "") } index($0, heading) == 1 { n++ } END { print n + 0 }' CHANGELOG.md)"
+          if [ "${sections}" != "1" ]; then
+            echo "::error::CHANGELOG.md has ${sections} sections headed ${heading}; tag ${TAG} needs exactly one"
+            exit 1
+          fi
+          # Copy the lines between that heading and the next "## [" heading,
+          # dropping blank lines at either end.
+          awk -v heading="${heading}" '
+            { sub(/\r$/, "") }
+            index($0, "## [") == 1 { in_section = index($0, heading) == 1; next }
+            !in_section { next }
+            /^[ \t]*$/ { if (started) blanks++; next }
+            { for (; blanks > 0; blanks--) print ""; print; started = 1 }
+          ' CHANGELOG.md > "${RELEASE_NOTES}"
+          if [ ! -s "${RELEASE_NOTES}" ]; then
+            echo "::error::CHANGELOG.md section ${heading} is empty; tag ${TAG} needs release notes"
+            exit 1
+          fi
+          echo "Release notes for ${TAG}: $(wc -l < "${RELEASE_NOTES}") lines from CHANGELOG.md ${heading}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
           cache: true
           cache-dependency-path: go.sum
-      - name: Require Homebrew tap token for stable tags
+      - name: Require signing and tap credentials for stable tags
         if: ${{ !contains(github.ref_name, '-') }}
         env:
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_APP_CLIENT_ID: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          HOMEBREW_TAP_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -78,8 +132,8 @@ jobs:
             echo "::error::MACOS_SIGN_P12 and MACOS_NOTARY_KEY must be base64-encoded blobs (store the .p8 as base64, not PEM text)"
             exit 1
           fi
-          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
-            echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to anydoor7/homebrew-tap"
+          if [ -z "${HOMEBREW_TAP_APP_CLIENT_ID}" ] || [ -z "${HOMEBREW_TAP_APP_PRIVATE_KEY}" ]; then
+            echo "::error::Stable releases require the Homebrew tap GitHub App: variable HOMEBREW_TAP_APP_CLIENT_ID and secret HOMEBREW_TAP_APP_PRIVATE_KEY in the release environment, for an App installed on anydoor7/homebrew-tap with Contents read/write"
             exit 1
           fi
       - name: Install cosign
@@ -90,6 +144,21 @@ jobs:
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: v1.44.0
+      # The tap is a separate repository, so the job's GITHUB_TOKEN cannot
+      # write to it. The token minted here expires after one hour and is
+      # limited to the tap's contents. Minting fails unless the App is
+      # installed on the tap with Contents write, so a missing or wrong tap
+      # credential stops the job before GoReleaser publishes the release.
+      - name: Mint Homebrew tap token
+        id: tap-token
+        if: ${{ !contains(github.ref_name, '-') }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: anydoor7
+          repositories: homebrew-tap
+          permission-contents: write
       - name: Release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -97,12 +166,11 @@ jobs:
           # version validated by the release-config gate. Kept identical to the
           # release-candidate `release-config` pin and the .goreleaser.yml comment.
           version: v2.17.0
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pre-release tags may leave this empty because skip_upload: auto skips
-          # tap upload; stable tags are checked above before installing tools.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Empty on pre-release tags, where skip_upload: auto skips the tap.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
           # macOS Developer ID signing + notarization (see .goreleaser.yml
           # `notarize`). Leaving MACOS_SIGN_P12 empty disables the step; the
           # stable-tag gate above refuses that, pre-release tags may run unsigned.

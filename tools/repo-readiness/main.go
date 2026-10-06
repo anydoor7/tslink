@@ -20,32 +20,20 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
 
-const releaseCandidateAggregateContext = "Release candidate gate"
-
-var mandatoryReleaseCandidateLeafContexts = []string{
-	"Native build/vet/test/race (ubuntu-latest)",
-	"Native build/vet/test/race (macos-latest)",
-	"Native build/vet/test/race (windows-latest)",
-	"Compiled-binary machine contracts (ubuntu-latest)",
-	"Compiled-binary machine contracts (macos-latest)",
-	"Compiled-binary machine contracts (windows-latest)",
-	"Staticcheck",
-	"govulncheck (main module)",
-	"govulncheck (repo)",
-	"gofmt + tidy-diff (read-only source proof)",
-	"Cross build (darwin/amd64)",
-	"Cross build (darwin/arm64)",
-	"Cross build (linux/amd64)",
-	"Cross build (linux/arm64)",
-	"Cross build (windows/amd64)",
-	"Cross build (windows/arm64)",
-	"Artifact download + hash + content verify",
-	"GoReleaser config + license/notice presence",
-}
+// releaseCandidateAggregateContext is the status-check context that the
+// always-running aggregate job emits on pull requests and main. GitHub names a
+// job of a called reusable workflow "<caller job name> / <called job name>":
+// the ci.yml `candidate` job is named "Release candidate gate" and the
+// release-candidate.yml aggregate job is named "gate". The caller name alone is
+// never reported as a check, and the per-target leaf jobs were consolidated, so
+// this aggregate is the only context that proves the whole gate ran.
+// TestAggregateContextMatchesWorkflows derives it from the workflow files.
+const releaseCandidateAggregateContext = "Release candidate gate / gate"
 
 // Status is the classification of one control.
 type Status string
@@ -200,9 +188,18 @@ func checkBranchProtection(f Fetcher, repo string) Result {
 	if p.RequiredPullRequestReviews == nil {
 		return Result{"branch-protection:main", NotReady, "no required pull-request reviews"}
 	}
-	contexts := append([]string(nil), p.RequiredStatusChecks.Contexts...)
+	// GitHub reports each required check in both lists.
+	var contexts []string
+	seen := map[string]bool{}
+	for _, context := range p.RequiredStatusChecks.Contexts {
+		if context != "" && !seen[context] {
+			seen[context] = true
+			contexts = append(contexts, context)
+		}
+	}
 	for _, check := range p.RequiredStatusChecks.Checks {
-		if check.Context != "" {
+		if check.Context != "" && !seen[check.Context] {
+			seen[check.Context] = true
 			contexts = append(contexts, check.Context)
 		}
 	}
@@ -216,19 +213,12 @@ func checkBranchProtection(f Fetcher, repo string) Result {
 }
 
 func hasReleaseCandidateContext(contexts []string) bool {
-	seen := make(map[string]struct{}, len(contexts))
 	for _, context := range contexts {
-		seen[context] = struct{}{}
 		if context == releaseCandidateAggregateContext {
 			return true
 		}
 	}
-	for _, required := range mandatoryReleaseCandidateLeafContexts {
-		if _, ok := seen[required]; !ok {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 func checkRulesets(f Fetcher, repo string) Result {
@@ -239,32 +229,83 @@ func checkRulesets(f Fetcher, repo string) Result {
 	if code/100 != 2 {
 		return Result{"rulesets", Unknown, fmt.Sprintf("unexpected HTTP %d", code)}
 	}
-	var rs []struct {
-		Name        string `json:"name"`
+	// The list endpoint returns summaries without `conditions`; the ref
+	// patterns are only in each ruleset's detail.
+	var summaries []struct {
+		ID          int64  `json:"id"`
 		Enforcement string `json:"enforcement"`
 		Target      string `json:"target"`
-		Conditions  struct {
-			RefName struct {
-				Include []string `json:"include"`
-			} `json:"ref_name"`
-		} `json:"conditions"`
 	}
-	_ = json.Unmarshal(body, &rs)
+	_ = json.Unmarshal(body, &summaries)
 	activeTagV := 0
-	for _, r := range rs {
-		if r.Enforcement == "active" && rulesetTargetsReleaseTags(r.Target, r.Conditions.RefName.Include) {
+	// A ruleset whose exclusions match release tags does not protect them.
+	var excluded, undecided []string
+	for _, summary := range summaries {
+		if summary.Enforcement != "active" || !rulesetTargetMayCoverTags(summary.Target) {
+			continue
+		}
+		code, body, err := f.Get(fmt.Sprintf("/repos/%s/rulesets/%d", repo, summary.ID))
+		if s, d, cont := unreadable(code, err); !cont {
+			return Result{"rulesets", s, d}
+		}
+		if code/100 != 2 {
+			return Result{"rulesets", Unknown, fmt.Sprintf("unexpected HTTP %d reading ruleset %d", code, summary.ID)}
+		}
+		var detail struct {
+			Enforcement string `json:"enforcement"`
+			Target      string `json:"target"`
+			Conditions  struct {
+				RefName struct {
+					Include []string `json:"include"`
+					Exclude []string `json:"exclude"`
+				} `json:"ref_name"`
+			} `json:"conditions"`
+		}
+		if err := json.Unmarshal(body, &detail); err != nil {
+			return Result{"rulesets", Unknown, fmt.Sprintf("could not parse ruleset %d: %v", summary.ID, err)}
+		}
+		if detail.Enforcement != "active" || !rulesetTargetsReleaseTags(detail.Target, detail.Conditions.RefName.Include) {
+			continue
+		}
+		var matched, unclear []string
+		for _, exclude := range detail.Conditions.RefName.Exclude {
+			switch match, decided := excludeMayMatchReleaseTags(exclude); {
+			case match:
+				matched = append(matched, fmt.Sprintf("ruleset %d excludes %q", summary.ID, exclude))
+			case !decided:
+				unclear = append(unclear, fmt.Sprintf("ruleset %d excludes %q", summary.ID, exclude))
+			}
+		}
+		switch {
+		case len(matched) > 0:
+			excluded = append(excluded, matched...)
+		case len(unclear) > 0:
+			undecided = append(undecided, unclear...)
+		default:
 			activeTagV++
 		}
 	}
-	if activeTagV == 0 {
-		return Result{"rulesets", NotReady, "no active ruleset targets refs/tags/v*; unrelated rulesets are insufficient"}
+	if activeTagV > 0 {
+		return Result{"rulesets", Ready, fmt.Sprintf("%d active release-tag ruleset(s)", activeTagV)}
 	}
-	return Result{"rulesets", Ready, fmt.Sprintf("%d active release-tag ruleset(s)", activeTagV)}
+	// A ruleset with an exclusion this tool cannot evaluate may still cover
+	// every release tag.
+	if len(undecided) > 0 {
+		return Result{"rulesets", Unknown, "cannot tell whether these exclusions match release tags: " + strings.Join(undecided, "; ")}
+	}
+	if len(excluded) > 0 {
+		return Result{"rulesets", NotReady, "release tags are excluded: " + strings.Join(excluded, "; ")}
+	}
+	return Result{"rulesets", NotReady, "no active ruleset targets refs/tags/v*; unrelated rulesets are insufficient"}
+}
+
+func rulesetTargetMayCoverTags(target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	return target == "" || target == "tag"
 }
 
 func rulesetTargetsReleaseTags(target string, includes []string) bool {
-	target = strings.ToLower(strings.TrimSpace(target))
-	if target != "" && target != "tag" {
+	if !rulesetTargetMayCoverTags(target) {
 		return false
 	}
 	for _, include := range includes {
@@ -274,6 +315,203 @@ func rulesetTargetsReleaseTags(target string, includes []string) bool {
 		}
 	}
 	return false
+}
+
+// releaseTagPrefix starts the full ref of every release tag.
+const releaseTagPrefix = "refs/tags/v"
+
+// releaseTagWitnesses are release refs; an exclusion that matches one provably
+// excludes a release tag.
+var releaseTagWitnesses = []string{"refs/tags/v0.1.0", "refs/tags/v1.2.3-rc.1", "refs/tags/v10.20.30"}
+
+// excludeMayMatchReleaseTags reports whether a ruleset exclude pattern can
+// match a refs/tags/v* release tag. GitHub matches fnmatch patterns against the
+// full ref; a pattern without a slash is read as a tag name instead, as the
+// include check reads v*, since as a full ref it could match no ref. A pattern
+// matches when it is a literal release ref, or when witnessTrusted accepts it
+// and it matches a witness. It does not match only when it provably cannot
+// reach refs/tags/v: it is a literal other ref, or its literal start rules out
+// refs/tags/v. decided is false for everything else: an unknown ~ token, a
+// pattern that may match release tags no witness stands for, such as
+// refs/tags/v9*, a pattern outside the witnessTrusted grammar, such as
+// refs/[!t-a]ags/v*, whose witness matches prove nothing, or a slash pattern
+// without a literal refs/ start, whose refs part may be a wildcard or class.
+func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
+	pattern = strings.TrimSpace(pattern)
+	switch {
+	case pattern == "":
+		return false, true
+	case pattern == "~ALL":
+		return true, true
+	case pattern == "~DEFAULT_BRANCH":
+		return false, true
+	case strings.HasPrefix(pattern, "~"):
+		return false, false
+	}
+	if !strings.Contains(pattern, "/") {
+		pattern = "refs/tags/" + pattern
+	}
+	if witnessTrusted(pattern) {
+		for _, ref := range releaseTagWitnesses {
+			if fnmatchPathname(pattern, ref) {
+				return true, true
+			}
+		}
+	}
+	if !strings.HasPrefix(pattern, "refs/") {
+		return false, false
+	}
+	special := strings.IndexAny(pattern, `*?[{\`)
+	if special < 0 {
+		// A literal names one ref.
+		return strings.HasPrefix(pattern, releaseTagPrefix), true
+	}
+	// Every character before the first special one must match itself, so
+	// unless that start and refs/tags/v agree, the pattern cannot reach a
+	// release tag.
+	start := pattern[:special]
+	if strings.HasPrefix(releaseTagPrefix, start) || strings.HasPrefix(start, releaseTagPrefix) {
+		return false, false
+	}
+	return false, true
+}
+
+// fnmatchPathname matches ref against pattern segment by segment with
+// path.Match, so nothing matches a slash, and a "**" segment before another
+// spans any number of segments. For a pattern witnessTrusted accepts it agrees
+// with Ruby's File.fnmatch(pattern, ref, File::FNM_PATHNAME), which GitHub
+// uses for ruleset patterns, on the release witnesses. Outside that grammar
+// the two can differ either way, as on the descending range t-a, which
+// path.Match reads as empty and File.fnmatch as t and a, so a result there
+// proves nothing.
+func fnmatchPathname(pattern, ref string) bool {
+	return matchSegments(strings.Split(pattern, "/"), strings.Split(ref, "/"))
+}
+
+func matchSegments(pattern, ref []string) bool {
+	if len(pattern) == 0 {
+		return len(ref) == 0
+	}
+	if pattern[0] == "**" && len(pattern) > 1 {
+		for skip := 0; skip <= len(ref); skip++ {
+			if matchSegments(pattern[1:], ref[skip:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(ref) == 0 {
+		return false
+	}
+	matched, err := path.Match(negateWithCaret(pattern[0]), ref[0])
+	return err == nil && matched && matchSegments(pattern[1:], ref[1:])
+}
+
+// negateWithCaret rewrites the "[!" that opens a class, which fnmatch negates,
+// as "[^", the negation path.Match reads. It skips escaped bytes and keeps a
+// class open until its closing "]", so a "[!" inside an open class is left
+// alone. A "]" right after the opener is kept as a member, as fnmatch reads
+// it; path.Match rejects such a class, so it matches nothing either way, and
+// witnessTrusted rejects that shape.
+func negateWithCaret(segment string) string {
+	var b strings.Builder
+	inClass := false
+	for i := 0; i < len(segment); i++ {
+		b.WriteByte(segment[i])
+		switch {
+		case segment[i] == '\\' && i+1 < len(segment):
+			i++
+			b.WriteByte(segment[i])
+		case inClass:
+			inClass = segment[i] != ']'
+		case segment[i] == '[':
+			inClass = true
+			if i+1 < len(segment) && (segment[i+1] == '!' || segment[i+1] == '^') {
+				i++
+				b.WriteByte('^')
+			}
+			// fnmatch reads a "]" first in a class as a member; path.Match
+			// rejects it.
+			if i+1 < len(segment) && segment[i+1] == ']' {
+				i++
+				b.WriteByte(']')
+			}
+		}
+	}
+	return b.String()
+}
+
+// witnessTrusted reports whether pattern lies inside the narrow grammar in
+// which fnmatchPathname and File.fnmatch with FNM_PATHNAME agree on the
+// release witnesses, so that a witness match proves a release tag excluded.
+// The pattern is printable ASCII with no backslash, brace or "]" outside a
+// class, where "*", "?" and "**" may appear. Every "[" opens a class of an
+// optional "!" or "^", one or more members and a closing "]"; a member is a
+// letter, digit, "." or "_", or a range whose endpoints are both digits, both
+// lowercase or both uppercase letters, the start not above the end. Anything
+// else, such as an unterminated or empty class or a "[", "]", "-" or "/" in a
+// class, is outside it, and excludeMayMatchReleaseTags leaves a pattern
+// outside it undecided unless its literal start rules out refs/tags/v.
+func witnessTrusted(pattern string) bool {
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		if c == '[' {
+			n := trustedClassLen(pattern[i:])
+			if n == 0 {
+				return false
+			}
+			i += n - 1
+			continue
+		}
+		if c < ' ' || c > '~' || strings.IndexByte(`\]{}`, c) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// trustedClassLen returns the length of the class that s opens if the class
+// is in the witnessTrusted grammar, and 0 otherwise.
+func trustedClassLen(s string) int {
+	i := 1
+	if i < len(s) && (s[i] == '!' || s[i] == '^') {
+		i++
+	}
+	members := 0
+	for i < len(s) && s[i] != ']' {
+		lo := s[i]
+		switch {
+		case i+2 < len(s) && s[i+1] == '-':
+			hi := s[i+2]
+			if rangeKind(lo) == 0 || rangeKind(lo) != rangeKind(hi) || lo > hi {
+				return 0
+			}
+			i += 3
+		case rangeKind(lo) != 0 || lo == '.' || lo == '_':
+			i++
+		default:
+			return 0
+		}
+		members++
+	}
+	if members == 0 || i == len(s) {
+		return 0
+	}
+	return i + 1
+}
+
+// rangeKind tells digits, lowercase letters and uppercase letters apart, the
+// kinds whose ranges witnessTrusted accepts, and is 0 for any other byte.
+func rangeKind(c byte) int {
+	switch {
+	case '0' <= c && c <= '9':
+		return 1
+	case 'a' <= c && c <= 'z':
+		return 2
+	case 'A' <= c && c <= 'Z':
+		return 3
+	}
+	return 0
 }
 
 func checkReleaseEnvironment(f Fetcher, repo string) Result {

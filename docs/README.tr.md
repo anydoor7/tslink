@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Uygulamalarınıza her yerden erişin ve onları yönetin.<br>Gizli tutun veya kendi koşullarınızla paylaşın.</strong></p>
+<p align="center"><strong>Kendi barındırdığınız uygulamaları seçtiğiniz kişilerle, istediğiniz süre boyunca paylaşın.</strong></p>
 
-Bilgisayarınızdaki veya bulut sunucunuzdaki uygulamalara şifreli özel ağ üzerinden erişin; dilerseniz tarayıcı konuk bağlantılarını veya herkese açık erişimi seçin. Kendiniz ya da bir ajan aracılığıyla yönetin.
+TSLink, bilgisayarınızdaki veya sunucunuzdaki her uygulamaya kendine ait özel bir Tailscale adresi verir. Belirli kişilere bir son tarihe kadar erişim tanıyın, Tailscale kullanmayan birine tarayıcı konuk bağlantısı gönderin ve her birini tek komutla iptal edin. Bunu kendiniz yapın ya da atadığınız rolle sınırlı bir yapay zekâ ajanına bırakın. Tailscale ile çalışan bağımsız bir projedir.
 
-<p align="center"><a href="#quickstart">Hızlı başlangıç</a> · <a href="#agents">Ajanlar için</a> · <a href="#documentation">Belgeler</a></p>
+<p align="center"><a href="#quickstart">Hızlı başlangıç</a> · <a href="#agents">Ajanlar için</a> · <a href="comparison.md">Serve, ngrok ve Cloudflare ile karşılaştırma</a> · <a href="#documentation">Belgeler</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <strong>Türkçe</strong> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@ Bilgisayarınızdaki veya bulut sunucunuzdaki uygulamalara şifreli özel ağ ü
 | Tarayıcıdan konuk kabul etmek | HTTP proxy uygulamaları için isteğe bağlı PIN'li süreli bağlantılar veya Funnel üzerinden açıkça etkinleştirilen genel HTTPS. Bağlantılar iletilebilir, kişinin kimliğini doğrulamaz. [Konuk bağlantıları](guest-links.md) |
 | Bir uygulama grubunu yönetmek | Sunucu başına envanter, özel portal, sağlık kontrolleri ve uyarılar, erişim geçmişi; ajan rolleri, uygulama kapsamları ve denetim kayıtlarıyla CLI/MCP yönetimi. [Portal](portal.md) · [MCP yetkileri](mcp-scopes.md) |
 
-[Uygulama tarifleri](apps.md), [yükleme sınırları](sharing.md), [esnek süreler](durations.md) ve [QR ile katılım ve erişim talepleri](requests.md) bakımı kolaylaştırır. Bu özellikler mevcut kaynak kodda bulunur.
+[Uygulama tarifleri](apps.md), [yükleme sınırları](sharing.md), [esnek süreler](durations.md) ve [QR ile katılım ve erişim talepleri](requests.md) bakımı kolaylaştırır. Bu özellikler v0.1.0 ile birlikte gelir.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Hızlı başlangıç
 
-**Git ve Go 1.26.6+** ile kaynaktan kurun; hazır derlemeler ve Homebrew henüz yayımlanmadı. Komutlar bash/zsh içindir. [macOS, Linux ve Windows kurulumu](platforms.md)
+macOS ve Linux'ta Homebrew ile kurun. macOS ikili dosyası bir Developer ID sertifikasıyla imzalanmış ve Apple tarafından noter onayından geçirilmiştir. Daha sonra güncellemek için `brew upgrade --cask tslink` çalıştırın; TSLink arka plan hizmeti olarak çalışıyorsa ardından `tslink install` komutunu yeniden çalıştırın.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Windows'ta [en son sürümden](https://github.com/anydoor7/tslink/releases/latest) `tslink_<version>_windows_<arch>.zip` dosyasını indirin, `checksums.txt` ile doğrulayın ve TSLink'in oturum açtığınızda başlaması için `tslink install` çalıştırın. Zip dosyası Authenticode ile imzalı değildir; [sürümü doğrulamak](verify-release.md) için imzalı sağlama toplamlarını ve derleme kanıtlarını kullanın. Linux için `.deb` ve `.rpm` paketleri aynı sürüm sayfasındadır. Kaynaktan derlemek için **Git ve Go 1.26.6+** gerekir. Aşağıdaki komutlar bash/zsh içindir; ayrıntılar için [macOS, Linux ve Windows kurulumu](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
@@ -41,7 +47,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Depoya erişim, **Tailscale hesabı**, [MagicDNS ve HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) gerekir. Özel erişim sağlayan cihazlarda Tailscale ve ağ politikası izni bulunmalıdır. TSLink, uygulama sunucusunda Tailscale'i içerir.
+**Tailscale hesabı** ve [MagicDNS ve HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) gerekir. Özel erişim sağlayan cihazlarda Tailscale ve ağ politikası izni bulunmalıdır. TSLink, uygulama sunucusunda Tailscale'i içerir.
 
 Uygulamanız 3000 portunda zaten çalışıyorsa:
 

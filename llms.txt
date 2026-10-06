@@ -1,12 +1,12 @@
 # TSLink
 
-> TSLink lets an app owner share existing local web apps, files, and TCP services through separate private Tailscale addresses, inspect shares, and remove them through a CLI or MCP. Private HTTP and file access can be granted to named people with deadlines; public Funnel exposure has its own expiry. TSLink works with Tailscale, independent project.
+> TSLink lets an app owner share existing local web apps, files, and TCP services through separate private Tailscale addresses, inspect shares, and remove them through a CLI or MCP. Private HTTP and file access can be granted to named people with deadlines, and HTTP apps can get expiring browser guest links; public Funnel exposure has its own expiry. TSLink works with Tailscale, independent project. Releases start at v0.1.0: `brew install --cask anydoor7/tap/tslink` on macOS and Linux, a zip archive on Windows, .deb and .rpm packages on Linux, or a source build.
 
-TSLink does not install or supervise backend apps, isolate workloads on the publishing computer, or replace application login and permissions. It does not enforce per-person access on raw TCP, recall downloaded data, or close already accepted streams when a people grant expires. It does not authorize tools belonging to other MCP servers. Browser guest links, scoped agent roles, and a combined multi-computer inventory are not shipped in this version. Source installation requires Go and Git; fresh nodes need human enrollment and may need device approval.
+TSLink does not install or supervise backend apps, isolate workloads on the publishing computer, or replace application login and permissions. It does not enforce per-person access on raw TCP, recall downloaded data, or close already accepted streams when a people grant expires. It does not authorize tools belonging to other MCP servers. Browser guest links can be forwarded and do not verify a person's identity, and a combined multi-computer inventory is not shipped in this version. The Homebrew cask name must stay fully qualified because Homebrew refuses unqualified casks from untrusted third-party taps. Windows zips are not Authenticode-signed; verify them against the Sigstore-signed checksums.txt. Building from source requires Go 1.26.6+ and Git. Fresh nodes need human enrollment and may need device approval.
 
 ## Guides
 
-- [Quickstart](https://github.com/anydoor7/tslink/blob/main/docs/getting-started.md): Install from source and complete enrollment.
+- [Quickstart](https://github.com/anydoor7/tslink/blob/main/docs/getting-started.md): Install with Homebrew, a release archive, or from source, and complete enrollment.
 - [Sharing and audiences](https://github.com/anydoor7/tslink/blob/main/docs/sharing.md): Private, public, HTTP, files, and TCP boundaries.
 - [People](https://github.com/anydoor7/tslink/blob/main/docs/people.md): Named grants, deadlines, invitations, and revocation.
 - [Health and alerts](https://github.com/anydoor7/tslink/blob/main/docs/health-and-alerts.md): Backend checks and best-effort alerts.

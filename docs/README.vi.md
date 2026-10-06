@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Truy cập và quản lý ứng dụng của bạn từ mọi nơi.<br>Giữ riêng tư hoặc chia sẻ theo cách bạn muốn.</strong></p>
+<p align="center"><strong>Chia sẻ ứng dụng tự lưu trữ với những người bạn chọn, trong khoảng thời gian bạn muốn.</strong></p>
 
-Ứng dụng trên máy tính hoặc máy chủ đám mây của bạn: truy cập qua mạng riêng được mã hóa, hoặc chủ động chọn liên kết khách trên trình duyệt hay truy cập công khai. Tự quản lý hoặc giao cho tác tử.
+TSLink cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của bạn một địa chỉ Tailscale riêng tư. Cấp quyền cho người được chỉ định đến một thời hạn, gửi liên kết khách trên trình duyệt cho người không dùng Tailscale, và thu hồi bất kỳ quyền nào bằng một lệnh duy nhất. Tự làm hoặc giao cho tác tử AI chỉ hoạt động trong vai trò bạn cấp. Dự án độc lập hoạt động cùng Tailscale.
 
-<p align="center"><a href="#quickstart">Bắt đầu nhanh</a> · <a href="#agents">Dành cho tác tử</a> · <a href="#documentation">Tài liệu</a></p>
+<p align="center"><a href="#quickstart">Bắt đầu nhanh</a> · <a href="#agents">Dành cho tác tử</a> · <a href="comparison.md">So sánh với Serve, ngrok và Cloudflare</a> · <a href="#documentation">Tài liệu</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <strong>Tiếng Việt</strong>
 </p>
@@ -25,14 +25,20 @@
 | Cho khách mở bằng trình duyệt | Liên kết có hạn với PIN tùy chọn cho ứng dụng proxy HTTP, hoặc HTTPS công khai qua Funnel khi chủ động bật. Liên kết có thể chuyển tiếp, không xác minh danh tính. [Liên kết khách](guest-links.md) |
 | Quản lý một nhóm ứng dụng | Danh mục theo máy chủ, cổng riêng, kiểm tra tình trạng và cảnh báo, lịch sử truy cập, CLI/MCP với vai trò tác tử, phạm vi ứng dụng và bản ghi kiểm toán. [Cổng](portal.md) · [Quyền MCP](mcp-scopes.md) |
 
-[Công thức cấu hình](apps.md), [giới hạn tải lên](sharing.md), [thời hạn linh hoạt](durations.md) và [hướng dẫn QR, yêu cầu truy cập](requests.md) giúp bảo trì hằng ngày. Các tính năng này đã có trong mã nguồn hiện tại.
+[Công thức cấu hình](apps.md), [giới hạn tải lên](sharing.md), [thời hạn linh hoạt](durations.md) và [hướng dẫn QR, yêu cầu truy cập](requests.md) giúp bảo trì hằng ngày. Các tính năng này có trong v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Bắt đầu nhanh
 
-Cài từ mã nguồn với **Git và Go 1.26.6+**; chưa phát hành bản biên dịch sẵn hoặc Homebrew. Lệnh dùng bash/zsh. [Thiết lập macOS, Linux và Windows](platforms.md)
+Trên macOS hoặc Linux, hãy cài bằng Homebrew. Tệp nhị phân macOS được ký bằng chứng chỉ Developer ID và đã được Apple công chứng (notarize). Khi cần nâng cấp, chạy `brew upgrade --cask tslink`, rồi chạy lại `tslink install` nếu TSLink đang chạy như một dịch vụ nền.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Trên Windows, tải `tslink_<version>_windows_<arch>.zip` từ [bản phát hành mới nhất](https://github.com/anydoor7/tslink/releases/latest), đối chiếu với `checksums.txt`, rồi chạy `tslink install` để TSLink khởi động khi bạn đăng nhập. Tệp zip không có chữ ký Authenticode; hãy [xác minh bản phát hành](verify-release.md) qua checksum đã ký và các chứng thực bản dựng. Gói `.deb` và `.rpm` cho Linux có trên cùng trang phát hành. Để dựng từ mã nguồn, bạn cần **Git và Go 1.26.6+**. Các lệnh dưới đây dùng bash/zsh; xem [Thiết lập macOS, Linux và Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
@@ -41,7 +47,7 @@ go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Bạn cần quyền truy cập kho mã, **tài khoản Tailscale**, [MagicDNS và HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Thiết bị truy cập riêng cần Tailscale và quyền theo chính sách mạng. TSLink nhúng Tailscale trên máy chạy ứng dụng.
+Bạn cần **tài khoản Tailscale** và [MagicDNS và HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Thiết bị truy cập riêng cần Tailscale và quyền theo chính sách mạng. TSLink nhúng Tailscale trên máy chạy ứng dụng.
 
 Khi ứng dụng đã chạy ở cổng 3000:
 
