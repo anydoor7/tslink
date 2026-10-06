@@ -2,7 +2,7 @@
 
 > TSLink lets an app owner share existing local web apps, files, and TCP services through separate private Tailscale addresses, inspect shares, and remove them through a CLI or MCP. Private HTTP and file access can be granted to named people with deadlines; public Funnel exposure has its own expiry. TSLink works with Tailscale, independent project.
 
-TSLink does not install or supervise backend apps, isolate workloads on the publishing computer, or replace application login and permissions. It does not enforce per-person access on raw TCP, recall downloaded data, or close already accepted streams when a people grant expires. It does not authorize tools belonging to other MCP servers. Browser guest links, scoped agent roles, and a combined multi-computer inventory are not shipped in this version. Source installation requires Go and Git; fresh nodes need human enrollment and may need device approval.
+TSLink does not install or supervise backend apps, isolate workloads on the publishing computer, or replace application login and permissions. It does not enforce per-person access on raw TCP, recall downloaded data, or close already accepted streams when a people grant expires. It does not authorize tools belonging to other MCP servers. Browser guest links can be forwarded and do not verify a person's identity, and a combined multi-computer inventory is not shipped in this version. Source installation requires Go and Git; fresh nodes need human enrollment and may need device approval.
 
 ## Guides
 
