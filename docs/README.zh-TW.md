@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>隨時隨地存取和管理你的應用程式。<br>保持私有，或依你的意願分享。</strong></p>
+<p align="center"><strong>把自架應用程式分享給你選定的人，分享多久由你決定。</strong></p>
 
-無論應用程式在自己的電腦或雲端伺服器上，都能透過加密的私人網路存取；也可以主動選擇瀏覽器訪客連結或公開存取。自己操作，或交給 AI 代理管理。
+TSLink 為你電腦或伺服器上的每個應用程式配發獨立的 Tailscale 私人位址。你可以授權指定的人使用到某個期限、傳送瀏覽器訪客連結給不使用 Tailscale 的人，並以一道指令撤銷任一種存取。可以親自操作，也可以交給 AI 代理，它只能在你指派的角色範圍內行事。這是與 Tailscale 搭配使用的獨立專案。
 
-<p align="center"><a href="#quickstart">快速開始</a> · <a href="#agents">給 AI 代理</a> · <a href="#documentation">文件</a></p>
+<p align="center"><a href="#quickstart">快速開始</a> · <a href="#agents">給 AI 代理</a> · <a href="comparison.md">與 Serve、ngrok 和 Cloudflare 的比較</a> · <a href="#documentation">文件</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <strong>繁體中文</strong> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | 讓訪客用瀏覽器開啟 | 為 HTTP 代理應用建立有期限、可選 PIN 的訪客連結，或明確啟用 Funnel 公開 HTTPS。訪客連結可被轉傳，無法證明訪客身分。[訪客連結](guest-links.md) |
 | 持續管理一組應用程式 | 每台主機的應用清單、私人入口頁、健康檢查與警示、存取紀錄，以及支援代理角色、應用範圍和稽核回執的 CLI/MCP 存取管理。[入口頁](portal.md) · [MCP 權限](mcp-scopes.md) |
 
-[應用設定範本](apps.md)、[上傳限制](sharing.md)、[彈性期限](durations.md)及 [QR 碼引導與存取申請](requests.md)讓日常維護更方便。這些功能已包含在本原始碼中。
+[應用設定範本](apps.md)、[上傳限制](sharing.md)、[彈性期限](durations.md)及 [QR 碼引導與存取申請](requests.md)讓日常維護更方便。這些功能隨 v0.1.0 發布。
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## 快速開始
 
-使用 **Git 和 Go 1.26.6+** 從原始碼安裝；預編譯版本和 Homebrew 尚未發布。以下指令適用於 bash/zsh。請參閱 [macOS、Linux 和 Windows 設定](platforms.md)。
+在 macOS 或 Linux 上使用 Homebrew 安裝。macOS 版執行檔以 Developer ID 憑證簽署，並經 Apple 公證。日後升級請執行 `brew upgrade --cask tslink`；若 TSLink 以背景服務執行，請再執行一次 `tslink install`。
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Windows 使用者請從[最新版本](https://github.com/anydoor7/tslink/releases/latest)下載 `tslink_<version>_windows_<arch>.zip`，以 `checksums.txt` 核對後執行 `tslink install`，讓 TSLink 在登入時啟動。此 zip 沒有 Authenticode 簽章，請透過已簽署的校驗和與建置證明[驗證版本](verify-release.md)。Linux 的 `.deb` 與 `.rpm` 套件也在同一個版本頁面。若要從原始碼建置，需要 **Git 和 Go 1.26.6+**。以下指令適用於 bash/zsh，請參閱 [macOS、Linux 和 Windows 設定](platforms.md)。
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

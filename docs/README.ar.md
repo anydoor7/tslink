@@ -7,11 +7,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>صل إلى تطبيقاتك وأدرها من أي مكان.<br>أبقها خاصة أو شاركها بشروطك.</strong></p>
+<p align="center"><strong>شارك تطبيقاتك المستضافة ذاتيا مع من تختارهم، وللمدة التي تختارها.</strong></p>
 
-تطبيقاتك على حاسوبك أو خادمك السحابي: صل إليها عبر شبكة خاصة مشفرة، أو اختر روابط ضيوف للمتصفح أو وصولا عاما. أدرها بنفسك أو بواسطة وكيل.
+يمنح TSLink كل تطبيق على حاسوبك أو خادمك عنوانا خاصا به على Tailscale. امنح أشخاصا محددين وصولا حتى موعد نهائي، وأرسل رابط ضيف للمتصفح إلى من لا يستخدم Tailscale، وألغ أيا منهما بأمر واحد. نفذ ذلك بنفسك أو عبر وكيل ذكاء اصطناعي مقيد بالدور الذي تحدده له. مشروع مستقل يعمل مع Tailscale.
 
-<p align="center"><a href="#quickstart">البدء السريع</a> · <a href="#agents">للوكلاء</a> · <a href="#documentation">الوثائق</a></p>
+<p align="center"><a href="#quickstart">البدء السريع</a> · <a href="#agents">للوكلاء</a> · <a href="comparison.md">مقارنة مع Serve وngrok وCloudflare</a> · <a href="#documentation">الوثائق</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <strong>العربية</strong> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -27,14 +27,20 @@
 | استقبال زائر من المتصفح | روابط مؤقتة مع PIN اختياري لتطبيقات وكيل HTTP، أو HTTPS عام عبر Funnel بتفعيل صريح. يمكن إعادة إرسال الروابط؛ وهي لا تثبت هوية الشخص. [روابط الضيوف](guest-links.md) |
 | إدارة مجموعة تطبيقات | قائمة لكل مضيف، وبوابة خاصة، وفحوص صحة وتنبيهات، وسجل وصول، وإدارة CLI/MCP بأدوار للوكلاء ونطاقات تطبيقات وسجلات تدقيق. [البوابة](portal.md) · [صلاحيات MCP](mcp-scopes.md) |
 
-تسهل [وصفات التطبيقات](apps.md) و[حدود الرفع](sharing.md) و[المدد المرنة](durations.md) و[إرشادات QR وطلبات الوصول](requests.md) الصيانة اليومية. هذه الميزات موجودة في الشفرة الحالية.
+تسهل [وصفات التطبيقات](apps.md) و[حدود الرفع](sharing.md) و[المدد المرنة](durations.md) و[إرشادات QR وطلبات الوصول](requests.md) الصيانة اليومية. هذه الميزات متاحة في v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## البدء السريع
 
-ثبت من المصدر باستخدام **Git وGo 1.26.6+**؛ لم تنشر بعد إصدارات مبنية مسبقا أو Homebrew. الأوامر تستخدم bash/zsh. [إعداد macOS وLinux وWindows](platforms.md)
+على macOS وLinux، ثبت TSLink باستخدام Homebrew. الملف التنفيذي لنظام macOS موقع بشهادة Developer ID وموثق من Apple. للترقية لاحقا شغل `brew upgrade --cask tslink`، ثم شغل `tslink install` مجددا إذا كان TSLink يعمل كخدمة في الخلفية.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+على Windows، قم بتنزيل `tslink_<version>_windows_<arch>.zip` من [أحدث إصدار](https://github.com/anydoor7/tslink/releases/latest)، وتحقق منه مقابل `checksums.txt`، ثم شغل `tslink install` ليبدأ TSLink عند تسجيل الدخول. ملف zip غير موقع بتقنية Authenticode؛ [تحقق من الإصدار](verify-release.md) عبر المجاميع الاختبارية الموقعة وشهادات الإثبات. حزم `.deb` و`.rpm` الخاصة بـLinux موجودة في صفحة الإصدار نفسها. للبناء من المصدر تحتاج إلى **Git وGo 1.26.6+**. الأوامر تستخدم bash/zsh. [إعداد macOS وLinux وWindows](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Pristupajte svojim aplikacijama i upravljajte njima odakle god želite.<br>Zadržite ih privatnim ili ih dijelite pod svojim uslovima.</strong></p>
+<p align="center"><strong>Dijelite svoje self-hosted aplikacije s osobama koje izaberete, onoliko dugo koliko želite.</strong></p>
 
-Vaše aplikacije na vašem računaru ili cloud serveru: pristupajte im putem šifrirane privatne mreže ili odaberite linkove za goste u pregledniku ili javni pristup. Upravljajte sami ili putem agenta.
+TSLink svakoj aplikaciji na vašem računaru ili serveru daje vlastitu privatnu Tailscale adresu. Dajte odabranim osobama pristup do određenog roka, pošaljite link za goste u pregledniku nekome ko ne koristi Tailscale i opozovite jedno ili drugo jednom naredbom. Uradite to sami ili putem AI agenta ograničenog na ulogu koju mu dodijelite. Nezavisan projekat koji radi s Tailscaleom.
 
-<p align="center"><a href="#quickstart">Brzi početak</a> · <a href="#agents">Za agente</a> · <a href="#documentation">Dokumentacija</a></p>
+<p align="center"><a href="#quickstart">Brzi početak</a> · <a href="#agents">Za agente</a> · <a href="comparison.md">Poređenje sa Serve, ngrok i Cloudflare</a> · <a href="#documentation">Dokumentacija</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <strong>Bosanski</strong> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@ Vaše aplikacije na vašem računaru ili cloud serveru: pristupajte im putem ši
 | Posjeta kroz preglednik | Vremenski ograničeni linkovi s opcionalnim PIN-om za HTTP proxy aplikacije ili izričito javni HTTPS putem Funnela. Linkovi se mogu proslijediti i ne potvrđuju identitet. [Gosti](guest-links.md) |
 | Upravljanje skupom aplikacija | Popis po hostu, privatni portal, provjere stanja i upozorenja, historija pristupa te CLI/MCP upravljanje s ulogama agenata, ograničenjem na aplikacije i revizijskim zapisima. [Portal](portal.md) · [MCP ovlasti](mcp-scopes.md) |
 
-[Recepti za aplikacije](apps.md), [ograničenja slanja](sharing.md), [fleksibilno trajanje](durations.md) i [QR upute i zahtjevi za pristup](requests.md) olakšavaju održavanje. Ove mogućnosti su uključene u ovaj izvorni kod.
+[Recepti za aplikacije](apps.md), [ograničenja slanja](sharing.md), [fleksibilno trajanje](durations.md) i [QR upute i zahtjevi za pristup](requests.md) olakšavaju održavanje. Ove mogućnosti dolaze s verzijom v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Brzi početak
 
-Instalirajte iz izvornog koda uz **Git i Go 1.26.6+**; gotova binarna izdanja i Homebrew još nisu objavljeni. Naredbe koriste bash/zsh. [Postavljanje na macOS, Linux i Windows](platforms.md)
+Na macOS-u i Linuxu instalirajte putem Homebrewa. Binarna datoteka za macOS potpisana je Developer ID certifikatom i notarizirana kod Applea. Za kasniju nadogradnju pokrenite `brew upgrade --cask tslink`, a zatim ponovo `tslink install` ako TSLink radi kao pozadinski servis.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Na Windowsu preuzmite `tslink_<version>_windows_<arch>.zip` iz [najnovijeg izdanja](https://github.com/anydoor7/tslink/releases/latest), provjerite ga prema `checksums.txt` i pokrenite `tslink install` kako bi se TSLink pokretao pri prijavi. Zip nije potpisan Authenticodeom; [provjerite izdanje](verify-release.md) pomoću potpisanih kontrolnih suma i atestacija. Linux paketi `.deb` i `.rpm` nalaze se na istoj stranici izdanja. Za izgradnju iz izvornog koda potrebni su **Git i Go 1.26.6+**. Naredbe ispod koriste bash/zsh; pogledajte [Postavljanje na macOS, Linux i Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

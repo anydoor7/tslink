@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>যেকোনো জায়গা থেকে নিজের অ্যাপ ব্যবহার ও পরিচালনা করুন।<br>ব্যক্তিগত রাখুন, অথবা নিজের শর্তে শেয়ার করুন।</strong></p>
+<p align="center"><strong>নিজের হোস্ট করা অ্যাপ শেয়ার করুন আপনার বেছে নেওয়া মানুষের সঙ্গে, যতদিন আপনি চান।</strong></p>
 
-আপনার কম্পিউটার বা ক্লাউড সার্ভারে থাকা অ্যাপ: এনক্রিপ্ট করা ব্যক্তিগত নেটওয়ার্কে ব্যবহার করুন, অথবা ইচ্ছামতো ব্রাউজারের অতিথি লিংক বা পাবলিক অ্যাক্সেস বেছে নিন। নিজে পরিচালনা করুন বা এজেন্টকে দিন।
+TSLink আপনার কম্পিউটার বা সার্ভারের প্রতিটি অ্যাপকে নিজস্ব ব্যক্তিগত Tailscale ঠিকানা দেয়। নির্দিষ্ট মানুষকে একটি সময়সীমা পর্যন্ত অ্যাক্সেস দিন, Tailscale ব্যবহার করেন না এমন কাউকে ব্রাউজারের অতিথি লিংক পাঠান, আর যেকোনোটি একটি কমান্ডেই বাতিল করুন। নিজে করুন, অথবা আপনার দেওয়া ভূমিকার মধ্যে সীমিত কোনো AI এজেন্টকে দিয়ে করান। এটি Tailscale-এর সঙ্গে কাজ করা স্বাধীন প্রকল্প।
 
-<p align="center"><a href="#quickstart">দ্রুত শুরু</a> · <a href="#agents">এজেন্টদের জন্য</a> · <a href="#documentation">নথি</a></p>
+<p align="center"><a href="#quickstart">দ্রুত শুরু</a> · <a href="#agents">এজেন্টদের জন্য</a> · <a href="comparison.md">Serve, ngrok ও Cloudflare-এর সঙ্গে তুলনা</a> · <a href="#documentation">নথি</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <strong>বাংলা</strong> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | ব্রাউজারে অতিথিকে ঢুকতে দেওয়া | HTTP proxy অ্যাপের জন্য মেয়াদযুক্ত লিংক ও ঐচ্ছিক PIN, অথবা স্পষ্টভাবে চালু করা Funnel পাবলিক HTTPS। লিংক অন্যকে পাঠানো যায়; এটি পরিচয় যাচাই করে না। [অতিথি লিংক](guest-links.md) |
 | একসঙ্গে অনেক অ্যাপ দেখাশোনা | প্রতি হোস্টে তালিকা, ব্যক্তিগত পোর্টাল, স্বাস্থ্য পরীক্ষা ও সতর্কতা, অ্যাক্সেস ইতিহাস এবং এজেন্টের ভূমিকা, অ্যাপের সীমা ও নিরীক্ষার রেকর্ডসহ CLI/MCP ব্যবস্থাপনা। [পোর্টাল](portal.md) · [MCP অনুমতি](mcp-scopes.md) |
 
-[অ্যাপ সেটআপ রেসিপি](apps.md), [আপলোডের সীমা](sharing.md), [নমনীয় মেয়াদ](durations.md) ও [QR নির্দেশনা এবং অ্যাক্সেসের অনুরোধ](requests.md) দৈনন্দিন রক্ষণাবেক্ষণ সহজ করে। এগুলো বর্তমান সোর্স কোডে রয়েছে।
+[অ্যাপ সেটআপ রেসিপি](apps.md), [আপলোডের সীমা](sharing.md), [নমনীয় মেয়াদ](durations.md) ও [QR নির্দেশনা এবং অ্যাক্সেসের অনুরোধ](requests.md) দৈনন্দিন রক্ষণাবেক্ষণ সহজ করে। এগুলো v0.1.0-এ রয়েছে।
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## দ্রুত শুরু
 
-**Git ও Go 1.26.6+** দিয়ে সোর্স থেকে ইনস্টল করুন; প্রস্তুত বাইনারি রিলিজ বা Homebrew এখনো প্রকাশিত হয়নি। কমান্ডগুলো bash/zsh-এর জন্য। [macOS, Linux ও Windows সেটআপ](platforms.md)
+macOS ও Linux-এ Homebrew দিয়ে ইনস্টল করুন। macOS-এর বাইনারি Developer ID সার্টিফিকেট দিয়ে স্বাক্ষরিত এবং Apple দ্বারা নোটারাইজ করা। পরে আপগ্রেড করতে `brew upgrade --cask tslink` চালান, তারপর TSLink ব্যাকগ্রাউন্ড সার্ভিস হিসেবে চললে আবার `tslink install` চালান।
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Windows-এ [সর্বশেষ রিলিজ](https://github.com/anydoor7/tslink/releases/latest) থেকে `tslink_<version>_windows_<arch>.zip` ডাউনলোড করুন, `checksums.txt` দিয়ে মিলিয়ে নিন, তারপর `tslink install` চালান যাতে সাইন ইন করলে TSLink চালু হয়। zip ফাইলটি Authenticode-স্বাক্ষরিত নয়; স্বাক্ষরিত চেকসাম ও অ্যাটেস্টেশন দিয়ে [রিলিজ যাচাই করুন](verify-release.md)। Linux-এর `.deb` ও `.rpm` প্যাকেজ একই রিলিজ পাতায় আছে। সোর্স থেকে বিল্ড করতে **Git ও Go 1.26.6+** লাগবে। নিচের কমান্ডগুলো bash/zsh-এর জন্য। [macOS, Linux ও Windows সেটআপ](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

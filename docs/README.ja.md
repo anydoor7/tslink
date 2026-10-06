@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>どこからでも、自分のアプリにアクセスして管理。<br>非公開のまま使う。必要な相手に、必要な条件で共有する。</strong></p>
+<p align="center"><strong>セルフホストのアプリを、選んだ相手と、決めた期間だけ共有。</strong></p>
 
-自分のPCやクラウドサーバーのアプリを、暗号化されたプライベートネットワークから利用できます。必要ならブラウザー用ゲストリンクや一般公開も選べます。操作は自分でも、エージェント経由でも。
+TSLink は、PC やサーバー上のアプリごとに専用のプライベートな Tailscale アドレスを割り当てます。指定した相手に期限付きでアクセスを許可したり、Tailscale を使っていない相手にブラウザー用ゲストリンクを送ったりでき、どちらもコマンド1つで取り消せます。操作は自分でも、割り当てたロールの範囲内で動く AI エージェントにも任せられます。Tailscale と連携する独立プロジェクトです。
 
-<p align="center"><a href="#quickstart">クイックスタート</a> · <a href="#agents">エージェント向け</a> · <a href="#documentation">ドキュメント</a></p>
+<p align="center"><a href="#quickstart">クイックスタート</a> · <a href="#agents">エージェント向け</a> · <a href="comparison.md">Serve・ngrok・Cloudflare との比較</a> · <a href="#documentation">ドキュメント</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <strong>日本語</strong> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | ブラウザーだけで来てもらう | HTTP プロキシアプリに有効期限と任意の PIN 付きゲストリンク、または明示的な Funnel 公開 HTTPS。リンクは転送でき、本人確認にはなりません。[ゲストリンク](guest-links.md) |
 | 複数のアプリを日常的に管理する | ホスト単位の一覧、プライベートポータル、ヘルスチェックと通知、アクセス履歴、CLI/MCP による権限管理。エージェントの役割・対象アプリ制限・監査記録にも対応。[ポータル](portal.md) · [MCP 権限](mcp-scopes.md) |
 
-[アプリ設定レシピ](apps.md)、[アップロード制限](sharing.md)、[柔軟な有効期間](durations.md)、[QR コードでの案内とアクセス申請](requests.md)は、日々の管理に役立ちます。いずれもこのソースツリーに含まれています。
+[アプリ設定レシピ](apps.md)、[アップロード制限](sharing.md)、[柔軟な有効期間](durations.md)、[QR コードでの案内とアクセス申請](requests.md)は、日々の管理に役立ちます。いずれも v0.1.0 で提供されます。
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## クイックスタート
 
-**Git と Go 1.26.6+** でソースからインストールします。ビルド済みリリースと Homebrew は未公開です。以下は bash/zsh 用です。[macOS・Linux・Windows の設定](platforms.md)
+macOS と Linux では Homebrew でインストールします。macOS 版のバイナリは Developer ID 証明書で署名され、Apple の公証を受けています。後でアップグレードするには `brew upgrade --cask tslink` を実行し、TSLink をバックグラウンドサービスとして動かしている場合は `tslink install` をもう一度実行します。
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Windows では[最新リリース](https://github.com/anydoor7/tslink/releases/latest)から `tslink_<version>_windows_<arch>.zip` をダウンロードし、`checksums.txt` と照合してから `tslink install` を実行すると、サインイン時に TSLink が起動します。zip には Authenticode 署名がないため、署名付きのチェックサムとビルド来歴の証明で[リリースを検証](verify-release.md)してください。Linux 用の `.deb` と `.rpm` パッケージも同じリリースページにあります。ソースからビルドする場合は **Git と Go 1.26.6+** が必要です。以下のコマンドは bash/zsh 用です。[macOS・Linux・Windows の設定](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

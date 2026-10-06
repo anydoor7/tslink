@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Få tilgang til og administrer appene dine overalt.<br>Hold dem private, eller del dem på dine premisser.</strong></p>
+<p align="center"><strong>Del de selvhostede appene dine med dem du velger, så lenge du vil.</strong></p>
 
-Appene dine på din egen datamaskin eller skyserver: nå dem gjennom et kryptert privat nettverk, eller velg gjestelenker i nettleseren eller offentlig tilgang. Betjen dem selv eller med en agent.
+TSLink gir hver app på datamaskinen eller serveren din en egen privat Tailscale-adresse. Gi utvalgte personer tilgang frem til en frist, send en gjestelenke for nettleser til noen som ikke bruker Tailscale, og trekk tilbake begge deler med én kommando. Gjør det selv eller via en KI-agent som er begrenset til rollen du tildeler. Et uavhengig prosjekt som fungerer med Tailscale.
 
-<p align="center"><a href="#quickstart">Kom i gang</a> · <a href="#agents">For agenter</a> · <a href="#documentation">Dokumentasjon</a></p>
+<p align="center"><a href="#quickstart">Kom i gang</a> · <a href="#agents">For agenter</a> · <a href="comparison.md">Sammenlignet med Serve, ngrok og Cloudflare</a> · <a href="#documentation">Dokumentasjon</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <strong>Norsk</strong> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@ Appene dine på din egen datamaskin eller skyserver: nå dem gjennom et kryptert
 | La noen besøke i nettleseren | Tidsbegrensede gjestelenker med valgfri PIN for HTTP-proxyapper, eller uttrykkelig offentlig HTTPS via Funnel. Lenker kan videresendes og bekrefter ikke identitet. [Gjestelenker](guest-links.md) |
 | Holde orden på flere apper | Oversikt per vert, privat portal, helsesjekker og varsler, tilgangshistorikk og CLI/MCP-styring med agentroller, appavgrensning og revisjonskvitteringer. [Portal](portal.md) · [MCP-rettigheter](mcp-scopes.md) |
 
-[Appoppskrifter](apps.md), [opplastingsgrenser](sharing.md), [fleksible varigheter](durations.md) og [QR-veiledning og tilgangsforespørsler](requests.md) forenkler hverdagen. Funksjonene er med i denne kildekoden.
+[Appoppskrifter](apps.md), [opplastingsgrenser](sharing.md), [fleksible varigheter](durations.md) og [QR-veiledning og tilgangsforespørsler](requests.md) forenkler hverdagen. Funksjonene følger med v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Kom i gang
 
-Installer fra kildekode med **Git og Go 1.26.6+**. Ferdigbygde utgivelser og Homebrew er ennå ikke publisert. Kommandoene bruker bash/zsh. [Oppsett for macOS, Linux og Windows](platforms.md)
+På macOS og Linux installerer du med Homebrew. macOS-binærfilen er signert med et Developer ID-sertifikat og notarisert av Apple. Oppgrader senere med `brew upgrade --cask tslink`, og kjør deretter `tslink install` på nytt hvis TSLink kjører som bakgrunnstjeneste.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+På Windows laster du ned `tslink_<version>_windows_<arch>.zip` fra den [nyeste utgivelsen](https://github.com/anydoor7/tslink/releases/latest), kontrollerer filen mot `checksums.txt` og kjører `tslink install`, slik at TSLink starter når du logger på. Zip-filen er ikke Authenticode-signert; [verifiser utgivelsen](verify-release.md) med de signerte sjekksummene og attesteringene. Linux-pakker i `.deb` og `.rpm` ligger på samme utgivelsesside. For å bygge fra kildekode trenger du **Git og Go 1.26.6+**. Kommandoene nedenfor bruker bash/zsh; se [Oppsett for macOS, Linux og Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

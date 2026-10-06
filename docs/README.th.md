@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>เข้าถึงและจัดการแอปของคุณได้จากทุกที่<br>เก็บไว้เป็นส่วนตัว หรือแชร์ตามเงื่อนไขของคุณ</strong></p>
+<p align="center"><strong>แชร์แอปที่คุณโฮสต์เองให้คนที่คุณเลือก ได้นานเท่าที่คุณกำหนด</strong></p>
 
-แอปของคุณบนคอมพิวเตอร์หรือเซิร์ฟเวอร์คลาวด์ของคุณ: เข้าถึงผ่านเครือข่ายส่วนตัวที่เข้ารหัส หรือเลือกใช้ลิงก์ผู้เยี่ยมชมบนเบราว์เซอร์หรือการเข้าถึงสาธารณะ จัดการเองหรือผ่านเอเจนต์ก็ได้
+TSLink ให้แต่ละแอปบนคอมพิวเตอร์หรือเซิร์ฟเวอร์ของคุณมีที่อยู่ Tailscale ส่วนตัวแยกของตัวเอง ให้สิทธิ์บุคคลที่ระบุไว้ถึงวันหมดอายุ ส่งลิงก์ผู้เยี่ยมชมบนเบราว์เซอร์ให้คนที่ไม่ได้ใช้ Tailscale และเพิกถอนได้ทั้งสองแบบด้วยคำสั่งเดียว จะจัดการเองหรือให้เอเจนต์ AI ทำภายในบทบาทที่คุณกำหนดก็ได้ เป็นโครงการอิสระที่ทำงานร่วมกับ Tailscale
 
-<p align="center"><a href="#quickstart">เริ่มต้นอย่างรวดเร็ว</a> · <a href="#agents">สำหรับเอเจนต์</a> · <a href="#documentation">เอกสาร</a></p>
+<p align="center"><a href="#quickstart">เริ่มต้นอย่างรวดเร็ว</a> · <a href="#agents">สำหรับเอเจนต์</a> · <a href="comparison.md">เปรียบเทียบกับ Serve, ngrok และ Cloudflare</a> · <a href="#documentation">เอกสาร</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <strong>ไทย</strong> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | ให้ผู้เยี่ยมชมเปิดในเบราว์เซอร์ | ลิงก์ชั่วคราวพร้อม PIN ที่เลือกตั้งได้สำหรับแอป HTTP proxy หรือ HTTPS สาธารณะผ่าน Funnel ที่เปิดอย่างชัดเจน ลิงก์ส่งต่อได้และไม่ยืนยันตัวบุคคล [ลิงก์ผู้เยี่ยมชม](guest-links.md) |
 | ดูแลแอปหลายตัว | รายการแอปต่อโฮสต์ พอร์ทัลส่วนตัว ตรวจสุขภาพและแจ้งเตือน ประวัติการเข้าถึง และ CLI/MCP พร้อมบทบาทเอเจนต์ ขอบเขตแอป และบันทึกการตรวจสอบ [พอร์ทัล](portal.md) · [สิทธิ์ MCP](mcp-scopes.md) |
 
-[สูตรตั้งค่าแอป](apps.md), [ข้อจำกัดการอัปโหลด](sharing.md), [ระยะเวลาที่ยืดหยุ่น](durations.md) และ [คำแนะนำผ่าน QR กับคำขอเข้าถึง](requests.md) ช่วยให้ดูแลประจำวันง่ายขึ้น ความสามารถเหล่านี้มีอยู่ในซอร์สโค้ดนี้แล้ว
+[สูตรตั้งค่าแอป](apps.md), [ข้อจำกัดการอัปโหลด](sharing.md), [ระยะเวลาที่ยืดหยุ่น](durations.md) และ [คำแนะนำผ่าน QR กับคำขอเข้าถึง](requests.md) ช่วยให้ดูแลประจำวันง่ายขึ้น ความสามารถเหล่านี้มาพร้อม v0.1.0
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## เริ่มต้นอย่างรวดเร็ว
 
-ติดตั้งจากซอร์สด้วย **Git และ Go 1.26.6+** ยังไม่มีรุ่นไบนารีสำเร็จรูปหรือ Homebrew เผยแพร่ คำสั่งนี้ใช้ bash/zsh ดู[การตั้งค่า macOS, Linux และ Windows](platforms.md)
+บน macOS และ Linux ให้ติดตั้งด้วย Homebrew ไบนารีสำหรับ macOS ลงนามด้วยใบรับรอง Developer ID และผ่านการ notarize โดย Apple เมื่อจะอัปเกรดในภายหลัง ให้รัน `brew upgrade --cask tslink` แล้วรัน `tslink install` อีกครั้งหาก TSLink ทำงานเป็นบริการเบื้องหลัง
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+บน Windows ให้ดาวน์โหลด `tslink_<version>_windows_<arch>.zip` จาก[รุ่นล่าสุด](https://github.com/anydoor7/tslink/releases/latest) ตรวจสอบกับ `checksums.txt` แล้วรัน `tslink install` เพื่อให้ TSLink เริ่มทำงานเมื่อลงชื่อเข้าใช้ ไฟล์ zip ไม่ได้ลงนามด้วย Authenticode จึงควร[ตรวจสอบรุ่นที่เผยแพร่](verify-release.md)ผ่าน checksum ที่ลงนามแล้วและ attestation แพ็กเกจ `.deb` และ `.rpm` สำหรับ Linux อยู่ในหน้ารุ่นเดียวกัน หากต้องการคอมไพล์จากซอร์ส ต้องใช้ **Git และ Go 1.26.6+** คำสั่งด้านล่างใช้ bash/zsh ดู[การตั้งค่า macOS, Linux และ Windows](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

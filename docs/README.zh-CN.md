@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>随时随地访问和管理你的应用。<br>保持私有，或按你的意愿分享。</strong></p>
+<p align="center"><strong>把自托管应用分享给你选定的人，分享多久由你决定。</strong></p>
 
-无论应用运行在自己的电脑还是云服务器上，都能通过加密的私有网络访问；也可以主动选择浏览器访客链接或公开访问。自己操作，或交给智能体管理。
+TSLink 为你电脑或服务器上的每个应用分配独立的 Tailscale 私有地址。你可以给指定的人授权到某个期限，给不用 Tailscale 的人发送浏览器访客链接，并且一条命令就能撤销任一种访问。可以亲自操作，也可以交给 AI 智能体，它只能在你分配的角色范围内行事。与 Tailscale 配合使用的独立项目。
 
-<p align="center"><a href="#quickstart">快速开始</a> · <a href="#agents">面向智能体</a> · <a href="#documentation">文档</a></p>
+<p align="center"><a href="#quickstart">快速开始</a> · <a href="#agents">面向智能体</a> · <a href="comparison.md">与 Serve、ngrok 和 Cloudflare 的对比</a> · <a href="#documentation">文档</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <strong>简体中文</strong> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | 让访客用浏览器打开 | 为 HTTP 代理应用创建有期限、可选 PIN 的访客链接，或明确启用 Funnel 公开 HTTPS。访客链接可被转发，不能证明访问者身份。[访客链接](guest-links.md) |
 | 持续管理一组应用 | 每台主机的应用清单、私有入口页、健康检查与告警、访问记录，以及支持智能体角色、应用范围和审计回执的 CLI/MCP 访问管理。[入口页](portal.md) · [MCP 权限](mcp-scopes.md) |
 
-[应用配方](apps.md)、[上传限制](sharing.md)、[灵活期限](durations.md)和[二维码引导与访问申请](requests.md)让日常维护更方便。这些能力已包含在本源码中。
+[应用配方](apps.md)、[上传限制](sharing.md)、[灵活期限](durations.md)和[二维码引导与访问申请](requests.md)让日常维护更方便。这些能力随 v0.1.0 发布。
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## 快速开始
 
-使用 **Git 和 Go 1.26.6+** 从源码安装；预编译发行版和 Homebrew 尚未发布。以下命令适用于 bash/zsh。参见 [macOS、Linux 和 Windows 配置](platforms.md)。
+在 macOS 或 Linux 上用 Homebrew 安装。macOS 版二进制文件使用 Developer ID 证书签名，并已通过 Apple 公证。以后升级时运行 `brew upgrade --cask tslink`；如果 TSLink 作为后台服务运行，再执行一次 `tslink install`。
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Windows 用户请从[最新发行版](https://github.com/anydoor7/tslink/releases/latest)下载 `tslink_<version>_windows_<arch>.zip`，用 `checksums.txt` 核对后运行 `tslink install`，让 TSLink 在登录时自动启动。该 zip 没有 Authenticode 签名，请通过已签名的校验和与构建证明[验证发行版](verify-release.md)。Linux 的 `.deb` 和 `.rpm` 安装包也在同一发行页面上。如需从源码构建，需要 **Git 和 Go 1.26.6+**。以下命令适用于 bash/zsh，参见 [macOS、Linux 和 Windows 配置](platforms.md)。
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

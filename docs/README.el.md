@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Αποκτήστε πρόσβαση και διαχειριστείτε τις εφαρμογές σας από παντού.<br>Κρατήστε τις ιδιωτικές ή μοιραστείτε τις με τους δικούς σας όρους.</strong></p>
+<p align="center"><strong>Μοιραστείτε τις αυτοφιλοξενούμενες εφαρμογές σας με όποιους επιλέξετε, για όσο διάστημα επιλέξετε.</strong></p>
 
-Οι εφαρμογές σας στον υπολογιστή ή στον διακομιστή cloud σας: πρόσβαση μέσω κρυπτογραφημένου ιδιωτικού δικτύου ή, αν το επιλέξετε, με συνδέσμους επισκεπτών στο πρόγραμμα περιήγησης ή δημόσια πρόσβαση. Διαχειριστείτε τις εσείς ή ένας πράκτορας.
+Το TSLink δίνει σε κάθε εφαρμογή στον υπολογιστή ή στον διακομιστή σας τη δική της ιδιωτική διεύθυνση Tailscale. Δώστε πρόσβαση σε συγκεκριμένα άτομα έως μια προθεσμία, στείλτε σύνδεσμο επισκέπτη για πρόγραμμα περιήγησης σε κάποιον που δεν χρησιμοποιεί Tailscale και ανακαλέστε οποιοδήποτε από τα δύο με μία εντολή. Κάντε το μόνοι σας ή μέσω ενός πράκτορα AI περιορισμένου στον ρόλο που του αναθέτετε. Ανεξάρτητο έργο που συνεργάζεται με το Tailscale.
 
-<p align="center"><a href="#quickstart">Γρήγορη εκκίνηση</a> · <a href="#agents">Για πράκτορες</a> · <a href="#documentation">Τεκμηρίωση</a></p>
+<p align="center"><a href="#quickstart">Γρήγορη εκκίνηση</a> · <a href="#agents">Για πράκτορες</a> · <a href="comparison.md">Σύγκριση με Serve, ngrok και Cloudflare</a> · <a href="#documentation">Τεκμηρίωση</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <strong>Ελληνικά</strong> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | Επίσκεψη από το πρόγραμμα περιήγησης | Προσωρινοί σύνδεσμοι με προαιρετικό PIN για εφαρμογές μεσολάβησης HTTP ή ρητά δημόσιο HTTPS μέσω Funnel. Οι σύνδεσμοι προωθούνται και δεν πιστοποιούν ταυτότητα. [Επισκέπτες](guest-links.md) |
 | Διαχείριση πολλών εφαρμογών | Κατάλογος ανά μηχάνημα, ιδιωτική πύλη, έλεγχοι υγείας και ειδοποιήσεις, ιστορικό πρόσβασης και CLI/MCP με ρόλους πρακτόρων, όρια ανά εφαρμογή και εγγραφές ελέγχου. [Πύλη](portal.md) · [Δικαιώματα MCP](mcp-scopes.md) |
 
-[Συνταγές εφαρμογών](apps.md), [όρια μεταφόρτωσης](sharing.md), [ευέλικτες διάρκειες](durations.md) και [οδηγίες QR και αιτήματα πρόσβασης](requests.md) διευκολύνουν τη συντήρηση. Περιλαμβάνονται στον παρόντα πηγαίο κώδικα.
+[Συνταγές εφαρμογών](apps.md), [όρια μεταφόρτωσης](sharing.md), [ευέλικτες διάρκειες](durations.md) και [οδηγίες QR και αιτήματα πρόσβασης](requests.md) διευκολύνουν τη συντήρηση. Περιλαμβάνονται στην έκδοση v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Γρήγορη εκκίνηση
 
-Εγκατάσταση από τον κώδικα με **Git και Go 1.26.6+**. Έτοιμες εκδόσεις και Homebrew δεν έχουν δημοσιευτεί ακόμη. Οι εντολές χρησιμοποιούν bash/zsh. [Ρύθμιση macOS, Linux και Windows](platforms.md)
+Σε macOS και Linux, εγκαταστήστε με το Homebrew. Το εκτελέσιμο για macOS είναι υπογεγραμμένο με πιστοποιητικό Developer ID και επικυρωμένο (notarized) από την Apple. Για αναβάθμιση αργότερα, εκτελέστε `brew upgrade --cask tslink` και μετά ξανά `tslink install` αν το TSLink τρέχει ως υπηρεσία παρασκηνίου.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Στα Windows, κατεβάστε το `tslink_<version>_windows_<arch>.zip` από την [τελευταία έκδοση](https://github.com/anydoor7/tslink/releases/latest), ελέγξτε το με το `checksums.txt` και εκτελέστε `tslink install` ώστε το TSLink να ξεκινά όταν συνδέεστε. Το zip δεν έχει υπογραφή Authenticode· [επαληθεύστε την έκδοση](verify-release.md) μέσω των υπογεγραμμένων αθροισμάτων ελέγχου και των βεβαιώσεων. Τα πακέτα `.deb` και `.rpm` για Linux βρίσκονται στην ίδια σελίδα έκδοσης. Για μεταγλώττιση από τον κώδικα χρειάζεστε **Git και Go 1.26.6+**. Οι εντολές παρακάτω χρησιμοποιούν bash/zsh· δείτε [Ρύθμιση macOS, Linux και Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

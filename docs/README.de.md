@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Deine Apps überall nutzen und verwalten.<br>Privat behalten oder zu deinen Bedingungen teilen.</strong></p>
+<p align="center"><strong>Teile deine selbst gehosteten Apps mit den Menschen deiner Wahl, so lange du willst.</strong></p>
 
-Deine Apps auf deinem Computer oder Cloud-Server: Greife über ein verschlüsseltes privates Netzwerk darauf zu oder aktiviere bewusst Browser-Gastlinks und öffentlichen Zugriff. Bediene sie selbst oder über einen Agenten.
+TSLink gibt jeder App auf deinem Computer oder Server eine eigene private Tailscale-Adresse. Gib ausgewählten Personen Zugriff bis zu einer Frist, schicke jemandem ohne Tailscale einen Browser-Gastlink und widerrufe beides mit einem einzigen Befehl. Erledige das selbst oder über einen KI-Agenten, der auf die von dir zugewiesene Rolle beschränkt ist. Unabhängiges Projekt, das mit Tailscale arbeitet.
 
-<p align="center"><a href="#quickstart">Schnellstart</a> · <a href="#agents">Für Agenten</a> · <a href="#documentation">Dokumentation</a></p>
+<p align="center"><a href="#quickstart">Schnellstart</a> · <a href="#agents">Für Agenten</a> · <a href="comparison.md">Vergleich mit Serve, ngrok und Cloudflare</a> · <a href="#documentation">Dokumentation</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <strong>Deutsch</strong> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@ Deine Apps auf deinem Computer oder Cloud-Server: Greife über ein verschlüssel
 | Besuch per Browser ermöglichen | Befristete Gastlinks mit optionaler PIN für HTTP-Proxy-Apps oder ausdrücklich öffentliches HTTPS über Funnel. Links sind weiterleitbar und kein Identitätsnachweis. [Gastlinks](guest-links.md) |
 | Eine App-Sammlung verwalten | Inventar je Host, privates Portal, Zustandsprüfungen und Alarme, Zugriffshistorie sowie CLI/MCP-Zugriffsverwaltung mit Agentenrollen, App-Grenzen und Auditbelegen. [Portal](portal.md) · [MCP-Berechtigungen](mcp-scopes.md) |
 
-[App-Rezepte](apps.md), [Upload-Limits](sharing.md), [flexible Laufzeiten](durations.md) und [QR-Einstieg und Zugriffsanfragen](requests.md) erleichtern den Alltag. Diese Funktionen sind im vorliegenden Quellcode enthalten.
+[App-Rezepte](apps.md), [Upload-Limits](sharing.md), [flexible Laufzeiten](durations.md) und [QR-Einstieg und Zugriffsanfragen](requests.md) erleichtern den Alltag. Diese Funktionen sind Teil von v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Schnellstart
 
-Installation aus dem Quellcode mit **Git und Go 1.26.6+**. Fertige Releases und Homebrew sind noch nicht veröffentlicht. Die Befehle verwenden bash/zsh. [Einrichtung für macOS, Linux und Windows](platforms.md)
+Unter macOS und Linux installierst du TSLink mit Homebrew. Die macOS-Binärdatei ist mit einem Developer-ID-Zertifikat signiert und von Apple notarisiert. Für spätere Updates führst du `brew upgrade --cask tslink` aus und danach erneut `tslink install`, falls TSLink als Hintergrunddienst läuft.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+Unter Windows lädst du `tslink_<version>_windows_<arch>.zip` aus dem [neuesten Release](https://github.com/anydoor7/tslink/releases/latest) herunter, prüfst die Datei mit `checksums.txt` und führst `tslink install` aus, damit TSLink bei der Anmeldung startet. Das Zip ist nicht Authenticode-signiert; [prüfe das Release](verify-release.md) anhand der signierten Prüfsummen und Attestierungen. Linux-Pakete im Format `.deb` und `.rpm` liegen auf derselben Release-Seite. Für einen Build aus dem Quellcode brauchst du **Git und Go 1.26.6+**. Die Befehle unten verwenden bash/zsh; siehe [Einrichtung für macOS, Linux und Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git

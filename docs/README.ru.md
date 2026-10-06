@@ -5,11 +5,11 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Пользуйтесь своими приложениями и управляйте ими откуда угодно.<br>Оставляйте их приватными или делитесь на своих условиях.</strong></p>
+<p align="center"><strong>Делитесь своими self-hosted приложениями с теми, кого выберете, и на срок, который выберете сами.</strong></p>
 
-Ваши приложения на своём компьютере или облачном сервере: открывайте их через зашифрованную частную сеть либо явно включайте гостевые ссылки для браузера или публичный доступ. Управляйте сами или через агента.
+TSLink выдаёт каждому приложению на вашем компьютере или сервере собственный приватный адрес Tailscale. Открывайте доступ конкретным людям до заданного срока, отправляйте гостевую ссылку для браузера тем, кто не пользуется Tailscale, и отзывайте любой из этих доступов одной командой. Делайте это сами или через ИИ-агента, ограниченного назначенной вами ролью. Независимый проект, работающий с Tailscale.
 
-<p align="center"><a href="#quickstart">Быстрый старт</a> · <a href="#agents">Для агентов</a> · <a href="#documentation">Документация</a></p>
+<p align="center"><a href="#quickstart">Быстрый старт</a> · <a href="#agents">Для агентов</a> · <a href="comparison.md">Сравнение с Serve, ngrok и Cloudflare</a> · <a href="#documentation">Документация</a></p>
 <p align="center">
 <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <strong>Русский</strong> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -25,14 +25,20 @@
 | Пустить гостя через браузер | Временные ссылки с необязательным PIN для HTTP-прокси-приложений или явно публичный HTTPS через Funnel. Ссылку можно переслать; она не подтверждает личность. [Гостевые ссылки](guest-links.md) |
 | Поддерживать набор приложений | Каталог на каждом хосте, приватный портал, проверки состояния и оповещения, история доступа и CLI/MCP-управление с ролями агентов, ограничениями по приложениям и записями аудита. [Портал](portal.md) · [Права MCP](mcp-scopes.md) |
 
-[Рецепты приложений](apps.md), [ограничения загрузки](sharing.md), [гибкие сроки](durations.md) и [QR-инструкции и запросы доступа](requests.md) упрощают обслуживание. Эти возможности уже есть в данном исходном коде.
+[Рецепты приложений](apps.md), [ограничения загрузки](sharing.md), [гибкие сроки](durations.md) и [QR-инструкции и запросы доступа](requests.md) упрощают обслуживание. Эти возможности входят в v0.1.0.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Быстрый старт
 
-Установите из исходников с **Git и Go 1.26.6+**; готовые сборки и Homebrew пока не опубликованы. Команды рассчитаны на bash/zsh. [Настройка macOS, Linux и Windows](platforms.md)
+На macOS и Linux установите через Homebrew. Бинарный файл для macOS подписан сертификатом Developer ID и нотаризован Apple. Для обновления выполните `brew upgrade --cask tslink`, а затем снова `tslink install`, если TSLink работает как фоновая служба.
+
+```bash
+brew install --cask anydoor7/tap/tslink
+```
+
+В Windows скачайте `tslink_<version>_windows_<arch>.zip` из [последнего релиза](https://github.com/anydoor7/tslink/releases/latest), сверьте его с `checksums.txt` и выполните `tslink install`, чтобы TSLink запускался при входе в систему. Архив zip не подписан Authenticode; [проверьте релиз](verify-release.md) по подписанным контрольным суммам и аттестациям. Пакеты `.deb` и `.rpm` для Linux лежат на той же странице релиза. Для сборки из исходников нужны **Git и Go 1.26.6+**. Команды ниже рассчитаны на bash/zsh; см. [Настройка macOS, Linux и Windows](platforms.md).
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
