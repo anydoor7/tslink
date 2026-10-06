@@ -195,6 +195,8 @@ The retained upstream fsnotify suite is not part of the gate; run it by hand whe
 
 Stable releases are disabled until external readback proves the release environment, required reviewers, `refs/tags/v*` ruleset, branch protection, and Homebrew tap are configured. After that gate is enabled with the repository variable `TSLINK_RELEASE_PUBLISH_ENABLED=true`, stable releases publish a Homebrew cask to `anydoor7/homebrew-tap`. The job's `GITHUB_TOKEN` cannot write to that separate repository, so the release workflow mints a one-hour installation token from a GitHub App installed only on `anydoor7/homebrew-tap` with Contents read/write. Store the App's client ID in the `release` environment variable `HOMEBREW_TAP_APP_CLIENT_ID` and its PEM private key in the `release` environment secret `HOMEBREW_TAP_APP_PRIVATE_KEY`. If the App is missing, not installed on the tap, or lacks Contents write, minting fails before GoReleaser publishes anything.
 
+The release body is the `CHANGELOG.md` section headed `## [<version>]`, where the version is the tag without its leading `v` (`## [0.2.0-rc.1]` for `v0.2.0-rc.1`). The tagged commit must contain exactly one non-empty section for that version, pre-releases included; otherwise the publish job fails before GoReleaser runs. A `v*` tag cannot be moved, so add and date the section on `main` before tagging.
+
 GoReleaser signs `checksums.txt` and generated SBOM sidecars with keyless Sigstore bundles, then the release workflow publishes GitHub artifact attestations for installable artifacts and supply-chain sidecars. Keep the `release.yml` attestation globs aligned with `.goreleaser.yml` when adding or removing release asset types.
 
 When a CI job fails in 0 steps within a few seconds (`steps: []` in the

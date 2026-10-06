@@ -49,6 +49,37 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The release body is the curated CHANGELOG.md section for the tag's
+      # version, not GoReleaser's commit list. Every tag needs exactly one
+      # non-empty section, pre-releases included, so a missing one stops the
+      # job before anything is published. The file goes to the runner's temp
+      # directory: GoReleaser --clean wipes dist/, and an untracked file in
+      # the checkout would make GoReleaser refuse a dirty git state.
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+          RELEASE_NOTES: ${{ runner.temp }}/release-notes.md
+        run: |
+          set -euo pipefail
+          heading="## [${TAG#v}]"
+          sections="$(awk -v heading="${heading}" 'index($0, heading) == 1 { n++ } END { print n + 0 }' CHANGELOG.md)"
+          if [ "${sections}" != "1" ]; then
+            echo "::error::CHANGELOG.md has ${sections} sections headed ${heading}; tag ${TAG} needs exactly one"
+            exit 1
+          fi
+          # Copy the lines between that heading and the next "## [" heading,
+          # dropping blank lines at either end.
+          awk -v heading="${heading}" '
+            index($0, "## [") == 1 { in_section = index($0, heading) == 1; next }
+            !in_section { next }
+            /^[ \t]*$/ { if (started) blanks++; next }
+            { for (; blanks > 0; blanks--) print ""; print; started = 1 }
+          ' CHANGELOG.md > "${RELEASE_NOTES}"
+          if [ ! -s "${RELEASE_NOTES}" ]; then
+            echo "::error::CHANGELOG.md section ${heading} is empty; tag ${TAG} needs release notes"
+            exit 1
+          fi
+          echo "Release notes for ${TAG}: $(wc -l < "${RELEASE_NOTES}") lines from CHANGELOG.md ${heading}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -113,7 +144,7 @@ jobs:
           # version validated by the release-config gate. Kept identical to the
           # release-candidate `release-config` pin and the .goreleaser.yml comment.
           version: v2.17.0
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Empty on pre-release tags, where skip_upload: auto skips the tap.
