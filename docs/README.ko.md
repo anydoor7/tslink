@@ -32,7 +32,7 @@
 
 ## 빠른 시작
 
-**Git과 Go 1.26.6+**로 소스에서 설치합니다. 사전 빌드 릴리스와 Homebrew는 아직 배포되지 않았습니다. 아래 명령은 bash/zsh용입니다. [macOS, Linux, Windows 설정](platforms.md)
+**Git과 Go 1.26.6+** 환경에서 소스로 설치합니다. 사전 빌드 릴리스와 Homebrew는 아직 배포되지 않았습니다. 아래 명령은 bash/zsh용입니다. [macOS, Linux, Windows 설정](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
