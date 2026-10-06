@@ -150,45 +150,50 @@ func TestChangelogVersionsHaveReleaseNotes(t *testing.T) {
 }
 
 // TestReleaseNotesStepExecutes runs the checked-in extraction script against
-// a fixture CHANGELOG.md. It must write exactly the version's section and
-// fail, naming the problem, when the section is missing, empty or ambiguous.
+// a fixture CHANGELOG.md, with LF and with CRLF line endings. It must write
+// exactly the version's section, without carriage returns or blank lines at
+// either end, and fail, naming the problem, when the section is missing, empty
+// or ambiguous.
 func TestReleaseNotesStepExecutes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("executes the ubuntu publish step with bash; covered on Linux and macOS")
 	}
 	steps := publishSteps(t)
 	script := steps[releaseNotesIndex(t, steps)].Run
-	for _, tc := range []struct {
-		tag     string
-		want    string
-		wantErr string
-	}{
-		{tag: "v1.2.0", want: "First line of 1.2.0.\n\n### Added\n\n- Feature A\n  continued.\n\n\n- Feature B.\n"},
-		{tag: "v1.2.0-rc.1", want: "- Candidate notes.\n"},
-		{tag: "v1.0.0", want: "- Last section, read to the end of the file.\n"},
-		{tag: "v9.9.9", wantErr: "0 sections headed ## [9.9.9]"},
-		{tag: "v1.3.0-rc.1", wantErr: "0 sections headed ## [1.3.0-rc.1]"},
-		{tag: "v1.1.0", wantErr: "## [1.1.0] is empty"},
-		{tag: "v1.0.1", wantErr: "2 sections headed ## [1.0.1]"},
-	} {
-		t.Run(tc.tag, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "CHANGELOG.md"), []byte(changelogFixture), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			got, out, err := runReleaseNotesStep(t, script, dir, tc.tag)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(string(out), "::error::") || !strings.Contains(string(out), tc.wantErr) {
-					t.Fatalf("tag %s: want a failure naming %q, got err=%v\n%s", tc.tag, tc.wantErr, err, out)
+	for _, eol := range []struct{ name, sep string }{{"LF", "\n"}, {"CRLF", "\r\n"}} {
+		fixture := strings.ReplaceAll(changelogFixture, "\n", eol.sep)
+		for _, tc := range []struct {
+			tag     string
+			want    string
+			wantErr string
+		}{
+			{tag: "v1.2.0", want: "First line of 1.2.0.\n\n### Added\n\n- Feature A\n  continued.\n\n\n- Feature B.\n"},
+			{tag: "v1.2.0-rc.1", want: "- Candidate notes.\n"},
+			{tag: "v1.0.0", want: "- Last section, read to the end of the file.\n"},
+			{tag: "v9.9.9", wantErr: "0 sections headed ## [9.9.9]"},
+			{tag: "v1.3.0-rc.1", wantErr: "0 sections headed ## [1.3.0-rc.1]"},
+			{tag: "v1.1.0", wantErr: "## [1.1.0] is empty"},
+			{tag: "v1.0.1", wantErr: "2 sections headed ## [1.0.1]"},
+		} {
+			t.Run(eol.name+"/"+tc.tag, func(t *testing.T) {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "CHANGELOG.md"), []byte(fixture), 0o644); err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("tag %s rejected: %v\n%s", tc.tag, err, out)
-			}
-			if string(got) != tc.want {
-				t.Fatalf("tag %s notes:\n%q\nwant:\n%q", tc.tag, got, tc.want)
-			}
-		})
+				got, out, err := runReleaseNotesStep(t, script, dir, tc.tag)
+				if tc.wantErr != "" {
+					if err == nil || !strings.Contains(string(out), "::error::") || !strings.Contains(string(out), tc.wantErr) {
+						t.Fatalf("tag %s: want a failure naming %q, got err=%v\n%s", tc.tag, tc.wantErr, err, out)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("tag %s rejected: %v\n%s", tc.tag, err, out)
+				}
+				if string(got) != tc.want {
+					t.Fatalf("tag %s notes:\n%q\nwant:\n%q", tc.tag, got, tc.want)
+				}
+			})
+		}
 	}
 }

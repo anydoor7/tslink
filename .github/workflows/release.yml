@@ -80,7 +80,8 @@ jobs:
         run: |
           set -euo pipefail
           heading="## [${TAG#v}]"
-          sections="$(awk -v heading="${heading}" 'index($0, heading) == 1 { n++ } END { print n + 0 }' CHANGELOG.md)"
+          # Both passes drop a trailing CR, so CRLF lines read like LF lines.
+          sections="$(awk -v heading="${heading}" '{ sub(/\r$/, "") } index($0, heading) == 1 { n++ } END { print n + 0 }' CHANGELOG.md)"
           if [ "${sections}" != "1" ]; then
             echo "::error::CHANGELOG.md has ${sections} sections headed ${heading}; tag ${TAG} needs exactly one"
             exit 1
@@ -88,6 +89,7 @@ jobs:
           # Copy the lines between that heading and the next "## [" heading,
           # dropping blank lines at either end.
           awk -v heading="${heading}" '
+            { sub(/\r$/, "") }
             index($0, "## [") == 1 { in_section = index($0, heading) == 1; next }
             !in_section { next }
             /^[ \t]*$/ { if (started) blanks++; next }
