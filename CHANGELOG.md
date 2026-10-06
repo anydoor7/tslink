@@ -5,7 +5,7 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ## [0.1.0] - 2026-10-06
 
-First public release. TSLink gives each app on your computer or server, whether a web app, a folder or file, or a TCP port, its own private Tailscale address, and controls who can reach it: people you name, browser guests with an expiring link, or, only when you ask for it, the public internet. Run it from the CLI or through an AI agent over MCP. TSLink works with Tailscale and is an independent project.
+First public release. TSLink gives each app on your computer or server, whether a web app, a folder or file, or a TCP port, its own private address on your Tailscale network, so you can open it from your own devices. You decide who else can reach it: people you name, browser guests with an expiring link, or, only when you ask for it, the public internet. Run it yourself from the CLI or through an AI agent over MCP. TSLink needs a Tailscale account and is an independent project, not made or endorsed by Tailscale.
 
 ### Install
 
