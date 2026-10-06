@@ -51,6 +51,12 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# A tag with a pre-release suffix (v0.2.0-rc.1) becomes a GitHub pre-release
+# and never the latest release. release.yml treats the same hyphenated tags as
+# pre-releases, and homebrew_casks skip_upload: auto keeps them out of the tap.
+release:
+  prerelease: auto
+
 sboms:
   - artifacts: archive
     documents:
@@ -161,17 +167,23 @@ homebrew_casks:
     # without the signing secrets so an unsigned cask can never be published.
     # Templated: the same config renders a snapshot/pre-release cask without
     # the secrets, whose binary is unsigned, and the caveats must say so.
+    # The cask also installs on Linux (on_linux blocks), so the signing text
+    # names macOS. `tslink install` writes the resolved, versioned Caskroom
+    # path into the service definition, and brew upgrade deletes that
+    # version, so re-running `tslink install` is the upgrade step.
     caveats: |
       {{- if isEnvSet "MACOS_SIGN_P12" }}
-      tslink is signed with a Developer ID certificate and notarized by Apple.
-      The first run needs network access so macOS can look up the notarization
-      ticket: a bare binary cannot carry a stapled ticket.
+      On macOS, tslink is signed with a Developer ID certificate and notarized
+      by Apple. The first run needs network access so macOS can look up the
+      notarization ticket: a bare binary cannot carry a stapled ticket.
       {{- else }}
       This build is not signed or notarized (snapshot or pre-release), so macOS
       Gatekeeper will block it. Install a stable release instead, or allow this
       binary with:
         xattr -d com.apple.quarantine "$(readlink -f "$(command -v tslink)")"
       {{- end }}
+      After brew upgrade, run tslink install again if TSLink runs as a
+      background service, so the service starts the upgraded binary.
 
 changelog:
   sort: asc

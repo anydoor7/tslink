@@ -1,12 +1,14 @@
 package release_test
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"text/template"
 
 	yaml "go.yaml.in/yaml/v2"
 )
@@ -247,5 +249,58 @@ func TestStableCredentialGateExecutes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPrereleaseTagsStayPrereleases keeps the three pre-release decisions
+// aligned: GitHub marks hyphenated tags as pre-releases (never latest), the
+// cask skips the tap for them, and release.yml applies its stable-only
+// credential requirements to the same tags.
+func TestPrereleaseTagsStayPrereleases(t *testing.T) {
+	cfg := goreleaserConfig(t)
+	if cfg.Release.Prerelease != "auto" {
+		t.Errorf(".goreleaser.yml release.prerelease = %q, want auto so a -rc tag is not published as the latest release", cfg.Release.Prerelease)
+	}
+	if cfg.Casks[0].SkipUpload != "auto" {
+		t.Errorf("homebrew_casks skip_upload = %q, want auto", cfg.Casks[0].SkipUpload)
+	}
+	for _, step := range publishSteps(t) {
+		if strings.Contains(step.If, "github.ref_name") && step.If != stableOnly {
+			t.Errorf("publish step %q uses tag predicate %q, want %s", step.Name, step.If, stableOnly)
+		}
+	}
+}
+
+// TestCaskCaveatsFitEveryPlatform renders the caveats both ways GoReleaser
+// can: the cask also installs on Linux, so signing text must name macOS, and
+// both variants tell an upgrading user to repoint the background service.
+func TestCaskCaveatsFitEveryPlatform(t *testing.T) {
+	caveats := goreleaserConfig(t).Casks[0].Caveats
+	for _, signed := range []bool{true, false} {
+		tmpl, err := template.New("caveats").Funcs(template.FuncMap{
+			"isEnvSet": func(name string) bool { return signed && name == "MACOS_SIGN_P12" },
+		}).Parse(caveats)
+		if err != nil {
+			t.Fatalf("parse caveats: %v", err)
+		}
+		var out bytes.Buffer
+		if err := tmpl.Execute(&out, nil); err != nil {
+			t.Fatalf("render caveats: %v", err)
+		}
+		text := out.String()
+		want := []string{"run tslink install again", "upgraded binary"}
+		if signed {
+			want = append(want, "On macOS, tslink is signed")
+		} else {
+			want = append(want, "not signed or notarized", "xattr -d com.apple.quarantine")
+		}
+		for _, w := range want {
+			if !strings.Contains(text, w) {
+				t.Errorf("caveats (signed=%v) missing %q:\n%s", signed, w, text)
+			}
+		}
+		if signed && strings.HasPrefix(strings.TrimSpace(text), "tslink is signed") {
+			t.Errorf("signed caveats claim Apple signing without naming macOS:\n%s", text)
+		}
 	}
 }
