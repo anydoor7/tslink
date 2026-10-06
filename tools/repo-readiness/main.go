@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -319,12 +320,19 @@ func rulesetTargetsReleaseTags(target string, includes []string) bool {
 // releaseTagPrefix starts the full ref of every release tag.
 const releaseTagPrefix = "refs/tags/v"
 
+// releaseTagWitnesses are release refs; an exclusion that matches one provably
+// excludes a release tag.
+var releaseTagWitnesses = []string{"refs/tags/v0.1.0", "refs/tags/v1.2.3-rc.1", "refs/tags/v10.20.30"}
+
 // excludeMayMatchReleaseTags reports whether a ruleset exclude pattern can
 // match a refs/tags/v* release tag. GitHub matches fnmatch patterns against the
-// full ref; a bare pattern is also read as a tag name, as the include check
-// reads v*. decided is false when this check does not work out the pattern's
-// reach: an unknown ~ token, a wildcard before the tag name, or a class, brace
-// or escape where the tag name starts.
+// full ref; a pattern without a slash is read as a tag name instead, as the
+// include check reads v*, since as a full ref it could match no ref. A pattern
+// matches when it matches a witness or is a literal release ref, and does not
+// match only when it provably cannot reach refs/tags/v. decided is false
+// otherwise: an unknown ~ token, a pattern that may match release tags no
+// witness stands for, such as refs/tags/v9*, or a slash pattern without a
+// literal refs/ start, whose refs part may be a wildcard or class.
 func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	pattern = strings.TrimSpace(pattern)
 	switch {
@@ -337,21 +345,78 @@ func excludeMayMatchReleaseTags(pattern string) (match, decided bool) {
 	case strings.HasPrefix(pattern, "~"):
 		return false, false
 	}
-	if !strings.HasPrefix(pattern, "refs/") {
+	if !strings.Contains(pattern, "/") {
 		pattern = "refs/tags/" + pattern
 	}
-	if strings.HasPrefix(pattern, releaseTagPrefix) {
-		return true, true
+	for _, ref := range releaseTagWitnesses {
+		if fnmatchPathname(pattern, ref) {
+			return true, true
+		}
+	}
+	if !strings.HasPrefix(pattern, "refs/") {
+		return false, false
 	}
 	special := strings.IndexAny(pattern, `*?[{\`)
-	if special < 0 || !strings.HasPrefix(releaseTagPrefix, pattern[:special]) {
-		return false, true
+	if special < 0 {
+		// A literal names one ref.
+		return strings.HasPrefix(pattern, releaseTagPrefix), true
 	}
-	// A wildcard where the tag name starts can match any release tag.
-	if special == len("refs/tags/") && (pattern[special] == '*' || pattern[special] == '?') {
-		return true, true
+	// Every character before the first special one must match itself, so
+	// unless that start and refs/tags/v agree, the pattern cannot reach a
+	// release tag.
+	start := pattern[:special]
+	if strings.HasPrefix(releaseTagPrefix, start) || strings.HasPrefix(start, releaseTagPrefix) {
+		return false, false
 	}
-	return false, false
+	return false, true
+}
+
+// fnmatchPathname reports whether ref matches pattern as Ruby's
+// File.fnmatch(pattern, ref, File::FNM_PATHNAME) does, which GitHub uses for
+// ruleset patterns, for refs with no segment starting with a dot. It matches
+// segment by segment with path.Match, so nothing matches a slash, and a "**"
+// segment before another spans any number of segments. Where it may still
+// differ, as for a class containing a slash, it reports no match; it serves
+// only to prove that an exclusion matches.
+func fnmatchPathname(pattern, ref string) bool {
+	return matchSegments(strings.Split(pattern, "/"), strings.Split(ref, "/"))
+}
+
+func matchSegments(pattern, ref []string) bool {
+	if len(pattern) == 0 {
+		return len(ref) == 0
+	}
+	if pattern[0] == "**" && len(pattern) > 1 {
+		for skip := 0; skip <= len(ref); skip++ {
+			if matchSegments(pattern[1:], ref[skip:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(ref) == 0 {
+		return false
+	}
+	matched, err := path.Match(negateWithCaret(pattern[0]), ref[0])
+	return err == nil && matched && matchSegments(pattern[1:], ref[1:])
+}
+
+// negateWithCaret rewrites a class opened with "[!", which fnmatch negates,
+// as "[^", the negation path.Match reads.
+func negateWithCaret(segment string) string {
+	var b strings.Builder
+	for i := 0; i < len(segment); i++ {
+		b.WriteByte(segment[i])
+		switch {
+		case segment[i] == '\\' && i+1 < len(segment):
+			i++
+			b.WriteByte(segment[i])
+		case segment[i] == '[' && strings.HasPrefix(segment[i+1:], "!"):
+			i++
+			b.WriteByte('^')
+		}
+	}
+	return b.String()
 }
 
 func checkReleaseEnvironment(f Fetcher, repo string) Result {

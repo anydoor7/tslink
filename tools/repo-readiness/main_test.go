@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -304,19 +305,35 @@ func TestRulesetExclusionsDefeatReleaseTagCoverage(t *testing.T) {
 		{"no exclusions", []string{`[]`}, Ready},
 		{"exclusions omitted", []string{`null`}, Ready},
 		{"other tags excluded", []string{`["refs/tags/nightly-*"]`}, Ready},
+		{"another literal tag excluded", []string{`["refs/tags/nightly"]`}, Ready},
 		{"branches excluded", []string{`["refs/heads/v*","~DEFAULT_BRANCH"]`}, Ready},
 		{"every release tag excluded", []string{`["refs/tags/v*"]`}, NotReady},
 		{"one release tag excluded", []string{`["refs/tags/nightly-*","refs/tags/v0.1.0"]`}, NotReady},
+		{"literal release tag beyond the witnesses", []string{`["refs/tags/v9.9.9"]`}, NotReady},
 		{"pre-release tags excluded", []string{`["refs/tags/v*-rc*"]`}, NotReady},
 		{"every tag excluded", []string{`["refs/tags/*"]`}, NotReady},
 		{"bare tag pattern excluded", []string{`["v*"]`}, NotReady},
 		{"all refs excluded", []string{`["~ALL"]`}, NotReady},
-		{"match beats an unclear exclusion", []string{`["refs/*/v*","refs/tags/v*"]`}, NotReady},
-		{"wildcard before the tag name", []string{`["refs/*/v*"]`}, Unknown},
-		{"class where the tag name starts", []string{`["refs/tags/[uvw]*"]`}, Unknown},
+		{"wildcard before the tag name", []string{`["refs/*/v*"]`}, NotReady},
+		{"class where the tag name starts", []string{`["refs/tags/[uvw]*"]`}, NotReady},
+		{"negated class where the tag name starts", []string{`["refs/tags/[!n]*"]`}, NotReady},
+		{"leading ** spans directories", []string{`["**/v*"]`}, NotReady},
+		{"match beats an unclear exclusion", []string{`["refs/tags/v9*","refs/tags/v*"]`}, NotReady},
+		// File.fnmatch matches each of the next three against refs/tags/v9.0.0
+		// or refs/tags/v2.0.0, a release tag none of the witnesses matches.
+		{"release tags beyond the witnesses", []string{`["refs/tags/v9*"]`}, Unknown},
+		{"class in refs, beyond the witnesses", []string{`["ref[s]/tags/v9*"]`}, Unknown},
+		{"wildcards in refs, beyond the witnesses", []string{`["r?fs/*/v2.*"]`}, Unknown},
+		// Read as a tag name, v9* matches v9.0.0.
+		{"bare pattern beyond the witnesses", []string{`["v9*"]`}, Unknown},
+		{"slash pattern without a literal refs/", []string{`["tags/v*"]`}, Unknown},
+		// File.fnmatch matches neither against a release tag, but neither is
+		// provably disjoint from refs/tags/v.
+		{"negated class that skips release tags", []string{`["refs/tags/[!v]*"]`}, Unknown},
+		{"class that would have to match a slash", []string{`["refs[^x]tags/v*"]`}, Unknown},
 		{"unknown token", []string{`["~NEW_TOKEN"]`}, Unknown},
 		{"another ruleset covers", []string{`["refs/tags/v*"]`, `[]`}, Ready},
-		{"another ruleset is unclear", []string{`["refs/tags/v*"]`, `["refs/*/v*"]`}, Unknown},
+		{"another ruleset is unclear", []string{`["refs/tags/v*"]`, `["refs/tags/v9*"]`}, Unknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := checkRulesets(tagRulesets(tc.excludes...), "o/r")
@@ -324,6 +341,87 @@ func TestRulesetExclusionsDefeatReleaseTagCoverage(t *testing.T) {
 				t.Fatalf("exclusions %v: checkRulesets = %s (%s), want %s", tc.excludes, got.Status, got.Detail, tc.want)
 			}
 		})
+	}
+}
+
+// TestFullRefWildcardExclusionsAreNotReady: File.fnmatch with FNM_PATHNAME
+// matches each pattern against refs/tags/v0.1.0 through a wildcard or class in
+// the refs part, so the ruleset protects no release tag.
+func TestFullRefWildcardExclusionsAreNotReady(t *testing.T) {
+	for _, pattern := range []string{"ref[s]/tags/v*", "ref*/tags/v*", "refs*/tags/v*", "ref?/tags/v*", "r?fs/tags/v*"} {
+		got := checkRulesets(tagRulesets(jsonStringArray([]string{pattern})), "o/r")
+		if got.Status != NotReady {
+			t.Errorf("exclusion %q: checkRulesets = %s (%s), want NOT_READY", pattern, got.Status, got.Detail)
+		}
+	}
+}
+
+type fnmatchCase struct {
+	Pattern string `json:"pattern"`
+	Witness string `json:"witness"`
+}
+
+// fnmatchCorpus reads the Ruby File.fnmatch results in
+// testdata/fnmatch-corpus.json; testdata/README.md says how they were made.
+func fnmatchCorpus(t *testing.T) []fnmatchCase {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", "fnmatch-corpus.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpus []fnmatchCase
+	if err := json.Unmarshal(body, &corpus); err != nil {
+		t.Fatal(err)
+	}
+	// A truncated corpus would let the sweeps pass without checking anything.
+	matching := 0
+	for _, c := range corpus {
+		if c.Witness != "" {
+			matching++
+		}
+	}
+	if len(corpus) != 127 || matching != 76 {
+		t.Fatalf("corpus has %d patterns, %d matching a release ref; want 127 and 76", len(corpus), matching)
+	}
+	return corpus
+}
+
+// TestExclusionsTheFnmatchOracleMatchesAreNeverReady: no exclusion that
+// File.fnmatch matches against a release ref lets its ruleset count, and the
+// witnesses prove every such match in the corpus.
+func TestExclusionsTheFnmatchOracleMatchesAreNeverReady(t *testing.T) {
+	falseReady, unknown := 0, 0
+	for _, c := range fnmatchCorpus(t) {
+		if c.Witness == "" {
+			continue
+		}
+		got := checkRulesets(tagRulesets(jsonStringArray([]string{c.Pattern})), "o/r")
+		switch got.Status {
+		case Ready:
+			falseReady++
+			t.Errorf("false READY: exclusion %q matches %s (%s)", c.Pattern, c.Witness, got.Detail)
+		case Unknown:
+			unknown++
+			t.Errorf("exclusion %q matches %s: checkRulesets = UNKNOWN (%s), want NOT_READY", c.Pattern, c.Witness, got.Detail)
+		}
+	}
+	if falseReady+unknown > 0 {
+		t.Logf("matching patterns: %d READY, %d UNKNOWN", falseReady, unknown)
+	}
+}
+
+// TestFnmatchOracleRejectionsAreNotMatches: an exclusion that File.fnmatch
+// matches against no release ref is never reported as excluding release
+// tags. Patterns without a slash are skipped, since they are also read as tag
+// names on purpose.
+func TestFnmatchOracleRejectionsAreNotMatches(t *testing.T) {
+	for _, c := range fnmatchCorpus(t) {
+		if c.Witness != "" || !strings.Contains(c.Pattern, "/") {
+			continue
+		}
+		if match, _ := excludeMayMatchReleaseTags(c.Pattern); match {
+			t.Errorf("exclusion %q matches no release ref, but counts as matching", c.Pattern)
+		}
 	}
 }
 

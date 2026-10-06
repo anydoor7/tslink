@@ -1,0 +1,510 @@
+[
+  {
+    "pattern": "refs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/v0.1.0",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/v*-rc*",
+    "witness": "refs/tags/v1.0.0-rc.1"
+  },
+  {
+    "pattern": "~ALL",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/?*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/*/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/[uvw]*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/nightly-*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/heads/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "v*",
+    "witness": ""
+  },
+  {
+    "pattern": "~DEFAULT_BRANCH",
+    "witness": ""
+  },
+  {
+    "pattern": "~NEW_TOKEN",
+    "witness": ""
+  },
+  {
+    "pattern": "ref*/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs*/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "ref?/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r?fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "ref[s]/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "*/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "**/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "*efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "*refs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "?efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "?refs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "[r]efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "[r]refs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "[rx]efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "[rx]refs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "**efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "**refs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r*fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r*efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r?efs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "r[e]fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r[e]efs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "r[ex]fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r[ex]efs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "r**fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "r**efs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re*s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re*fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re?s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re?fs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "re[f]s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re[f]fs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "re[fx]s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re[fx]fs/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "re**s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "re**fs/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "ref*s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "ref?s/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "ref[s]s/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "ref[sx]/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "ref[sx]s/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "ref**/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "ref**s/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs*tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs?tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs?/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs[/]tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs[/]/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs[/x]tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs[/x]/tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs**tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs**/tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/*ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/*tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/?ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/?tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/[t]ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[t]tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/[tx]ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[tx]tags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/**ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/**tags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t*gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t*ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t?gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t?ags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/t[a]gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t[a]ags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/t[ax]gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t[ax]ags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/t**gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/t**ags/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta*s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta*gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta?s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta?gs/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/ta[g]s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta[g]gs/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/ta[gx]s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta[gx]gs/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/ta**s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/ta**gs/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag*/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag*s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag?/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag?s/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tag[s]/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag[s]s/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tag[sx]/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag[sx]s/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tag**/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tag**s/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags*v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags*/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags?v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags?/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags[/]v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags[/]/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags[/x]v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags[/x]/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags**v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags**/v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/**",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/*v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/?v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/[v]*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/[v]v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/[vx]*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/[vx]v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/***",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/tags/**v*",
+    "witness": "refs/tags/v0.1.0"
+  },
+  {
+    "pattern": "refs/[x]ags/v*",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/v/**",
+    "witness": ""
+  },
+  {
+    "pattern": "refs/tags/v[0-9]*",
+    "witness": "refs/tags/v0.1.0"
+  }
+]
