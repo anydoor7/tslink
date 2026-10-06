@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Give each app on your computer or server its own private address on your Tailscale network, and decide who can reach it.</strong></p>
 
-Open your web apps, folders, model APIs and databases from your own phone and laptop, with health checks and access history for each. Your AI agents can publish and check them too, within the role you give them. When someone else needs in, grant a named person access until a date, or open a web app to the public internet for a limited time.
+Open your web apps, folders, model APIs and databases from your own phone and laptop, with health checks and access history for each. Your AI agents can give apps they start on localhost a private address for your other devices and check them, within the role you give them. When someone else needs in, grant a named person access until a date, or open a web app to the public internet for a limited time.
 
 **Requires Tailscale.** You need a Tailscale account (free for personal use), and each device that opens a private app needs the Tailscale app; guests and public visitors need only a browser. TSLink is an independent project, not made or endorsed by Tailscale. [Requirements](#requirements)
 
@@ -23,18 +23,18 @@ Open your web apps, folders, model APIs and databases from your own phone and la
 ### Reach your own apps
 
 - **An address for each app.** `tslink share 3000`, `tslink share ./photos` or `tslink add db --tcp localhost:5432` gives a web app, folder, file or TCP service its own private address in your tailnet (your private Tailscale network), such as `https://photos.<tailnet>.ts.net`. Each app is a separate Tailscale device, so you open apps by name instead of by IP address and port.
-- **Private unless you choose otherwise.** Apps stay inside your tailnet, and its policy decides which devices connect. Nothing reaches the public internet until you create a guest link or publish an app.
-- **One place to see them.** `tslink status --urls` lists every app on this computer, and an optional private home page shows the address and health of each app. [Portal](docs/portal.md)
+- **Private unless you choose otherwise.** TSLink keeps app access private by default, and your tailnet policy decides which devices can connect. It opens a public app endpoint only when you create a guest link or explicitly publish through Funnel.
+- **One place to see them.** `tslink status --urls` lists the apps registered on this computer, and an optional private home page shows their addresses and health. [Portal](docs/portal.md)
 - **Know when something breaks.** Background health checks can alert you through a command or webhook when an app goes down or comes back, or when its Tailscale sign-in is about to expire. Access history shows who opened which app and when, including denied requests. [Health and alerts](docs/health-and-alerts.md) · [Access history](docs/access-log.md)
-- **Common apps ready to go.** Recipes cover 15 self-hosted apps, including Home Assistant, Jellyfin, Immich and Ollama, and `tslink apps detect` finds apps already running. Photo and video apps get [upload limits](docs/sharing.md) that fit large files. [App recipes](docs/apps.md) · [Local AI](docs/local-ai.md)
+- **App recipes.** Recipes cover 15 self-hosted apps, including Home Assistant, Jellyfin, Immich and Ollama, and `tslink apps detect` can find supported apps already listening locally. For large photo and video uploads, [raise the per-app upload limits](docs/sharing.md). [App recipes](docs/apps.md) · [Local AI](docs/local-ai.md)
 
 ### Let your agents work with them
 
-An agent that starts a dev server, a preview or a local model API leaves it on `localhost`, where your phone and other computers cannot open it. TSLink lets the agent publish it privately, tell you the exact address and take it down again, within limits you set.
+When an agent starts a dev server, preview or local model API on `localhost`, your phone and other computers cannot reach that address. TSLink lets the agent give it a private address, tell you the exact URL and remove its registration again, within limits you set.
 
-- **Share, check, undo.** `share` returns the name it registered and either the exact URL or a sign-in link for you to open. `url --wait` and `status` report when the app is live, and `remove` (MCP `unshare`) takes it down. [Agent quickstart](docs/agent-quickstart.md)
-- **Made for automation.** Commands take `--json` and return a versioned result with stable error codes. `tslink mcp` offers the same operations to a local MCP client, and `tslink serve --mcp` to agents on your other devices over the tailnet. [JSON automation](docs/json-automation.md) · [Remote MCP](docs/remote-mcp.md)
-- **Limited authority.** An agent you run yourself acts as owner. Give other agents a reduced role (`viewer`, `app-operator` or `people-manager`) that covers only the apps you name and caps how long any grant it makes can last. Changes made through MCP are recorded, and `tslink mcp-audit` shows them. Roles limit TSLink's tools, not the agent's own shell or files. [MCP scopes](docs/mcp-scopes.md)
+- **Share, check, undo.** `share --json` returns the name it registered and either the exact URL or a sign-in link for you to open. `url <name> --wait` and `status --urls --name <name>` report endpoint readiness, and `remove <name>` (MCP `unshare`) removes the share. [Agent quickstart](docs/agent-quickstart.md)
+- **Made for automation.** Management commands other than `tslink mcp` accept `--json` and return versioned results with stable error codes. `tslink mcp` exposes app and access tools to a local MCP client over JSON-RPC. With caller bindings configured, `tslink serve --mcp` exposes those tools to MCP clients on your other devices over the tailnet. [JSON automation](docs/json-automation.md) · [Remote MCP](docs/remote-mcp.md)
+- **Limited authority.** A local agent has owner authority by default. Give an agent a reduced role (`viewer`, `app-operator` or `people-manager`) that covers only the apps you name and caps how long any grant it makes can last. Changes made through MCP are recorded, and `tslink mcp-audit` shows them. Roles limit TSLink's tools, not the agent's own shell or files. [MCP scopes](docs/mcp-scopes.md)
 
 ### Share with people you choose
 
@@ -45,8 +45,8 @@ An agent that starts a dev server, a preview or a local model API leaves it on `
 ### Open a web app to the internet, for a while
 
 - **Guest links.** `tslink guest create photos --for 3d --public --print-link` makes a browser link to one web app, optionally with a PIN, that you can revoke on its own. Guests need no Tailscale account. Anyone holding the link can use it, so it does not prove who visited. [Guest links](docs/guest-links.md)
-- **An open public URL.** `tslink add preview --proxy localhost:3000 --funnel --public` publishes a web app to anyone with its URL. It expires after 24 hours unless you set another lifetime with `--funnel-ttl`. [Funnel](docs/funnel.md)
-- Both run through Tailscale Funnel, always expire (1 hour to 7 days unless you raise the limit) and work only for web apps. Folders, files and TCP services stay private.
+- **An open public URL.** `tslink add preview --proxy localhost:3000 --funnel --public` publishes a web app to anyone with its URL. A new publication defaults to 24 hours; use `--funnel-ttl` to choose another lifetime. [Funnel](docs/funnel.md)
+- New guest links and open public publications use Tailscale Funnel and have finite lifetimes (minimum 1 hour, default maximum 7 days, configurable by the owner). These public paths support HTTP proxy apps; direct folder/file services and raw TCP stay private.
 
 Everything above ships in v0.1.0.
 
@@ -59,12 +59,12 @@ TSLink is built on Tailscale. It is an independent project, not made or endorsed
 | Who | What they need |
 |---|---|
 | You | A Tailscale account with [MagicDNS and HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) turned on. The free Personal plan is for non-commercial use. |
-| The computer or server running your apps | TSLink only. It includes Tailscale, so no separate install. Each new app asks for a browser sign-in, and device approval if your tailnet requires it. |
+| The computer or server running your apps | TSLink only. It embeds Tailscale, so no separate Tailscale install is needed. With the default setup, each fresh app node needs browser sign-in and may need device approval. [Stored credentials](docs/credentials-and-tags.md) support enrollment without per-app browser sign-in. |
 | Your other devices | The Tailscale app, signed in to your tailnet. |
 | People you choose | The Tailscale app and their own login. They either join your tailnet, which adds a user to your plan, or accept a device invitation for each app. Your tailnet policy must let them reach it. |
 | Guests and public visitors | A browser. Your tailnet must allow Funnel, which Tailscale still calls beta. |
 
-Turning on HTTPS publishes your tailnet name and device names, including each app's name, in a public certificate log, so choose app names you are happy to have seen.
+When an HTTPS certificate is issued for an app, its Tailscale device name and your tailnet DNS name appear in a public certificate log. Choose app names you are happy to have seen.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
