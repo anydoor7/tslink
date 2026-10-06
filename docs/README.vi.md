@@ -5,7 +5,7 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của bạn một địa chỉ riêng trong mạng Tailscale của bạn, và tự quyết định ai được truy cập.</strong></p>
+<p align="center"><strong>Cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của bạn một địa chỉ riêng tư trong mạng Tailscale của bạn, và tự quyết định ai được truy cập.</strong></p>
 
 Mở ứng dụng web, thư mục, API mô hình và cơ sở dữ liệu từ chính điện thoại và laptop của bạn, kèm kiểm tra tình trạng và lịch sử truy cập cho từng ứng dụng. Tác tử AI của bạn có thể gán cho các ứng dụng mà chúng khởi động trên localhost một địa chỉ riêng tư để các thiết bị khác của bạn mở được, và kiểm tra các ứng dụng đó, trong phạm vi vai trò bạn giao. Khi người khác cần vào, hãy cấp quyền cho một người cụ thể đến một ngày nhất định, hoặc mở một ứng dụng web ra internet công khai trong thời gian giới hạn.
 

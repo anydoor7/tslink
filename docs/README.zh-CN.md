@@ -45,7 +45,7 @@
 ### 把 Web 应用限时开放到公网
 
 - **访客链接。** `tslink guest create photos --for 3d --public --print-link` 为一个 Web 应用生成浏览器链接，可以加 PIN，也可以单独撤销。访客不需要 Tailscale 账户。任何拿到链接的人都能用，所以它无法证明来访者是谁。[访客链接](guest-links.md)
-- **开放的公网 URL。** `tslink add preview --proxy localhost:3000 --funnel --public` 把一个 Web 应用公开给任何知道 URL 的人。新发布默认有效 24 小时，可以用 `--funnel-ttl` 选择别的时长。[Funnel](funnel.md)
+- **开放的公网 URL。** `tslink add preview --proxy localhost:3000 --funnel --public` 把一个 Web 应用公开给任何知道 URL 的人。新建的公网发布默认有效 24 小时，可以用 `--funnel-ttl` 选择别的时长。[Funnel](funnel.md)
 - 新建的访客链接和开放的公网发布都通过 Tailscale Funnel 运行，有效期有限（最短 1 小时，默认最长 7 天，所有者可以调整这个上限）。这些公网路径支持 HTTP 代理应用；直接提供的文件夹或文件服务，以及原始 TCP，都保持私有。
 
 以上功能都包含在 v0.1.0 中。

@@ -59,7 +59,7 @@ TSLink 建立在 Tailscale 之上。它是獨立專案，並非由 Tailscale 開
 | 對象 | 需要什麼 |
 |---|---|
 | 你 | 一個 Tailscale 帳號，並開啟 [MagicDNS 和 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)。免費的 Personal 方案僅限非商業用途。 |
-| 執行應用的電腦或伺服器 | 只需要 TSLink。它內建 Tailscale，不必另外安裝 Tailscale。依預設設定，每個新建立的應用節點都要在瀏覽器登入，也可能需要裝置核准。改用[已儲存的憑證](credentials-and-tags.md)，應用加入 tailnet 就不必逐一在瀏覽器登入。 |
+| 執行應用的電腦或伺服器 | 只需要 TSLink。它內建 Tailscale，不必另外安裝 Tailscale。依預設設定，每個新建立的應用節點都要在瀏覽器登入，也可能需要裝置核准。改用[已儲存的認證資訊](credentials-and-tags.md)，應用加入 tailnet 就不必逐一在瀏覽器登入。 |
 | 你的其他裝置 | Tailscale 用戶端，並登入你的 tailnet。 |
 | 你選定的人 | Tailscale 用戶端和他們自己的登入帳號。他們可以加入你的 tailnet（會在你的方案裡多占一個使用者名額），也可以為每個應用接受一份裝置邀請。你的 tailnet 政策必須允許他們存取。 |
 | 訪客和公開訪問者 | 一個瀏覽器。你的 tailnet 必須允許 Funnel，Tailscale 目前仍把它標為 beta。 |
