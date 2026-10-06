@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>컴퓨터나 서버의 앱마다 내 Tailscale 네트워크 안의 비공개 주소를 주고, 누가 접속할 수 있는지는 직접 정하세요.</strong></p>
 
-웹 앱, 폴더, 모델 API, 데이터베이스를 내 휴대폰과 노트북에서 열 수 있고, 앱마다 상태 점검과 접속 이력이 따라옵니다. AI 에이전트도 내가 준 역할 범위 안에서 앱을 게시하고 확인할 수 있습니다. 다른 사람이 써야 할 때는 지정한 사람에게 날짜를 정해 접근을 허용하거나, 웹 앱 하나를 정해진 시간 동안 공개 인터넷에 열 수 있습니다.
+웹 앱, 폴더, 모델 API, 데이터베이스를 내 휴대폰과 노트북에서 열 수 있고, 앱마다 상태 점검과 접속 이력이 따라옵니다. AI 에이전트도 내가 준 역할 범위 안에서, 자신이 localhost에 띄운 앱에 다른 기기에서 열 수 있는 비공개 주소를 붙이고 그 앱을 확인할 수 있습니다. 다른 사람이 써야 할 때는 지정한 사람에게 날짜를 정해 접근을 허용하거나, 웹 앱 하나를 정해진 시간 동안 공개 인터넷에 열 수 있습니다.
 
 **Tailscale이 필요합니다.** Tailscale 계정(개인 사용은 무료)이 있어야 하고, 비공개 앱을 여는 기기마다 Tailscale 앱이 필요합니다. 게스트와 공개 방문자는 브라우저만 있으면 됩니다. TSLink는 독립 프로젝트이며, Tailscale이 만들거나 보증한 것이 아닙니다. [요구 사항](#requirements)
 
@@ -23,18 +23,18 @@
 ### 내 앱에 접속하기
 
 - **앱마다 주소 하나.** `tslink share 3000`, `tslink share ./photos`, `tslink add db --tcp localhost:5432`를 실행하면 웹 앱, 폴더, 파일, TCP 서비스가 tailnet(나만의 비공개 Tailscale 네트워크) 안에서 `https://photos.<tailnet>.ts.net` 같은 자기만의 비공개 주소를 갖습니다. 앱마다 별도의 Tailscale 기기가 되므로 IP 주소와 포트 대신 이름으로 앱을 엽니다.
-- **따로 정하지 않으면 비공개.** 앱은 tailnet 안에만 있고, 어떤 기기가 연결할 수 있는지는 tailnet 정책이 정합니다. 게스트 링크를 만들거나 앱을 공개하기 전에는 아무것도 공개 인터넷에 나가지 않습니다.
-- **한곳에서 모아 보기.** `tslink status --urls`는 이 컴퓨터의 모든 앱을 보여 주고, 선택 사항인 비공개 홈 페이지에서는 앱마다 주소와 상태를 볼 수 있습니다. [포털](portal.md)
+- **따로 정하지 않으면 비공개.** TSLink는 기본적으로 앱 접근을 비공개로 유지하고, 어떤 기기가 연결할 수 있는지는 tailnet 정책이 정합니다. 공개 앱 엔드포인트는 게스트 링크를 만들거나 Funnel로 명시적으로 게시할 때만 열립니다.
+- **한곳에서 모아 보기.** `tslink status --urls`는 이 컴퓨터에 등록된 앱을 보여 주고, 선택 사항인 비공개 홈 페이지에서는 그 앱들의 주소와 상태를 볼 수 있습니다. [포털](portal.md)
 - **문제가 생기면 바로 알기.** 앱이 멈추거나 다시 살아날 때, 또는 Tailscale 로그인이 곧 만료될 때 백그라운드 상태 점검이 명령이나 웹훅으로 알려 줍니다. 접속 이력에는 누가 언제 어떤 앱을 열었는지가 거부된 요청까지 남습니다. [상태 점검과 알림](health-and-alerts.md) · [접속 이력](access-log.md)
-- **자주 쓰는 앱은 바로 사용.** Home Assistant, Jellyfin, Immich, Ollama를 포함한 셀프호스팅 앱 15개의 레시피가 있고, `tslink apps detect`는 이미 실행 중인 앱을 찾아 줍니다. 사진과 동영상 앱에는 큰 파일에 맞는 [업로드 제한](sharing.md)이 적용됩니다. [앱 구성 레시피](apps.md) · [로컬 AI](local-ai.md)
+- **앱 레시피.** Home Assistant, Jellyfin, Immich, Ollama를 포함한 셀프호스팅 앱 15개의 레시피가 있고, `tslink apps detect`는 이미 로컬에서 수신 대기 중인 지원 앱을 찾을 수 있습니다. 큰 사진과 동영상을 올리려면 [앱별 업로드 제한을 높이세요](sharing.md). [앱 구성 레시피](apps.md) · [로컬 AI](local-ai.md)
 
 ### 에이전트에게 맡기기
 
-에이전트가 띄운 개발 서버, 미리보기, 로컬 모델 API는 `localhost`에 머물러 있어서 휴대폰이나 다른 컴퓨터에서는 열 수 없습니다. TSLink를 쓰면 에이전트가 내가 정한 한도 안에서 이를 비공개로 게시하고, 정확한 주소를 알려 주고, 다시 내릴 수 있습니다.
+에이전트가 개발 서버, 미리보기, 로컬 모델 API를 `localhost`에 띄우면 휴대폰이나 다른 컴퓨터에서는 그 주소에 접속할 수 없습니다. TSLink를 쓰면 에이전트가 내가 정한 한도 안에서 여기에 비공개 주소를 붙이고, 정확한 URL을 알려 주고, 등록을 다시 해제할 수 있습니다.
 
-- **공유, 확인, 되돌리기.** `share`는 등록한 이름과 함께 정확한 URL 또는 내가 열어야 할 로그인 링크를 돌려줍니다. `url --wait`와 `status`는 앱이 열렸는지 알려 주고, `remove`(MCP에서는 `unshare`)는 앱을 내립니다. [에이전트 빠른 시작](agent-quickstart.md)
-- **자동화에 맞춘 설계.** 명령은 `--json`을 받아 버전이 붙은 결과와 안정적인 오류 코드를 돌려줍니다. `tslink mcp`는 로컬 MCP 클라이언트에, `tslink serve --mcp`는 tailnet을 통해 다른 기기의 에이전트에 같은 작업을 제공합니다. [JSON 자동화](json-automation.md) · [원격 MCP](remote-mcp.md)
-- **제한된 권한.** 내가 직접 실행하는 에이전트는 소유자로 동작합니다. 다른 에이전트에는 낮은 역할(`viewer`, `app-operator`, `people-manager`)을 줄 수 있습니다. 이 역할은 지정한 앱에만 적용되고, 에이전트가 부여하는 접근의 최대 기간도 제한합니다. MCP로 한 변경은 기록되며 `tslink mcp-audit`로 볼 수 있습니다. 역할은 TSLink의 도구만 제한할 뿐, 에이전트 자체의 셸이나 파일까지 막지는 않습니다. [MCP 권한](mcp-scopes.md)
+- **공유, 확인, 되돌리기.** `share --json`은 등록한 이름과 함께 정확한 URL 또는 내가 열어야 할 로그인 링크를 돌려줍니다. `url <name> --wait`와 `status --urls --name <name>`은 엔드포인트가 준비됐는지 알려 주고, `remove <name>`(MCP에서는 `unshare`)은 공유를 제거합니다. [에이전트 빠른 시작](agent-quickstart.md)
+- **자동화에 맞춘 설계.** `tslink mcp`를 제외한 관리 명령은 `--json`을 받아 버전이 붙은 결과와 안정적인 오류 코드를 돌려줍니다. `tslink mcp`는 JSON-RPC로 로컬 MCP 클라이언트에 앱과 접근 관련 도구를 제공합니다. 호출자 바인딩을 설정하면 `tslink serve --mcp`가 tailnet을 통해 다른 기기의 MCP 클라이언트에 같은 도구를 제공합니다. [JSON 자동화](json-automation.md) · [원격 MCP](remote-mcp.md)
+- **제한된 권한.** 로컬 에이전트는 기본적으로 소유자 권한을 가집니다. 에이전트에 낮은 역할(`viewer`, `app-operator`, `people-manager`)을 줄 수 있습니다. 이 역할은 지정한 앱에만 적용되고, 에이전트가 부여하는 접근의 최대 기간도 제한합니다. MCP로 한 변경은 기록되며 `tslink mcp-audit`로 볼 수 있습니다. 역할은 TSLink의 도구만 제한할 뿐, 에이전트 자체의 셸이나 파일까지 막지는 않습니다. [MCP 권한](mcp-scopes.md)
 
 ### 정한 사람과 공유하기
 
@@ -45,8 +45,8 @@
 ### 웹 앱을 잠시 인터넷에 열기
 
 - **게스트 링크.** `tslink guest create photos --for 3d --public --print-link`는 웹 앱 하나에 대한 브라우저 링크를 만듭니다. PIN은 선택이며 링크마다 따로 취소할 수 있습니다. 게스트에게는 Tailscale 계정이 필요 없습니다. 링크를 가진 사람은 누구나 쓸 수 있으므로 누가 방문했는지 증명하지는 못합니다. [게스트 링크](guest-links.md)
-- **공개 URL.** `tslink add preview --proxy localhost:3000 --funnel --public`은 URL을 아는 누구에게나 웹 앱을 공개합니다. `--funnel-ttl`로 다른 기간을 정하지 않으면 24시간 뒤에 만료됩니다. [Funnel](funnel.md)
-- 둘 다 Tailscale Funnel을 거치고, 반드시 만료되며(한도를 올리지 않으면 1시간에서 7일), 웹 앱에서만 동작합니다. 폴더, 파일, TCP 서비스는 비공개로 남습니다.
+- **공개 URL.** `tslink add preview --proxy localhost:3000 --funnel --public`은 URL을 아는 누구에게나 웹 앱을 공개합니다. 새로 게시하면 기본으로 24시간 동안 유지되며, `--funnel-ttl`로 다른 기간을 정할 수 있습니다. [Funnel](funnel.md)
+- 새 게스트 링크와 새 공개 게시는 Tailscale Funnel을 거치고 기간이 정해져 있습니다(최소 1시간, 기본 최대 7일, 소유자가 변경 가능). 이 공개 경로는 HTTP 프록시 앱을 지원하며, 폴더나 파일을 직접 제공하는 서비스와 원시 TCP는 비공개로 남습니다.
 
 위의 기능은 모두 v0.1.0에 포함되어 있습니다.
 
@@ -59,12 +59,12 @@ TSLink는 Tailscale을 기반으로 만들어졌습니다. 독립 프로젝트�
 | 대상 | 필요한 것 |
 |---|---|
 | 나 | [MagicDNS와 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)를 켠 Tailscale 계정. 무료 Personal 요금제는 비상업적 용도로만 쓸 수 있습니다. |
-| 앱을 실행하는 컴퓨터나 서버 | TSLink만 있으면 됩니다. Tailscale이 포함되어 있어 따로 설치하지 않아도 됩니다. 새 앱마다 브라우저 로그인을 요청하고, tailnet에서 요구하면 기기 승인도 요청합니다. |
+| 앱을 실행하는 컴퓨터나 서버 | TSLink만 있으면 됩니다. Tailscale이 내장되어 있어 Tailscale을 따로 설치하지 않아도 됩니다. 기본 설정에서는 새 앱 노드마다 브라우저 로그인이 필요하고 기기 승인이 필요할 수도 있습니다. [저장된 자격 증명](credentials-and-tags.md)을 쓰면 앱마다 브라우저로 로그인하지 않고 등록할 수 있습니다. |
 | 내 다른 기기 | tailnet에 로그인한 Tailscale 앱. |
 | 내가 정한 사람 | Tailscale 앱과 본인 로그인. 내 tailnet에 참여하거나(요금제의 사용자가 한 명 늘어납니다), 앱마다 기기 초대를 수락합니다. tailnet 정책에서 이들의 접근을 허용해야 합니다. |
 | 게스트와 공개 방문자 | 브라우저. tailnet에서 Funnel을 허용해야 하며, Tailscale은 Funnel을 아직 베타로 분류합니다. |
 
-HTTPS를 켜면 tailnet 이름과, 각 앱 이름을 포함한 기기 이름이 공개 인증서 로그에 올라갑니다. 남이 봐도 괜찮은 앱 이름을 고르세요.
+앱용 HTTPS 인증서가 발급되면 그 앱의 Tailscale 기기 이름과 tailnet DNS 이름이 공개 인증서 로그에 올라갑니다. 남이 봐도 괜찮은 앱 이름을 고르세요.
 
 <a id="installation"></a>
 <a id="quickstart"></a>

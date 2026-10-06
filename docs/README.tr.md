@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Bilgisayarınızdaki veya sunucunuzdaki her uygulamaya Tailscale ağınızda kendine ait özel bir adres verin ve ona kimin erişebileceğine siz karar verin.</strong></p>
 
-Web uygulamalarınızı, klasörlerinizi, model API'lerinizi ve veritabanlarınızı kendi telefonunuzdan ve dizüstü bilgisayarınızdan açın; her biri için sağlık kontrolü ve erişim geçmişi de hazır. Yapay zekâ ajanlarınız da onlara verdiğiniz rolün sınırları içinde bu uygulamaları yayımlayıp kontrol edebilir. Başka birinin erişmesi gerektiğinde, belirli bir kişiye bir tarihe kadar erişim verin ya da bir web uygulamasını sınırlı bir süre için genel internete açın.
+Web uygulamalarınızı, klasörlerinizi, model API'lerinizi ve veritabanlarınızı kendi telefonunuzdan ve dizüstü bilgisayarınızdan açın; her biri için sağlık kontrolü ve erişim geçmişi de hazır. Yapay zekâ ajanlarınız, onlara verdiğiniz rolün sınırları içinde, localhost üzerinde başlattıkları uygulamalara diğer cihazlarınız için özel bir adres verebilir ve bu uygulamaları kontrol edebilir. Başka birinin erişmesi gerektiğinde, belirli bir kişiye bir tarihe kadar erişim verin ya da bir web uygulamasını sınırlı bir süre için genel internete açın.
 
 **Tailscale gerektirir.** Bir Tailscale hesabına (kişisel kullanım için ücretsiz) ihtiyacınız var ve özel bir uygulamayı açan her cihazda Tailscale uygulaması bulunmalı; konuklar ve genel ziyaretçiler için yalnızca bir tarayıcı yeterli. TSLink bağımsız bir projedir; Tailscale tarafından geliştirilmemiş ve onaylanmamıştır. [Gereksinimler](#requirements)
 
@@ -23,18 +23,18 @@ Web uygulamalarınızı, klasörlerinizi, model API'lerinizi ve veritabanların�
 ### Kendi uygulamalarınıza erişin
 
 - **Her uygulamaya bir adres.** `tslink share 3000`, `tslink share ./photos` veya `tslink add db --tcp localhost:5432`, bir web uygulamasına, klasöre, dosyaya ya da TCP hizmetine tailnet'inizde (özel Tailscale ağınızda) kendine ait özel bir adres verir; örneğin `https://photos.<tailnet>.ts.net`. Her uygulama ayrı bir Tailscale cihazıdır, bu yüzden uygulamaları IP adresi ve port yerine adıyla açarsınız.
-- **Siz aksini seçmedikçe özel.** Uygulamalar tailnet'inizin içinde kalır ve hangi cihazların bağlanabileceğine tailnet politikası karar verir. Siz bir konuk bağlantısı oluşturana veya bir uygulamayı yayımlayana kadar hiçbir şey genel internete çıkmaz.
-- **Hepsini tek yerden görün.** `tslink status --urls` bu bilgisayardaki tüm uygulamaları listeler; isteğe bağlı özel ana sayfa da her uygulamanın adresini ve sağlık durumunu gösterir. [Portal](portal.md)
+- **Siz aksini seçmedikçe özel.** TSLink uygulama erişimini varsayılan olarak özel tutar ve hangi cihazların bağlanabileceğine tailnet politikanız karar verir. Genel bir uygulama uç noktasını yalnızca bir konuk bağlantısı oluşturduğunuzda veya Funnel üzerinden açıkça yayımladığınızda açar.
+- **Hepsini tek yerden görün.** `tslink status --urls` bu bilgisayarda kayıtlı uygulamaları listeler; isteğe bağlı özel ana sayfa da bunların adreslerini ve sağlık durumunu gösterir. [Portal](portal.md)
 - **Bir şey bozulduğunda haberiniz olsun.** Arka plandaki sağlık kontrolleri, bir uygulama çöktüğünde veya geri geldiğinde ya da Tailscale oturumunun süresi dolmak üzereyken sizi bir komut veya webhook ile uyarabilir. Erişim geçmişi, reddedilen istekler dahil, kimin hangi uygulamayı ne zaman açtığını gösterir. [Sağlık ve uyarılar](health-and-alerts.md) · [Erişim geçmişi](access-log.md)
-- **Yaygın uygulamalar kullanıma hazır.** Tarifler; Home Assistant, Jellyfin, Immich ve Ollama dahil, kendi barındırdığınız 15 uygulamayı kapsar. `tslink apps detect` ise zaten çalışan uygulamaları bulur. Fotoğraf ve video uygulamaları, büyük dosyalara uygun [yükleme sınırları](sharing.md) alır. [Uygulama tarifleri](apps.md) · [Yerel yapay zekâ](local-ai.md)
+- **Uygulama tarifleri.** Tarifler; Home Assistant, Jellyfin, Immich ve Ollama dahil, kendi barındırdığınız 15 uygulamayı kapsar. `tslink apps detect` ise yerelde zaten dinlemekte olan desteklenen uygulamaları bulabilir. Büyük fotoğraf ve video yüklemeleri için [uygulamaya özel yükleme sınırlarını yükseltin](sharing.md). [Uygulama tarifleri](apps.md) · [Yerel yapay zekâ](local-ai.md)
 
 ### Ajanlarınız onlarla çalışsın
 
-Bir ajanın başlattığı geliştirme sunucusu, önizleme veya yerel model API'si `localhost` üzerinde kalır; telefonunuz ve diğer bilgisayarlarınız onu açamaz. TSLink, ajanın bunu sizin belirlediğiniz sınırlar içinde özel olarak yayımlamasını, size tam adresi söylemesini ve sonra yeniden kaldırmasını sağlar.
+Bir ajan `localhost` üzerinde bir geliştirme sunucusu, önizleme veya yerel model API'si başlattığında, telefonunuz ve diğer bilgisayarlarınız o adrese ulaşamaz. TSLink, ajanın sizin belirlediğiniz sınırlar içinde buna özel bir adres vermesini, size tam URL'yi söylemesini ve sonra kaydını yeniden kaldırmasını sağlar.
 
-- **Paylaş, kontrol et, geri al.** `share`, kaydettiği adı ve ya tam URL'yi ya da sizin açmanız gereken bir oturum açma bağlantısını döndürür. `url --wait` ve `status` uygulamanın ne zaman yayında olduğunu bildirir, `remove` (MCP'de `unshare`) onu kaldırır. [Ajan kılavuzu](agent-quickstart.md)
-- **Otomasyon için tasarlandı.** Komutlar `--json` alır ve kararlı hata kodlarıyla sürümlü bir sonuç döndürür. `tslink mcp` aynı işlemleri yerel bir MCP istemcisine, `tslink serve --mcp` ise tailnet üzerinden diğer cihazlarınızdaki ajanlara sunar. [JSON otomasyonu](json-automation.md) · [Uzak MCP](remote-mcp.md)
-- **Sınırlı yetki.** Kendi çalıştırdığınız bir ajan sahip olarak hareket eder. Diğer ajanlara yalnızca belirttiğiniz uygulamaları kapsayan ve verdikleri erişimin en fazla ne kadar sürebileceğini sınırlayan daraltılmış bir rol (`viewer`, `app-operator` veya `people-manager`) verin. MCP üzerinden yapılan değişiklikler kaydedilir ve `tslink mcp-audit` bunları gösterir. Roller TSLink'in araçlarını sınırlar; ajanın kendi kabuğunu veya dosyalarını sınırlamaz. [MCP yetkileri](mcp-scopes.md)
+- **Paylaş, kontrol et, geri al.** `share --json`, kaydettiği adı ve ya tam URL'yi ya da sizin açmanız gereken bir oturum açma bağlantısını döndürür. `url <name> --wait` ve `status --urls --name <name>` uç noktanın hazır olup olmadığını bildirir, `remove <name>` (MCP'de `unshare`) paylaşımı kaldırır. [Ajan kılavuzu](agent-quickstart.md)
+- **Otomasyon için tasarlandı.** `tslink mcp` dışındaki yönetim komutları `--json` alır ve kararlı hata kodlarıyla sürümlü sonuçlar döndürür. `tslink mcp`, uygulama ve erişim araçlarını JSON-RPC üzerinden yerel bir MCP istemcisine sunar. Çağıran bağlamaları yapılandırıldığında `tslink serve --mcp`, bu araçları tailnet üzerinden diğer cihazlarınızdaki MCP istemcilerine sunar. [JSON otomasyonu](json-automation.md) · [Uzak MCP](remote-mcp.md)
+- **Sınırlı yetki.** Yerel bir ajan varsayılan olarak sahip yetkisiyle çalışır. Bir ajana yalnızca belirttiğiniz uygulamaları kapsayan ve verdiği erişimin en fazla ne kadar sürebileceğini sınırlayan daraltılmış bir rol (`viewer`, `app-operator` veya `people-manager`) verin. MCP üzerinden yapılan değişiklikler kaydedilir ve `tslink mcp-audit` bunları gösterir. Roller TSLink'in araçlarını sınırlar; ajanın kendi kabuğunu veya dosyalarını sınırlamaz. [MCP yetkileri](mcp-scopes.md)
 
 ### Seçtiğiniz kişilerle paylaşın
 
@@ -45,8 +45,8 @@ Bir ajanın başlattığı geliştirme sunucusu, önizleme veya yerel model API'
 ### Bir web uygulamasını bir süreliğine internete açın
 
 - **Konuk bağlantıları.** `tslink guest create photos --for 3d --public --print-link`, tek bir web uygulamasına isteğe bağlı PIN'li, ayrı olarak iptal edebileceğiniz bir tarayıcı bağlantısı oluşturur. Konukların Tailscale hesabına ihtiyacı yoktur. Bağlantıya sahip olan herkes onu kullanabilir, bu yüzden kimin ziyaret ettiğini kanıtlamaz. [Konuk bağlantıları](guest-links.md)
-- **Açık bir genel URL.** `tslink add preview --proxy localhost:3000 --funnel --public`, bir web uygulamasını URL'sini bilen herkese yayımlar. `--funnel-ttl` ile başka bir süre belirlemezseniz 24 saat sonra sona erer. [Funnel](funnel.md)
-- İkisi de Tailscale Funnel üzerinden çalışır, her zaman sona erer (sınırı yükseltmediğiniz sürece 1 saat ile 7 gün arası) ve yalnızca web uygulamalarında kullanılabilir. Klasörler, dosyalar ve TCP hizmetleri özel kalır.
+- **Açık bir genel URL.** `tslink add preview --proxy localhost:3000 --funnel --public`, bir web uygulamasını URL'sini bilen herkese yayımlar. Yeni bir yayın varsayılan olarak 24 saat sürer; başka bir süre seçmek için `--funnel-ttl` kullanın. [Funnel](funnel.md)
+- Yeni konuk bağlantıları ve yeni açık genel yayınlar Tailscale Funnel kullanır ve süreleri sınırlıdır (en az 1 saat, varsayılan en fazla 7 gün, sahip tarafından değiştirilebilir). Bu genel yollar HTTP proxy uygulamalarını destekler; doğrudan sunulan klasör ve dosya hizmetleri ile ham TCP özel kalır.
 
 Yukarıdakilerin hepsi v0.1.0 ile birlikte gelir.
 
@@ -59,12 +59,12 @@ TSLink, Tailscale üzerine kuruludur. Bağımsız bir projedir; Tailscale taraf�
 | Kim | Neye ihtiyaç duyar |
 |---|---|
 | Siz | [MagicDNS ve HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) açık bir Tailscale hesabı. Ücretsiz Personal planı ticari olmayan kullanım içindir. |
-| Uygulamalarınızı çalıştıran bilgisayar veya sunucu | Yalnızca TSLink. Tailscale'i içerir, ayrıca kurulum gerekmez. Her yeni uygulama tarayıcıda oturum açmanızı, tailnet'iniz gerektiriyorsa da cihaz onayı ister. |
+| Uygulamalarınızı çalıştıran bilgisayar veya sunucu | Yalnızca TSLink. Tailscale yerleşik olarak gelir, ayrıca Tailscale kurmanız gerekmez. Varsayılan kurulumda her yeni uygulama düğümü tarayıcıda oturum açmayı gerektirir ve cihaz onayı da gerekebilir. [Kayıtlı kimlik bilgileri](credentials-and-tags.md), her uygulama için tarayıcıda oturum açmadan kayıt yapmayı sağlar. |
 | Diğer cihazlarınız | Tailnet'inizde oturum açmış Tailscale uygulaması. |
 | Seçtiğiniz kişiler | Tailscale uygulaması ve kendi hesapları. Ya tailnet'inize katılırlar, bu da planınıza bir kullanıcı ekler, ya da her uygulama için bir cihaz davetiyesini kabul ederler. Tailnet politikanız erişimlerine izin vermelidir. |
 | Konuklar ve genel ziyaretçiler | Bir tarayıcı. Tailnet'iniz Funnel'a izin vermelidir; Tailscale bu özelliği hâlâ beta olarak sunar. |
 
-HTTPS'i açmak, tailnet adınızı ve her uygulamanın adı dahil cihaz adlarınızı herkese açık bir sertifika günlüğünde yayımlar; bu yüzden başkalarının görmesinde sakınca görmediğiniz uygulama adları seçin.
+Bir uygulama için HTTPS sertifikası verildiğinde, uygulamanın Tailscale cihaz adı ve tailnet DNS adınız herkese açık bir sertifika günlüğünde görünür. Başkalarının görmesinde sakınca görmediğiniz uygulama adları seçin.
 
 <a id="installation"></a>
 <a id="quickstart"></a>

@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Dê a cada app do seu computador ou servidor um endereço privado próprio na sua rede Tailscale, e decida quem pode acessá-lo.</strong></p>
 
-Abra seus apps web, pastas, APIs de modelos e bancos de dados no seu próprio celular e notebook, com verificação de saúde e histórico de acesso para cada um. Seus agentes de IA também podem publicá-los e verificá-los, dentro do papel que você der a eles. Quando outra pessoa precisar entrar, conceda acesso a uma pessoa específica até uma data ou abra um app web para a internet por tempo limitado.
+Abra seus apps web, pastas, APIs de modelos e bancos de dados no seu próprio celular e notebook, com verificação de saúde e histórico de acesso para cada um. Seus agentes de IA podem dar aos apps que iniciam em localhost um endereço privado para seus outros dispositivos e verificá-los, dentro do papel que você der a eles. Quando outra pessoa precisar entrar, conceda acesso a uma pessoa específica até uma data ou abra um app web para a internet por tempo limitado.
 
 **Requer Tailscale.** Você precisa de uma conta Tailscale (gratuita para uso pessoal), e cada dispositivo que abre um app privado precisa do app Tailscale; convidados e visitantes públicos só precisam de um navegador. O TSLink é um projeto independente, não criado nem endossado pela Tailscale. [Requisitos](#requirements)
 
@@ -23,18 +23,18 @@ Abra seus apps web, pastas, APIs de modelos e bancos de dados no seu próprio ce
 ### Acesse seus próprios apps
 
 - **Um endereço para cada app.** `tslink share 3000`, `tslink share ./photos` ou `tslink add db --tcp localhost:5432` dá a um app web, pasta, arquivo ou serviço TCP um endereço privado próprio no seu tailnet (sua rede Tailscale privada), como `https://photos.<tailnet>.ts.net`. Cada app é um dispositivo Tailscale separado, então você abre os apps pelo nome em vez de por endereço IP e porta.
-- **Privado, a menos que você escolha outra coisa.** Os apps ficam dentro do seu tailnet, e a política dele decide quais dispositivos se conectam. Nada chega à internet até que você crie um link de convidado ou publique um app.
-- **Tudo em um só lugar.** `tslink status --urls` lista todos os apps deste computador, e uma página inicial privada opcional mostra o endereço e a saúde de cada um. [Portal](portal.md)
+- **Privado, a menos que você escolha outra coisa.** O TSLink mantém o acesso aos apps privado por padrão, e a política do seu tailnet decide quais dispositivos podem se conectar. Ele só abre um endpoint público de app quando você cria um link de convidado ou publica explicitamente pelo Funnel.
+- **Tudo em um só lugar.** `tslink status --urls` lista os apps registrados neste computador, e uma página inicial privada opcional mostra os endereços e a saúde deles. [Portal](portal.md)
 - **Saiba quando algo quebra.** Verificações de saúde em segundo plano podem avisar você por um comando ou webhook quando um app cai ou volta, ou quando o login do Tailscale dele está para expirar. O histórico de acesso mostra quem abriu qual app e quando, incluindo pedidos negados. [Saúde e alertas](health-and-alerts.md) · [Histórico de acesso](access-log.md)
-- **Apps comuns prontos para usar.** Há receitas para 15 apps auto-hospedados, incluindo Home Assistant, Jellyfin, Immich e Ollama, e `tslink apps detect` encontra apps que já estão rodando. Apps de fotos e vídeos recebem [limites de upload](sharing.md) adequados a arquivos grandes. [Receitas de apps](apps.md) · [IA local](local-ai.md)
+- **Receitas de apps.** Há receitas para 15 apps auto-hospedados, incluindo Home Assistant, Jellyfin, Immich e Ollama, e `tslink apps detect` pode encontrar apps compatíveis que já estão escutando localmente. Para uploads grandes de fotos e vídeos, [aumente os limites de upload de cada app](sharing.md). [Receitas de apps](apps.md) · [IA local](local-ai.md)
 
 ### Deixe seus agentes trabalharem com eles
 
-Um agente que inicia um servidor de desenvolvimento, uma prévia ou uma API de modelo local a deixa em `localhost`, onde seu celular e seus outros computadores não conseguem abri-la. O TSLink deixa o agente publicá-la de forma privada, informar o endereço exato e tirá-la do ar depois, dentro dos limites que você definir.
+Quando um agente inicia um servidor de desenvolvimento, uma prévia ou uma API de modelo local em `localhost`, seu celular e seus outros computadores não conseguem alcançar esse endereço. O TSLink deixa o agente dar a ele um endereço privado, informar a URL exata e remover o registro depois, dentro dos limites que você definir.
 
-- **Compartilhar, verificar, desfazer.** `share` retorna o nome registrado e também a URL exata ou um link de login para você abrir. `url --wait` e `status` informam quando o app está no ar, e `remove` (`unshare` no MCP) o tira do ar. [Guia de agentes](agent-quickstart.md)
-- **Feito para automação.** Os comandos aceitam `--json` e retornam um resultado versionado com códigos de erro estáveis. `tslink mcp` oferece as mesmas operações a um cliente MCP local, e `tslink serve --mcp` a agentes nos seus outros dispositivos pelo tailnet. [Automação JSON](json-automation.md) · [MCP remoto](remote-mcp.md)
-- **Autoridade limitada.** Um agente que você mesmo executa age como proprietário. Dê a outros agentes um papel reduzido (`viewer`, `app-operator` ou `people-manager`) que cobre só os apps que você indicar e limita por quanto tempo qualquer acesso concedido por ele pode durar. Mudanças feitas pelo MCP são registradas, e `tslink mcp-audit` as mostra. Papéis limitam as ferramentas do TSLink, não o shell nem os arquivos do próprio agente. [Permissões MCP](mcp-scopes.md)
+- **Compartilhar, verificar, desfazer.** `share --json` retorna o nome registrado e também a URL exata ou um link de login para você abrir. `url <name> --wait` e `status --urls --name <name>` informam se o endpoint está pronto, e `remove <name>` (`unshare` no MCP) remove o compartilhamento. [Guia de agentes](agent-quickstart.md)
+- **Feito para automação.** Os comandos de gerenciamento, exceto `tslink mcp`, aceitam `--json` e retornam resultados versionados com códigos de erro estáveis. `tslink mcp` expõe ferramentas de apps e de acesso a um cliente MCP local via JSON-RPC. Com os vínculos de chamadores configurados, `tslink serve --mcp` expõe essas ferramentas a clientes MCP nos seus outros dispositivos pelo tailnet. [Automação JSON](json-automation.md) · [MCP remoto](remote-mcp.md)
+- **Autoridade limitada.** Um agente local tem autoridade de proprietário por padrão. Dê a um agente um papel reduzido (`viewer`, `app-operator` ou `people-manager`) que cobre só os apps que você indicar e limita por quanto tempo qualquer acesso concedido por ele pode durar. Mudanças feitas pelo MCP são registradas, e `tslink mcp-audit` as mostra. Papéis limitam as ferramentas do TSLink, não o shell nem os arquivos do próprio agente. [Permissões MCP](mcp-scopes.md)
 
 ### Compartilhe com quem você escolher
 
@@ -45,8 +45,8 @@ Um agente que inicia um servidor de desenvolvimento, uma prévia ou uma API de m
 ### Abra um app web para a internet, por um tempo
 
 - **Links de convidado.** `tslink guest create photos --for 3d --public --print-link` cria um link de navegador para um app web, com PIN opcional, que você pode revogar separadamente. Convidados não precisam de conta Tailscale. Qualquer pessoa com o link pode usá-lo, então ele não comprova quem visitou. [Convidados](guest-links.md)
-- **Uma URL pública aberta.** `tslink add preview --proxy localhost:3000 --funnel --public` publica um app web para qualquer pessoa que tenha a URL. Ela expira em 24 horas, a menos que você defina outra duração com `--funnel-ttl`. [Funnel](funnel.md)
-- Os dois passam pelo Tailscale Funnel, sempre expiram (de 1 hora a 7 dias, a menos que você aumente o limite) e funcionam só para apps web. Pastas, arquivos e serviços TCP continuam privados.
+- **Uma URL pública aberta.** `tslink add preview --proxy localhost:3000 --funnel --public` publica um app web para qualquer pessoa que tenha a URL. Uma nova publicação dura 24 horas por padrão; use `--funnel-ttl` para escolher outra duração. [Funnel](funnel.md)
+- Novos links de convidado e novas publicações públicas abertas usam o Tailscale Funnel e têm duração limitada (mínimo de 1 hora, máximo padrão de 7 dias, configurável pelo proprietário). Esses caminhos públicos aceitam apps com proxy HTTP; serviços diretos de pastas ou arquivos e TCP puro continuam privados.
 
 Tudo isso faz parte da v0.1.0.
 
@@ -59,12 +59,12 @@ O TSLink é construído sobre o Tailscale. É um projeto independente, não cria
 | Quem | O que precisa |
 |---|---|
 | Você | Uma conta Tailscale com [MagicDNS e HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) ativados. O plano Personal gratuito é para uso não comercial. |
-| O computador ou servidor que roda seus apps | Só o TSLink. Ele já inclui o Tailscale, sem instalação separada. Cada app novo pede um login no navegador e, se o seu tailnet exigir, a aprovação do dispositivo. |
+| O computador ou servidor que roda seus apps | Só o TSLink. Ele já embute o Tailscale, então não é preciso instalar o Tailscale à parte. Na configuração padrão, cada novo nó de app precisa de login no navegador e pode precisar de aprovação do dispositivo. [Credenciais armazenadas](credentials-and-tags.md) permitem o registro sem login no navegador para cada app. |
 | Seus outros dispositivos | O app Tailscale, conectado ao seu tailnet. |
 | Pessoas que você escolher | O app Tailscale e o próprio login. Elas entram no seu tailnet, o que adiciona um usuário ao seu plano, ou aceitam um convite de dispositivo para cada app. A política do seu tailnet precisa permitir o acesso delas. |
 | Convidados e visitantes públicos | Um navegador. Seu tailnet precisa permitir o Funnel, que a Tailscale ainda considera beta. |
 
-Ativar o HTTPS publica o nome do seu tailnet e os nomes dos seus dispositivos, incluindo o de cada app, em um log público de certificados, então escolha nomes de app que você não se importe que outros vejam.
+Quando um certificado HTTPS é emitido para um app, o nome de dispositivo dele no Tailscale e o nome DNS do seu tailnet aparecem em um log público de certificados. Escolha nomes de app que você não se importe que outros vejam.
 
 <a id="installation"></a>
 <a id="quickstart"></a>

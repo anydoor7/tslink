@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Cấp cho mỗi ứng dụng trên máy tính hoặc máy chủ của bạn một địa chỉ riêng trong mạng Tailscale của bạn, và tự quyết định ai được truy cập.</strong></p>
 
-Mở ứng dụng web, thư mục, API mô hình và cơ sở dữ liệu từ chính điện thoại và laptop của bạn, kèm kiểm tra tình trạng và lịch sử truy cập cho từng ứng dụng. Tác tử AI của bạn cũng có thể công bố và kiểm tra chúng, trong phạm vi vai trò bạn giao. Khi người khác cần vào, hãy cấp quyền cho một người cụ thể đến một ngày nhất định, hoặc mở một ứng dụng web ra internet công khai trong thời gian giới hạn.
+Mở ứng dụng web, thư mục, API mô hình và cơ sở dữ liệu từ chính điện thoại và laptop của bạn, kèm kiểm tra tình trạng và lịch sử truy cập cho từng ứng dụng. Tác tử AI của bạn có thể gán cho các ứng dụng mà chúng khởi động trên localhost một địa chỉ riêng tư để các thiết bị khác của bạn mở được, và kiểm tra các ứng dụng đó, trong phạm vi vai trò bạn giao. Khi người khác cần vào, hãy cấp quyền cho một người cụ thể đến một ngày nhất định, hoặc mở một ứng dụng web ra internet công khai trong thời gian giới hạn.
 
 **Cần Tailscale.** Bạn cần một tài khoản Tailscale (miễn phí cho cá nhân), và mỗi thiết bị mở ứng dụng riêng tư cần có ứng dụng Tailscale; khách và người truy cập công khai chỉ cần trình duyệt. TSLink là dự án độc lập, không do Tailscale làm ra hay xác nhận. [Yêu cầu](#requirements)
 
@@ -23,18 +23,18 @@ Mở ứng dụng web, thư mục, API mô hình và cơ sở dữ liệu từ c
 ### Truy cập ứng dụng của chính bạn
 
 - **Mỗi ứng dụng một địa chỉ.** `tslink share 3000`, `tslink share ./photos` hoặc `tslink add db --tcp localhost:5432` cấp cho một ứng dụng web, thư mục, tệp hoặc dịch vụ TCP một địa chỉ riêng tư trong tailnet của bạn (mạng Tailscale riêng của bạn), ví dụ `https://photos.<tailnet>.ts.net`. Mỗi ứng dụng là một thiết bị Tailscale riêng, nên bạn mở ứng dụng bằng tên thay vì địa chỉ IP và số cổng.
-- **Riêng tư trừ khi bạn chọn khác.** Ứng dụng ở trong tailnet của bạn, và chính sách của tailnet quyết định thiết bị nào được kết nối. Không có gì ra internet công khai cho đến khi bạn tạo liên kết khách hoặc công bố một ứng dụng.
-- **Xem tất cả ở một nơi.** `tslink status --urls` liệt kê mọi ứng dụng trên máy này, và một trang chủ riêng tư tùy chọn hiển thị địa chỉ và tình trạng của từng ứng dụng. [Cổng](portal.md)
+- **Riêng tư trừ khi bạn chọn khác.** TSLink mặc định giữ quyền truy cập ứng dụng ở chế độ riêng tư, và chính sách tailnet của bạn quyết định thiết bị nào được kết nối. TSLink chỉ mở một điểm truy cập công khai cho ứng dụng khi bạn tạo liên kết khách hoặc chủ động công bố qua Funnel.
+- **Xem tất cả ở một nơi.** `tslink status --urls` liệt kê các ứng dụng đã đăng ký trên máy này, và một trang chủ riêng tư tùy chọn hiển thị địa chỉ và tình trạng của chúng. [Cổng](portal.md)
 - **Biết ngay khi có sự cố.** Kiểm tra tình trạng chạy nền có thể báo cho bạn qua một lệnh hoặc webhook khi ứng dụng ngừng hoạt động hay chạy lại, hoặc khi phiên đăng nhập Tailscale của nó sắp hết hạn. Lịch sử truy cập cho thấy ai đã mở ứng dụng nào và khi nào, kể cả các yêu cầu bị từ chối. [Tình trạng và cảnh báo](health-and-alerts.md) · [Lịch sử truy cập](access-log.md)
-- **Ứng dụng phổ biến dùng được ngay.** Có công thức cho 15 ứng dụng tự lưu trữ, gồm Home Assistant, Jellyfin, Immich và Ollama, và `tslink apps detect` tìm các ứng dụng đang chạy sẵn. Ứng dụng ảnh và video có [giới hạn tải lên](sharing.md) phù hợp với tệp lớn. [Công thức cấu hình](apps.md) · [AI cục bộ](local-ai.md)
+- **Công thức ứng dụng.** Có công thức cho 15 ứng dụng tự lưu trữ, gồm Home Assistant, Jellyfin, Immich và Ollama, và `tslink apps detect` có thể tìm các ứng dụng được hỗ trợ đang lắng nghe sẵn trên máy. Để tải lên ảnh và video lớn, hãy [nâng giới hạn tải lên của từng ứng dụng](sharing.md). [Công thức cấu hình](apps.md) · [AI cục bộ](local-ai.md)
 
 ### Để tác tử làm việc với chúng
 
-Tác tử khởi động máy chủ phát triển, bản xem trước hay API mô hình cục bộ sẽ để nó trên `localhost`, nơi điện thoại và các máy tính khác của bạn không mở được. TSLink cho phép tác tử công bố nó ở chế độ riêng tư, báo cho bạn địa chỉ chính xác và gỡ xuống sau đó, trong giới hạn bạn đặt ra.
+Khi tác tử khởi động máy chủ phát triển, bản xem trước hay API mô hình cục bộ trên `localhost`, điện thoại và các máy tính khác của bạn không truy cập được địa chỉ đó. TSLink cho phép tác tử gán cho nó một địa chỉ riêng tư, báo cho bạn URL chính xác và gỡ đăng ký sau đó, trong giới hạn bạn đặt ra.
 
-- **Chia sẻ, kiểm tra, hoàn tác.** `share` trả về tên đã đăng ký, kèm URL chính xác hoặc một liên kết đăng nhập để bạn mở. `url --wait` và `status` báo khi ứng dụng đã hoạt động, còn `remove` (trong MCP là `unshare`) gỡ nó xuống. [Hướng dẫn tác tử](agent-quickstart.md)
-- **Làm ra cho tự động hóa.** Các lệnh nhận `--json` và trả về kết quả có phiên bản cùng mã lỗi ổn định. `tslink mcp` cung cấp cùng các thao tác cho một ứng dụng khách MCP cục bộ, còn `tslink serve --mcp` cung cấp cho tác tử trên các thiết bị khác của bạn qua tailnet. [Tự động hóa JSON](json-automation.md) · [MCP từ xa](remote-mcp.md)
-- **Quyền hạn có giới hạn.** Tác tử do chính bạn chạy hoạt động với tư cách chủ sở hữu. Hãy giao cho các tác tử khác một vai trò thu hẹp (`viewer`, `app-operator` hoặc `people-manager`), chỉ áp dụng cho những ứng dụng bạn chỉ định và giới hạn thời hạn tối đa của mọi quyền mà tác tử cấp. Các thay đổi thực hiện qua MCP đều được ghi lại, và `tslink mcp-audit` hiển thị chúng. Vai trò chỉ giới hạn công cụ của TSLink, không giới hạn shell hay tệp của chính tác tử. [Quyền MCP](mcp-scopes.md)
+- **Chia sẻ, kiểm tra, hoàn tác.** `share --json` trả về tên đã đăng ký, kèm URL chính xác hoặc một liên kết đăng nhập để bạn mở. `url <name> --wait` và `status --urls --name <name>` báo điểm truy cập đã sẵn sàng hay chưa, còn `remove <name>` (trong MCP là `unshare`) gỡ bỏ lượt chia sẻ. [Hướng dẫn tác tử](agent-quickstart.md)
+- **Làm ra cho tự động hóa.** Các lệnh quản lý, trừ `tslink mcp`, nhận `--json` và trả về kết quả có phiên bản cùng mã lỗi ổn định. `tslink mcp` cung cấp các công cụ về ứng dụng và quyền truy cập cho một ứng dụng khách MCP cục bộ qua JSON-RPC. Khi đã cấu hình liên kết bên gọi, `tslink serve --mcp` cung cấp các công cụ đó cho ứng dụng khách MCP trên các thiết bị khác của bạn qua tailnet. [Tự động hóa JSON](json-automation.md) · [MCP từ xa](remote-mcp.md)
+- **Quyền hạn có giới hạn.** Tác tử cục bộ mặc định có quyền của chủ sở hữu. Hãy giao cho tác tử một vai trò thu hẹp (`viewer`, `app-operator` hoặc `people-manager`), chỉ áp dụng cho những ứng dụng bạn chỉ định và giới hạn thời hạn tối đa của mọi quyền mà tác tử cấp. Các thay đổi thực hiện qua MCP đều được ghi lại, và `tslink mcp-audit` hiển thị chúng. Vai trò chỉ giới hạn công cụ của TSLink, không giới hạn shell hay tệp của chính tác tử. [Quyền MCP](mcp-scopes.md)
 
 ### Chia sẻ với người bạn chọn
 
@@ -45,8 +45,8 @@ Tác tử khởi động máy chủ phát triển, bản xem trước hay API m�
 ### Mở ứng dụng web ra internet trong một thời gian
 
 - **Liên kết khách.** `tslink guest create photos --for 3d --public --print-link` tạo một liên kết trình duyệt tới một ứng dụng web, có thể kèm PIN, và bạn có thể thu hồi riêng từng liên kết. Khách không cần tài khoản Tailscale. Ai có liên kết cũng dùng được, nên nó không chứng minh được ai đã truy cập. [Liên kết khách](guest-links.md)
-- **URL công khai mở.** `tslink add preview --proxy localhost:3000 --funnel --public` công bố một ứng dụng web cho bất kỳ ai có URL. URL hết hạn sau 24 giờ, trừ khi bạn đặt thời hạn khác bằng `--funnel-ttl`. [Funnel](funnel.md)
-- Cả hai đều chạy qua Tailscale Funnel, luôn hết hạn (từ 1 giờ đến 7 ngày, trừ khi bạn nâng giới hạn) và chỉ dùng được cho ứng dụng web. Thư mục, tệp và dịch vụ TCP vẫn giữ riêng tư.
+- **URL công khai mở.** `tslink add preview --proxy localhost:3000 --funnel --public` công bố một ứng dụng web cho bất kỳ ai có URL. Một lần công bố mới mặc định kéo dài 24 giờ; dùng `--funnel-ttl` để chọn thời hạn khác. [Funnel](funnel.md)
+- Liên kết khách mới và các lượt công bố công khai mới đều dùng Tailscale Funnel và có thời hạn hữu hạn (tối thiểu 1 giờ, tối đa mặc định 7 ngày, chủ sở hữu có thể thay đổi). Các đường công khai này hỗ trợ ứng dụng proxy HTTP; dịch vụ thư mục hay tệp phục vụ trực tiếp và TCP thô vẫn giữ riêng tư.
 
 Mọi thứ ở trên đều có trong v0.1.0.
 
@@ -59,12 +59,12 @@ TSLink được xây dựng trên Tailscale. Đây là dự án độc lập, kh
 | Ai | Cần gì |
 |---|---|
 | Bạn | Một tài khoản Tailscale đã bật [MagicDNS và HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Gói Personal miễn phí dành cho mục đích phi thương mại. |
-| Máy tính hoặc máy chủ chạy ứng dụng của bạn | Chỉ cần TSLink. TSLink đã có sẵn Tailscale nên không phải cài riêng. Mỗi ứng dụng mới sẽ yêu cầu đăng nhập qua trình duyệt, và phê duyệt thiết bị nếu tailnet của bạn bắt buộc. |
+| Máy tính hoặc máy chủ chạy ứng dụng của bạn | Chỉ cần TSLink. TSLink đã tích hợp sẵn Tailscale nên không phải cài Tailscale riêng. Với thiết lập mặc định, mỗi nút ứng dụng mới cần đăng nhập qua trình duyệt và có thể cần phê duyệt thiết bị. [Thông tin xác thực đã lưu](credentials-and-tags.md) cho phép đăng ký mà không phải đăng nhập qua trình duyệt cho từng ứng dụng. |
 | Các thiết bị khác của bạn | Ứng dụng Tailscale, đã đăng nhập vào tailnet của bạn. |
 | Người bạn chọn | Ứng dụng Tailscale và tài khoản đăng nhập của chính họ. Họ hoặc tham gia tailnet của bạn, tức là thêm một người dùng vào gói của bạn, hoặc chấp nhận lời mời thiết bị cho từng ứng dụng. Chính sách tailnet của bạn phải cho phép họ truy cập. |
 | Khách và người truy cập công khai | Một trình duyệt. Tailnet của bạn phải cho phép Funnel, tính năng mà Tailscale vẫn xếp vào bản beta. |
 
-Bật HTTPS sẽ công bố tên tailnet và tên thiết bị của bạn, kể cả tên của từng ứng dụng, trong một nhật ký chứng chỉ công khai, vì vậy hãy chọn tên ứng dụng mà bạn không ngại người khác nhìn thấy.
+Khi chứng chỉ HTTPS được cấp cho một ứng dụng, tên thiết bị Tailscale của ứng dụng đó và tên DNS tailnet của bạn sẽ xuất hiện trong một nhật ký chứng chỉ công khai. Hãy chọn tên ứng dụng mà bạn không ngại người khác nhìn thấy.
 
 <a id="installation"></a>
 <a id="quickstart"></a>
