@@ -24,28 +24,15 @@ import (
 	"time"
 )
 
-const releaseCandidateAggregateContext = "Release candidate gate"
-
-var mandatoryReleaseCandidateLeafContexts = []string{
-	"Native build/vet/test/race (ubuntu-latest)",
-	"Native build/vet/test/race (macos-latest)",
-	"Native build/vet/test/race (windows-latest)",
-	"Compiled-binary machine contracts (ubuntu-latest)",
-	"Compiled-binary machine contracts (macos-latest)",
-	"Compiled-binary machine contracts (windows-latest)",
-	"Staticcheck",
-	"govulncheck (main module)",
-	"govulncheck (repo)",
-	"gofmt + tidy-diff (read-only source proof)",
-	"Cross build (darwin/amd64)",
-	"Cross build (darwin/arm64)",
-	"Cross build (linux/amd64)",
-	"Cross build (linux/arm64)",
-	"Cross build (windows/amd64)",
-	"Cross build (windows/arm64)",
-	"Artifact download + hash + content verify",
-	"GoReleaser config + license/notice presence",
-}
+// releaseCandidateAggregateContext is the status-check context that the
+// always-running aggregate job emits on pull requests and main. GitHub names a
+// job of a called reusable workflow "<caller job name> / <called job name>":
+// the ci.yml `candidate` job is named "Release candidate gate" and the
+// release-candidate.yml aggregate job is named "gate". The caller name alone is
+// never reported as a check, and the per-target leaf jobs were consolidated, so
+// this aggregate is the only context that proves the whole gate ran.
+// TestAggregateContextMatchesWorkflows derives it from the workflow files.
+const releaseCandidateAggregateContext = "Release candidate gate / gate"
 
 // Status is the classification of one control.
 type Status string
@@ -200,9 +187,18 @@ func checkBranchProtection(f Fetcher, repo string) Result {
 	if p.RequiredPullRequestReviews == nil {
 		return Result{"branch-protection:main", NotReady, "no required pull-request reviews"}
 	}
-	contexts := append([]string(nil), p.RequiredStatusChecks.Contexts...)
+	// GitHub reports each required check in both lists.
+	var contexts []string
+	seen := map[string]bool{}
+	for _, context := range p.RequiredStatusChecks.Contexts {
+		if context != "" && !seen[context] {
+			seen[context] = true
+			contexts = append(contexts, context)
+		}
+	}
 	for _, check := range p.RequiredStatusChecks.Checks {
-		if check.Context != "" {
+		if check.Context != "" && !seen[check.Context] {
+			seen[check.Context] = true
 			contexts = append(contexts, check.Context)
 		}
 	}
@@ -216,19 +212,12 @@ func checkBranchProtection(f Fetcher, repo string) Result {
 }
 
 func hasReleaseCandidateContext(contexts []string) bool {
-	seen := make(map[string]struct{}, len(contexts))
 	for _, context := range contexts {
-		seen[context] = struct{}{}
 		if context == releaseCandidateAggregateContext {
 			return true
 		}
 	}
-	for _, required := range mandatoryReleaseCandidateLeafContexts {
-		if _, ok := seen[required]; !ok {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 func checkRulesets(f Fetcher, repo string) Result {
@@ -239,20 +228,39 @@ func checkRulesets(f Fetcher, repo string) Result {
 	if code/100 != 2 {
 		return Result{"rulesets", Unknown, fmt.Sprintf("unexpected HTTP %d", code)}
 	}
-	var rs []struct {
-		Name        string `json:"name"`
+	// The list endpoint returns summaries without `conditions`; the ref
+	// patterns are only in each ruleset's detail.
+	var summaries []struct {
+		ID          int64  `json:"id"`
 		Enforcement string `json:"enforcement"`
 		Target      string `json:"target"`
-		Conditions  struct {
-			RefName struct {
-				Include []string `json:"include"`
-			} `json:"ref_name"`
-		} `json:"conditions"`
 	}
-	_ = json.Unmarshal(body, &rs)
+	_ = json.Unmarshal(body, &summaries)
 	activeTagV := 0
-	for _, r := range rs {
-		if r.Enforcement == "active" && rulesetTargetsReleaseTags(r.Target, r.Conditions.RefName.Include) {
+	for _, summary := range summaries {
+		if summary.Enforcement != "active" || !rulesetTargetMayCoverTags(summary.Target) {
+			continue
+		}
+		code, body, err := f.Get(fmt.Sprintf("/repos/%s/rulesets/%d", repo, summary.ID))
+		if s, d, cont := unreadable(code, err); !cont {
+			return Result{"rulesets", s, d}
+		}
+		if code/100 != 2 {
+			return Result{"rulesets", Unknown, fmt.Sprintf("unexpected HTTP %d reading ruleset %d", code, summary.ID)}
+		}
+		var detail struct {
+			Enforcement string `json:"enforcement"`
+			Target      string `json:"target"`
+			Conditions  struct {
+				RefName struct {
+					Include []string `json:"include"`
+				} `json:"ref_name"`
+			} `json:"conditions"`
+		}
+		if err := json.Unmarshal(body, &detail); err != nil {
+			return Result{"rulesets", Unknown, fmt.Sprintf("could not parse ruleset %d: %v", summary.ID, err)}
+		}
+		if detail.Enforcement == "active" && rulesetTargetsReleaseTags(detail.Target, detail.Conditions.RefName.Include) {
 			activeTagV++
 		}
 	}
@@ -262,9 +270,13 @@ func checkRulesets(f Fetcher, repo string) Result {
 	return Result{"rulesets", Ready, fmt.Sprintf("%d active release-tag ruleset(s)", activeTagV)}
 }
 
-func rulesetTargetsReleaseTags(target string, includes []string) bool {
+func rulesetTargetMayCoverTags(target string) bool {
 	target = strings.ToLower(strings.TrimSpace(target))
-	if target != "" && target != "tag" {
+	return target == "" || target == "tag"
+}
+
+func rulesetTargetsReleaseTags(target string, includes []string) bool {
+	if !rulesetTargetMayCoverTags(target) {
 		return false
 	}
 	for _, include := range includes {

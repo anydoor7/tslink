@@ -1,8 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+
+	yaml "go.yaml.in/yaml/v2"
 )
 
 // fakeFetcher returns canned responses keyed by path.
@@ -79,9 +84,12 @@ func TestFullyConfiguredIsReady(t *testing.T) {
 		"/repos/o/r": {200, `{"visibility":"public","private":false,
 			"security_and_analysis":{"secret_scanning":{"status":"enabled"}}}`, nil},
 		"/repos/o/r/branches/main/protection": {200, `{
-			"required_status_checks":{"contexts":["Release candidate gate"]},
+			"required_status_checks":{"contexts":["Release candidate gate / gate"],
+				"checks":[{"context":"Release candidate gate / gate","app_id":15368}]},
 			"required_pull_request_reviews":{}}`, nil},
-		"/repos/o/r/rulesets":             {200, `[{"name":"tags","enforcement":"active","target":"tag","conditions":{"ref_name":{"include":["refs/tags/v*"]}}}]`, nil},
+		// Shapes as GitHub returns them: the list has no conditions.
+		"/repos/o/r/rulesets":             {200, `[{"id":7,"name":"tags","enforcement":"active","target":"tag","source_type":"Repository"}]`, nil},
+		"/repos/o/r/rulesets/7":           {200, `{"id":7,"name":"tags","enforcement":"active","target":"tag","conditions":{"ref_name":{"include":["refs/tags/v*"],"exclude":[]}},"rules":[{"type":"update"},{"type":"deletion"}]}`, nil},
 		"/repos/o/r/environments":         {200, `{"environments":[{"name":"release"}]}`, nil},
 		"/repos/o/r/environments/release": {200, `{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"login":"owner"}}]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}`, nil},
 		"/repos/o/r/vulnerability-alerts": {204, ``, nil},
@@ -110,52 +118,150 @@ func TestUnrelatedBranchContextIsNotReady(t *testing.T) {
 	}
 }
 
-func TestLoneReleaseCandidateLeafContextIsNotReady(t *testing.T) {
-	for _, leaf := range mandatoryReleaseCandidateLeafContexts {
-		f := fakeFetcher{resp: map[string]struct {
-			code int
-			body string
-			err  error
-		}{
-			"/repos/o/r/branches/main/protection": {200, `{
-				"required_status_checks":{"contexts":[` + quoteJSON(leaf) + `]},
-				"required_pull_request_reviews":{}}`, nil},
-		}}
-		if got := checkBranchProtection(f, "o/r").Status; got != NotReady {
-			t.Fatalf("lone release-candidate leaf %q = %s, want NOT_READY", leaf, got)
+// The context names below were required before the release-candidate jobs
+// were consolidated and the aggregate gate was added. None is emitted any
+// more, so none of them may count as the gate.
+var staleReleaseCandidateContexts = []string{
+	"Native build/vet/test/race (ubuntu-latest)",
+	"Native build/vet/test/race (macos-latest)",
+	"Native build/vet/test/race (windows-latest)",
+	"Compiled-binary machine contracts (ubuntu-latest)",
+	"Compiled-binary machine contracts (macos-latest)",
+	"Compiled-binary machine contracts (windows-latest)",
+	"Staticcheck",
+	"govulncheck (main module)",
+	"govulncheck (repo)",
+	"gofmt + tidy-diff (read-only source proof)",
+	"Cross build (darwin/amd64)",
+	"Cross build (darwin/arm64)",
+	"Cross build (linux/amd64)",
+	"Cross build (linux/arm64)",
+	"Cross build (windows/amd64)",
+	"Cross build (windows/arm64)",
+	"Artifact download + hash + content verify",
+	"GoReleaser config + license/notice presence",
+}
+
+func protectionWithContexts(contexts string) fakeFetcher {
+	return fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{
+		"/repos/o/r/branches/main/protection": {200, `{
+			"required_status_checks":` + contexts + `,
+			"required_pull_request_reviews":{}}`, nil},
+	}}
+}
+
+func TestStaleReleaseCandidateContextsAreNotReady(t *testing.T) {
+	for name, contexts := range map[string][]string{
+		"caller job name alone":            {"Release candidate gate"},
+		"pre-consolidation leaf set":       staleReleaseCandidateContexts,
+		"one pre-consolidation leaf":       staleReleaseCandidateContexts[:1],
+		"leaf set under the caller prefix": prefixed("Release candidate gate / ", staleReleaseCandidateContexts),
+		"aggregate job name alone":         {"gate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := protectionWithContexts(`{"contexts":` + jsonStringArray(contexts) + `}`)
+			if got := checkBranchProtection(f, "o/r").Status; got != NotReady {
+				t.Fatalf("required contexts %v = %s, want NOT_READY", contexts, got)
+			}
+		})
+	}
+}
+
+func TestEmittedAggregateContextIsReady(t *testing.T) {
+	for name, checks := range map[string]string{
+		"contexts list":    `{"contexts":["lint","Release candidate gate / gate"]}`,
+		"checks list only": `{"contexts":[],"checks":[{"context":"Release candidate gate / gate","app_id":15368}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := checkBranchProtection(protectionWithContexts(checks), "o/r")
+			if got.Status != Ready {
+				t.Fatalf("required status checks %s = %s, want READY", checks, got.Status)
+			}
+		})
+	}
+	t.Run("both lists name one check", func(t *testing.T) {
+		got := checkBranchProtection(protectionWithContexts(`{"contexts":["Release candidate gate / gate"],"checks":[{"context":"Release candidate gate / gate","app_id":15368}]}`), "o/r")
+		if got.Status != Ready || !strings.Contains(got.Detail, "among 1 required contexts") {
+			t.Fatalf("one check listed twice = %s (%s), want READY among 1 required contexts", got.Status, got.Detail)
 		}
+	})
+}
+
+func prefixed(prefix string, values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, prefix+value)
+	}
+	return out
+}
+
+// TestAggregateContextMatchesWorkflows ties the required context to the job
+// names GitHub combines into it, so renaming either job fails here instead of
+// silently making every repository look unprotected.
+func TestAggregateContextMatchesWorkflows(t *testing.T) {
+	type namedJobs struct {
+		Jobs map[string]struct {
+			Name string `yaml:"name"`
+			Uses string `yaml:"uses"`
+		} `yaml:"jobs"`
+	}
+	read := func(name string) namedJobs {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wf namedJobs
+		if err := yaml.Unmarshal(body, &wf); err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		return wf
+	}
+	gate, ok := read("release-candidate.yml").Jobs["gate"]
+	if !ok || gate.Name == "" {
+		t.Fatal("release-candidate.yml has no named aggregate `gate` job")
+	}
+	caller, ok := read("ci.yml").Jobs["candidate"]
+	if !ok || caller.Name == "" || caller.Uses != "./.github/workflows/release-candidate.yml" {
+		t.Fatalf("ci.yml candidate job = %+v, want a named call of release-candidate.yml", caller)
+	}
+	if want := caller.Name + " / " + gate.Name; releaseCandidateAggregateContext != want {
+		t.Fatalf("releaseCandidateAggregateContext = %q, but the workflows emit %q", releaseCandidateAggregateContext, want)
 	}
 }
 
-func TestPartialReleaseCandidateLeafSetIsNotReady(t *testing.T) {
-	partial := append([]string(nil), mandatoryReleaseCandidateLeafContexts...)
-	partial = partial[:len(partial)-1]
-	f := fakeFetcher{resp: map[string]struct {
-		code int
-		body string
-		err  error
+func TestRulesetConditionsComeFromDetail(t *testing.T) {
+	list := `[{"id":7,"name":"tags","enforcement":"active","target":"tag"},{"id":8,"name":"main","enforcement":"active","target":"branch"}]`
+	for _, tc := range []struct {
+		name       string
+		detailCode int
+		detailBody string
+		want       Status
 	}{
-		"/repos/o/r/branches/main/protection": {200, `{
-			"required_status_checks":{"contexts":` + jsonStringArray(partial) + `},
-			"required_pull_request_reviews":{}}`, nil},
-	}}
-	if got := checkBranchProtection(f, "o/r").Status; got != NotReady {
-		t.Fatalf("partial release-candidate leaf set = %s, want NOT_READY", got)
-	}
-}
-
-func TestCompleteReleaseCandidateLeafSetIsReady(t *testing.T) {
-	f := fakeFetcher{resp: map[string]struct {
-		code int
-		body string
-		err  error
-	}{
-		"/repos/o/r/branches/main/protection": {200, `{
-			"required_status_checks":{"contexts":` + jsonStringArray(mandatoryReleaseCandidateLeafContexts) + `},
-			"required_pull_request_reviews":{}}`, nil},
-	}}
-	if got := checkBranchProtection(f, "o/r").Status; got != Ready {
-		t.Fatalf("complete release-candidate leaf set = %s, want READY", got)
+		{"detail includes v tags", 200, `{"enforcement":"active","target":"tag","conditions":{"ref_name":{"include":["refs/tags/v*"]}}}`, Ready},
+		{"detail covers other tags", 200, `{"enforcement":"active","target":"tag","conditions":{"ref_name":{"include":["refs/tags/release-*"]}}}`, NotReady},
+		{"detail disabled", 200, `{"enforcement":"disabled","target":"tag","conditions":{"ref_name":{"include":["refs/tags/v*"]}}}`, NotReady},
+		{"detail forbidden", 403, `{}`, Unknown},
+		{"detail unreadable", 500, `{}`, Unknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// No entry for /rulesets/8: the branch ruleset must not be fetched.
+			f := fakeFetcher{resp: map[string]struct {
+				code int
+				body string
+				err  error
+			}{
+				"/repos/o/r/rulesets":   {200, list, nil},
+				"/repos/o/r/rulesets/7": {tc.detailCode, tc.detailBody, nil},
+			}}
+			if got := checkRulesets(f, "o/r"); got.Status != tc.want {
+				t.Fatalf("checkRulesets = %s (%s), want %s", got.Status, got.Detail, tc.want)
+			}
+		})
 	}
 }
 
