@@ -335,6 +335,8 @@ func TestReleaseTagStepExecutes(t *testing.T) {
 		{tag: "v1.0.0-rc.01"},
 		{tag: "v1.0.0-"},
 		{tag: "v1.0.0-rc..1"},
+		{tag: "v1.0.0-é"},
+		{tag: "v1.0.0-rc.ä"},
 		{tag: "0.1.0"},
 		{tag: "v0.1"},
 		{tag: "v0.1.0.1"},
@@ -343,7 +345,9 @@ func TestReleaseTagStepExecutes(t *testing.T) {
 		t.Run(tc.tag, func(t *testing.T) {
 			cmd := exec.Command("bash", "-c", step.Run)
 			cmd.Dir = t.TempDir()
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TAG=" + tc.tag}
+			// In this locale glibc's [A-Za-z] also matches é and ä, so the
+			// step must choose its own.
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TAG=" + tc.tag, "LC_ALL=en_US.UTF-8"}
 			out, err := cmd.CombinedOutput()
 			if !tc.ok {
 				if err == nil || !strings.Contains(string(out), "::error::") || !strings.Contains(string(out), tc.tag) {

@@ -48,6 +48,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # Byte ranges: in a UTF-8 locale, [A-Za-z] can also match letters such as é.
+          LC_ALL=C
           identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
           semver="^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?$"
           if ! [[ "${TAG}" =~ ${semver} ]]; then
