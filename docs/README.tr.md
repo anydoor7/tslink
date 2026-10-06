@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Kendi barındırdığınız uygulamaları seçtiğiniz kişilerle, istediğiniz süre boyunca paylaşın.</strong></p>
 
-TSLink, bilgisayarınızdaki veya sunucunuzdaki her uygulamaya kendine ait özel bir Tailscale adresi verir. Belirli kişilere bir son tarihe kadar erişim tanıyın, Tailscale kullanmayan birine tarayıcı konuk bağlantısı gönderin ve ikisini de tek komutla iptal edin. Bunu kendiniz yapın ya da atadığınız rolle sınırlı bir yapay zekâ ajanına bırakın. Tailscale ile çalışan bağımsız bir projedir.
+TSLink, bilgisayarınızdaki veya sunucunuzdaki her uygulamaya kendine ait özel bir Tailscale adresi verir. Belirli kişilere bir son tarihe kadar erişim tanıyın, Tailscale kullanmayan birine tarayıcı konuk bağlantısı gönderin ve her birini tek komutla iptal edin. Bunu kendiniz yapın ya da atadığınız rolle sınırlı bir yapay zekâ ajanına bırakın. Tailscale ile çalışan bağımsız bir projedir.
 
 <p align="center"><a href="#quickstart">Hızlı başlangıç</a> · <a href="#agents">Ajanlar için</a> · <a href="comparison.md">Serve, ngrok ve Cloudflare ile karşılaştırma</a> · <a href="#documentation">Belgeler</a></p>
 <p align="center">

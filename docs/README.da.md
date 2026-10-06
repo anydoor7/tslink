@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Del dine selvhostede apps med de personer, du vælger, så længe du vil.</strong></p>
 
-TSLink giver hver app på din computer eller server sin egen private Tailscale-adresse. Giv udvalgte personer adgang frem til en frist, send et gæstelink til browseren til en, der ikke bruger Tailscale, og tilbagekald begge dele med én kommando. Gør det selv eller gennem en AI-agent, der er begrænset til den rolle, du tildeler. Et uafhængigt projekt, der fungerer med Tailscale.
+TSLink giver hver app på din computer eller server sin egen private Tailscale-adresse. Giv udvalgte personer adgang frem til en frist, send et gæstelink til browseren til en, der ikke bruger Tailscale, og tilbagekald hver af dem med én kommando. Gør det selv eller gennem en AI-agent, der er begrænset til den rolle, du tildeler. Et uafhængigt projekt, der fungerer med Tailscale.
 
 <p align="center"><a href="#quickstart">Kom i gang</a> · <a href="#agents">Til agenter</a> · <a href="comparison.md">Sammenlignet med Serve, ngrok og Cloudflare</a> · <a href="#documentation">Dokumentation</a></p>
 <p align="center">
