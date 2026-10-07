@@ -49,6 +49,7 @@ Private recipients need Tailscale. Guest links are public, forwardable bearer li
 
 - **An address for each app.** Web apps, folders, single files and TCP ports each get their own name in your tailnet, so you use names instead of IP addresses.
 - **Private by default.** Nothing is public until you create a guest link or publish through Funnel.
+- **One app, not the whole machine.** Each app you publish gets its own node that forwards to that app only. Without the Tailscale app on the host, TSLink adds no other host ports to your tailnet.
 - **A home page** that lists your apps with their health. [Portal](docs/portal.md)
 - **Health checks and alerts** by command or webhook, and an access log that includes denied requests. [Health and alerts](docs/health-and-alerts.md) · [Access history](docs/access-log.md)
 - **Recipes for 15 self-hosted apps**, including Home Assistant, Jellyfin, Immich and Ollama. `tslink apps detect` finds the ones already running. [App recipes](docs/apps.md)
@@ -74,6 +75,7 @@ A dev server an agent starts on `localhost` is out of reach from your phone. TSL
 ```
 
 - **CLI or MCP.** Management commands take `--json` and return versioned results; `tslink mcp` offers app and access operations over MCP.
+- **One file, not the folder.** An agent can share just its HTML report with `tslink share ./report.html`; other files in that folder stay unreachable.
 - **Limited roles.** `viewer`, `app-operator` or `people-manager`, scoped to the apps you name. `tslink mcp-audit` shows what an agent changed. Roles limit TSLink's tools, not the agent's own shell.
 
 [Agent quickstart](docs/agent-quickstart.md) · [MCP scopes](docs/mcp-scopes.md) · [Remote MCP](docs/remote-mcp.md)
