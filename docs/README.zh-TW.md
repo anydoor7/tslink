@@ -26,12 +26,30 @@ brew install --cask anydoor7/tap/tslink
 
 Linux 的 `.deb`、`.rpm` 套件和 Windows 版本在[最新版本](https://github.com/anydoor7/tslink/releases/latest)頁面。第一次分享應用程式時，TSLink 會給出這個應用程式的 Tailscale 登入連結。[入門指南](getting-started.md)
 
+<a id="why"></a>
+
+## 什麼時候需要 TSLink
+
+只在自己的裝置上開啟一個應用程式，用 Serve 就夠了。TSLink 把應用程式網址、期限和存取變更放進同一套流程。
+
+| 情境 | 只用 Tailscale | TSLink |
+|---|---|---|
+| 在手機上開啟一個 Web 應用程式 | `tailscale serve 3000` 就夠了 | `tslink share 3000` |
+| 多個應用程式，各有自己的名稱 | 設定 Services，或分別執行節點 | 每個應用程式一次 `share`/`add`，每個節點分別登入 |
+| 一個人，一個應用程式，七天 | 先寫政策規則，再用 JIT 臨時授權工具或手動移除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/檔案） |
+| 瀏覽器連結，三天 | 公開的 Funnel；自行加上存取關卡，並安排到期關閉 | `tslink guest create photos --for 3d --public --print-link`（僅限 HTTP） |
+
+私人存取的對象需要安裝 Tailscale。訪客連結是公開且可轉傳的存取憑證。
+
+[完整比較](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## 你的應用程式，在自己的裝置上開啟
 
 - **每個應用程式一個位址。** Web 應用程式、資料夾、單一檔案和 TCP 連接埠在你的 tailnet 裡各有自己的名稱，用名稱就好，不必記 IP 位址。
 - **預設私人。** 只有在你建立訪客連結或透過 Funnel 發布之後，才會有公開入口。
+- **只開放這個應用程式。** 你發布的每個應用程式都有自己的節點，只轉送到這個應用程式。主機上沒有安裝 Tailscale App 時，TSLink 不會把主機的其他連接埠加進你的 tailnet。
 - **一個入口頁**，列出你的應用程式和它們的健康狀態。[入口頁](portal.md)
 - **健康檢查與警示**，透過指令或 webhook 通知；存取紀錄也包含遭拒的請求。[健康檢查與警示](health-and-alerts.md) · [存取紀錄](access-log.md)
 - **15 個自架應用程式的設定範本**，包括 Home Assistant、Jellyfin、Immich 和 Ollama。`tslink apps detect` 會找出已在執行的那些。[應用設定範本](apps.md)
@@ -57,6 +75,7 @@ AI 代理在 `localhost` 上啟動的開發伺服器，你的手機連不到。�
 ```
 
 - **CLI 或 MCP。** 管理指令支援 `--json`，回傳帶版本號的結果；`tslink mcp` 透過 MCP 提供應用程式和存取管理操作。
+- **只分享一個檔案。** 代理可以用 `tslink share ./report.html` 只分享它的 HTML 報告；同一個資料夾裡的其他檔案仍然無法存取。
 - **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，權限範圍限於你指定的應用程式。`tslink mcp-audit` 顯示代理改了什麼。角色只限制 TSLink 的工具，管不到代理自己的 shell。
 
 [代理快速開始](agent-quickstart.md) · [MCP 權限](mcp-scopes.md) · [遠端 MCP](remote-mcp.md)

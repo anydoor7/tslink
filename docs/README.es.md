@@ -26,12 +26,30 @@ brew install --cask anydoor7/tap/tslink
 
 Los paquetes `.deb` y `.rpm` para Linux y las versiones para Windows están en la [última versión](https://github.com/anydoor7/tslink/releases/latest). La primera vez que compartes una aplicación, TSLink muestra un enlace de inicio de sesión de Tailscale para ella. [Primeros pasos](getting-started.md)
 
+<a id="why"></a>
+
+## Cuándo necesitas TSLink
+
+Para una aplicación en tus propios dispositivos, Serve es suficiente. TSLink reúne direcciones de aplicaciones, plazos y cambios de acceso en un solo flujo.
+
+| Tarea | Solo Tailscale | TSLink |
+|---|---|---|
+| Una aplicación web en tu móvil | Basta con `tailscale serve 3000` | `tslink share 3000` |
+| Varias aplicaciones, cada una con su nombre | Configurar Services, o nodos separados | Un `share`/`add` por aplicación; registrar cada nodo |
+| Una persona, una aplicación, siete días | Reglas de política y luego una herramienta JIT o retirarlas a mano | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/archivos) |
+| Enlace para navegador, tres días | Funnel público; añadir un control de acceso y un apagado programado | `tslink guest create photos --for 3d --public --print-link` (solo HTTP) |
+
+Los destinatarios privados necesitan Tailscale. Los enlaces de invitado son públicos, se pueden reenviar y sirven como credenciales de acceso.
+
+[Comparación completa](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Tus aplicaciones, en tus propios dispositivos
 
 - **Una dirección para cada aplicación.** Aplicaciones web, carpetas, archivos sueltos y puertos TCP reciben cada uno su propio nombre en tu tailnet, así que usas nombres en lugar de direcciones IP.
 - **Privado por defecto.** Nada es público hasta que creas un enlace de invitado o publicas con Funnel.
+- **Una aplicación, no toda la máquina.** Cada aplicación que publicas tiene su propio nodo, que reenvía solo a esa aplicación. Sin la app de Tailscale en el host, TSLink no añade otros puertos del host a tu tailnet.
 - **Una página de inicio** que lista tus aplicaciones con su estado. [Portal](portal.md)
 - **Comprobaciones de estado y alertas** por comando o webhook, y un registro de acceso que incluye las solicitudes denegadas. [Estado y alertas](health-and-alerts.md) · [Historial de acceso](access-log.md)
 - **Recetas para 15 aplicaciones autoalojadas**, entre ellas Home Assistant, Jellyfin, Immich y Ollama. `tslink apps detect` encuentra las que ya están en marcha. [Recetas de aplicaciones](apps.md)
@@ -57,6 +75,7 @@ Un servidor de desarrollo que un agente arranca en `localhost` queda fuera del a
 ```
 
 - **CLI o MCP.** Los comandos de gestión aceptan `--json` y devuelven resultados versionados; `tslink mcp` ofrece operaciones de aplicaciones y acceso por MCP.
+- **Un archivo, no la carpeta.** Un agente puede compartir solo su informe HTML con `tslink share ./report.html`; los demás archivos de esa carpeta siguen inaccesibles.
 - **Roles limitados.** `viewer`, `app-operator` o `people-manager`, limitados a las aplicaciones que indiques. `tslink mcp-audit` muestra qué cambió un agente. Los roles limitan las herramientas de TSLink, no la propia shell del agente.
 
 [Guía para agentes](agent-quickstart.md) · [Permisos MCP](mcp-scopes.md) · [MCP remoto](remote-mcp.md)

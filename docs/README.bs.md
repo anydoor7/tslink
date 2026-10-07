@@ -26,12 +26,30 @@ brew install --cask anydoor7/tap/tslink
 
 Linux paketi `.deb` i `.rpm` te Windows verzije nalaze se u [najnovijem izdanju](https://github.com/anydoor7/tslink/releases/latest). Kada prvi put podijelite aplikaciju, TSLink prikaže Tailscale link za prijavu za nju. [Prvi koraci](getting-started.md)
 
+<a id="why"></a>
+
+## Kada vam treba TSLink
+
+Za jednu aplikaciju na vlastitim uređajima dovoljan je Serve. TSLink objedinjuje adrese aplikacija, rokove i promjene pristupa u jednom toku rada.
+
+| Zadatak | Samo Tailscale | TSLink |
+|---|---|---|
+| Jedna web aplikacija na telefonu | Dovoljno je `tailscale serve 3000` | `tslink share 3000` |
+| Više aplikacija, svaka sa svojim imenom | Podešavanje Services ili zasebni čvorovi | Jedan `share`/`add` po aplikaciji; prijavite svaki čvor |
+| Jedna osoba, jedna aplikacija, sedam dana | Pravila politike, pa JIT alat ili ručno uklanjanje | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/fajlovi) |
+| Link za preglednik, tri dana | Javni Funnel; sami dodajte kontrolu pristupa i zakazano gašenje | `tslink guest create photos --for 3d --public --print-link` (samo HTTP) |
+
+Privatni primaoci trebaju Tailscale. Linkovi za goste su javni, mogu se proslijediti i služe kao pristupne vjerodajnice.
+
+[Potpuno poređenje](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Vaše aplikacije, na vašim uređajima
 
 - **Adresa za svaku aplikaciju.** Web aplikacije, folderi, pojedinačni fajlovi i TCP portovi dobijaju vlastito ime u vašem tailnetu, pa koristite imena umjesto IP adresa.
 - **Podrazumijevano privatno.** Ništa nije javno dok ne napravite link za goste ili objavite kroz Funnel.
+- **Jedna aplikacija, ne cijela mašina.** Svaka aplikacija koju objavite dobija vlastiti čvor koji prosljeđuje samo do nje. Bez Tailscale aplikacije na hostu TSLink ne dodaje druge portove hosta u vaš tailnet.
 - **Početna stranica** sa spiskom vaših aplikacija i njihovim stanjem. [Portal](portal.md)
 - **Provjere stanja i upozorenja** putem komande ili webhooka, uz zapis pristupa koji uključuje i odbijene zahtjeve. [Stanje i upozorenja](health-and-alerts.md) · [Historija pristupa](access-log.md)
 - **Recepti za 15 self-hosted aplikacija**, među njima Home Assistant, Jellyfin, Immich i Ollama. `tslink apps detect` pronalazi one koje već rade. [Recepti za aplikacije](apps.md)
@@ -57,6 +75,7 @@ Razvojni server koji agent pokrene na `localhost` nije dostupan s vašeg telefon
 ```
 
 - **CLI ili MCP.** Komande za upravljanje primaju `--json` i vraćaju verzionisane rezultate; `tslink mcp` nudi operacije za aplikacije i pristup preko MCP-a.
+- **Jedan fajl, ne cijeli folder.** Agent može podijeliti samo svoj HTML izvještaj komandom `tslink share ./report.html`; ostali fajlovi u tom folderu ostaju nedostupni.
 - **Ograničene uloge.** `viewer`, `app-operator` ili `people-manager`, ograničene na aplikacije koje navedete. `tslink mcp-audit` pokazuje šta je agent promijenio. Uloge ograničavaju TSLink alate, a ne agentov vlastiti shell.
 
 [Vodič za agente](agent-quickstart.md) · [MCP ovlasti](mcp-scopes.md) · [Udaljeni MCP](remote-mcp.md)

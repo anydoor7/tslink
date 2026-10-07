@@ -26,12 +26,30 @@ brew install --cask anydoor7/tap/tslink
 
 Linux-pakker (`.deb` og `.rpm`) og Windows-builds ligger under [seneste udgivelse](https://github.com/anydoor7/tslink/releases/latest). Første gang du deler en app, viser TSLink et Tailscale-loginlink til den. [Kom godt i gang](getting-started.md)
 
+<a id="why"></a>
+
+## Hvornår du har brug for TSLink
+
+Til én app på dine egne enheder er Serve nok. TSLink samler app-adresser, frister og adgangsændringer i ét forløb.
+
+| Opgave | Kun Tailscale | TSLink |
+|---|---|---|
+| Én webapp på din telefon | `tailscale serve 3000` er nok | `tslink share 3000` |
+| Flere apps, hver sit navn | Opsætning af Services eller separate noder | Én `share`/`add` pr. app; tilmeld hver node |
+| Én person, én app, syv dage | Politikregler, derefter et JIT-værktøj eller manuel fjernelse | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/filer) |
+| Browserlink, tre dage | Offentlig Funnel; tilføj selv adgangskontrol og planlagt lukning | `tslink guest create photos --for 3d --public --print-link` (kun HTTP) |
+
+Private modtagere skal have Tailscale. Gæstelinks er offentlige, kan videresendes og fungerer som adgangsnøgler.
+
+[Fuld sammenligning](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Dine apps, på dine egne enheder
 
 - **En adresse til hver app.** Webapps, mapper, enkeltfiler og TCP-porte får hver deres eget navn i dit tailnet, så du bruger navne i stedet for IP-adresser.
 - **Privat som standard.** Intet er offentligt, før du opretter et gæstelink eller udgiver via Funnel.
+- **Én app, ikke hele maskinen.** Hver app, du udgiver, får sin egen node, der kun videresender til den app. Uden Tailscale-appen på værten tilføjer TSLink ingen andre porte fra værten til dit tailnet.
 - **En startside**, der viser dine apps og deres tilstand. [Portal](portal.md)
 - **Sundhedstjek og alarmer** via kommando eller webhook, og en adgangslog, der også viser afviste forespørgsler. [Sundhed og alarmer](health-and-alerts.md) · [Adgangshistorik](access-log.md)
 - **Opskrifter til 15 selvhostede apps**, blandt andet Home Assistant, Jellyfin, Immich og Ollama. `tslink apps detect` finder dem, der allerede kører. [Appopskrifter](apps.md)
@@ -57,6 +75,7 @@ En udviklingsserver, som en agent starter på `localhost`, kan du ikke nå fra d
 ```
 
 - **CLI eller MCP.** Styringskommandoerne tager `--json` og returnerer versionerede resultater; `tslink mcp` tilbyder handlinger for apps og adgang over MCP.
+- **Én fil, ikke mappen.** En agent kan dele netop sin HTML-rapport med `tslink share ./report.html`; de andre filer i mappen forbliver utilgængelige.
 - **Begrænsede roller.** `viewer`, `app-operator` eller `people-manager`, afgrænset til de apps du angiver. `tslink mcp-audit` viser, hvad en agent har ændret. Roller begrænser TSLinks værktøjer, ikke agentens egen shell.
 
 [Agentguide](agent-quickstart.md) · [MCP-rettigheder](mcp-scopes.md) · [Fjern-MCP](remote-mcp.md)

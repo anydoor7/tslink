@@ -26,12 +26,30 @@ brew install --cask anydoor7/tap/tslink
 
 Gói `.deb` và `.rpm` cho Linux cùng bản dựng cho Windows có trong [bản phát hành mới nhất](https://github.com/anydoor7/tslink/releases/latest). Lần đầu bạn chia sẻ một ứng dụng, TSLink sẽ hiện một liên kết đăng nhập Tailscale cho ứng dụng đó. [Bắt đầu](getting-started.md)
 
+<a id="why"></a>
+
+## Khi nào bạn cần TSLink
+
+Với một ứng dụng trên thiết bị của bạn, Serve là đủ. TSLink gom địa chỉ ứng dụng, thời hạn và thay đổi quyền truy cập vào một quy trình.
+
+| Việc cần làm | Chỉ Tailscale | TSLink |
+|---|---|---|
+| Một ứng dụng web trên điện thoại | `tailscale serve 3000` là đủ | `tslink share 3000` |
+| Nhiều ứng dụng, mỗi cái một tên | Thiết lập Services, hoặc các nút riêng | Mỗi ứng dụng một lệnh `share`/`add`; đăng ký từng nút |
+| Một người, một ứng dụng, bảy ngày | Quy tắc chính sách, rồi dùng công cụ JIT hoặc tự gỡ | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/tệp) |
+| Liên kết trình duyệt, ba ngày | Funnel công khai; tự thêm lớp kiểm soát truy cập và lịch tắt | `tslink guest create photos --for 3d --public --print-link` (chỉ HTTP) |
+
+Người nhận riêng tư cần có Tailscale. Liên kết khách là công khai, có thể chuyển tiếp và dùng làm thông tin xác thực để truy cập.
+
+[So sánh đầy đủ](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Ứng dụng của bạn, trên thiết bị của bạn
 
 - **Mỗi ứng dụng một địa chỉ.** Ứng dụng web, thư mục, tệp đơn lẻ và cổng TCP đều có tên riêng trong tailnet của bạn, nên bạn dùng tên thay vì địa chỉ IP.
 - **Mặc định là riêng tư.** Không có gì công khai cho đến khi bạn tạo liên kết khách hoặc xuất bản qua Funnel.
+- **Một ứng dụng, không phải cả máy.** Mỗi ứng dụng bạn xuất bản có nút riêng, chỉ chuyển tiếp tới ứng dụng đó. Nếu máy chủ không cài ứng dụng Tailscale, TSLink không thêm cổng nào khác của máy chủ vào tailnet của bạn.
 - **Một trang chủ** liệt kê ứng dụng của bạn cùng tình trạng của chúng. [Cổng](portal.md)
 - **Kiểm tra tình trạng và cảnh báo** qua lệnh hoặc webhook, cùng nhật ký truy cập có cả các yêu cầu bị từ chối. [Tình trạng và cảnh báo](health-and-alerts.md) · [Lịch sử truy cập](access-log.md)
 - **Công thức cho 15 ứng dụng tự lưu trữ**, gồm Home Assistant, Jellyfin, Immich và Ollama. `tslink apps detect` tìm những ứng dụng đang chạy sẵn. [Công thức cấu hình](apps.md)
@@ -57,6 +75,7 @@ Máy chủ phát triển mà tác tử khởi động trên `localhost` thì đi
 ```
 
 - **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp các thao tác về ứng dụng và quyền truy cập qua MCP.
+- **Một tệp, không phải cả thư mục.** Tác tử có thể chỉ chia sẻ báo cáo HTML của nó bằng `tslink share ./report.html`; các tệp khác trong thư mục đó vẫn không truy cập được.
 - **Vai trò giới hạn.** `viewer`, `app-operator` hoặc `people-manager`, chỉ trong các ứng dụng bạn chỉ định. `tslink mcp-audit` cho thấy tác tử đã thay đổi gì. Vai trò giới hạn công cụ của TSLink, không giới hạn shell riêng của tác tử.
 
 [Hướng dẫn tác tử](agent-quickstart.md) · [Quyền MCP](mcp-scopes.md) · [MCP từ xa](remote-mcp.md)

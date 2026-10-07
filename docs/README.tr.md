@@ -26,12 +26,30 @@ brew install --cask anydoor7/tap/tslink
 
 Linux `.deb` ve `.rpm` paketleri ile Windows sürümleri [son sürüm](https://github.com/anydoor7/tslink/releases/latest) sayfasında. Bir uygulamayı ilk kez paylaştığınızda TSLink onun için bir Tailscale oturum açma bağlantısı gösterir. [Başlarken](getting-started.md)
 
+<a id="why"></a>
+
+## TSLink'e ne zaman ihtiyaç duyarsınız
+
+Kendi cihazlarınızda tek bir uygulama için Serve yeterli. TSLink uygulama adreslerini, süreleri ve erişim değişikliklerini tek bir akışta toplar.
+
+| İş | Yalnızca Tailscale | TSLink |
+|---|---|---|
+| Telefonda tek bir web uygulaması | `tailscale serve 3000` yeterli | `tslink share 3000` |
+| Birden çok uygulama, her birine ayrı ad | Services kurulumu veya ayrı düğümler | Her uygulama için bir `share`/`add`; her düğümü kaydedin |
+| Bir kişi, bir uygulama, yedi gün | Politika kuralları, ardından bir JIT aracı veya elle kaldırma | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/dosyalar) |
+| Tarayıcı bağlantısı, üç gün | Herkese açık Funnel; erişim kapısını ve zamanlanmış kapatmayı siz ekleyin | `tslink guest create photos --for 3d --public --print-link` (yalnızca HTTP) |
+
+Özel alıcıların Tailscale'e ihtiyacı vardır. Konuk bağlantıları herkese açıktır, iletilebilir ve erişim anahtarı işlevi görür.
+
+[Ayrıntılı karşılaştırma](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Uygulamalarınız, kendi cihazlarınızda
 
 - **Her uygulamaya bir adres.** Web uygulamaları, klasörler, tek dosyalar ve TCP portları tailnet'inizde kendi adını alır; IP adresleri yerine adları kullanırsınız.
 - **Varsayılan olarak özel.** Bir konuk bağlantısı oluşturana ya da Funnel ile yayımlayana kadar hiçbir şey herkese açık olmaz.
+- **Tüm makine değil, tek bir uygulama.** Yayımladığınız her uygulamanın, yalnızca o uygulamaya yönlendiren kendi düğümü olur. Ana makinede Tailscale uygulaması yoksa TSLink, tailnet'inize ana makinenin başka hiçbir portunu eklemez.
 - **Bir ana sayfa**, uygulamalarınızı sağlık durumlarıyla listeler. [Portal](portal.md)
 - **Sağlık kontrolleri ve uyarılar** komut ya da webhook ile; erişim günlüğü reddedilen istekleri de içerir. [Sağlık ve uyarılar](health-and-alerts.md) · [Erişim geçmişi](access-log.md)
 - **Kendi sunucunuzda barındırabileceğiniz 15 uygulama için tarifler**; Home Assistant, Jellyfin, Immich ve Ollama dahil. `tslink apps detect` zaten çalışanları bulur. [Uygulama tarifleri](apps.md)
@@ -57,6 +75,7 @@ Bir ajanın `localhost` üzerinde başlattığı geliştirme sunucusuna telefonu
 ```
 
 - **CLI veya MCP.** Yönetim komutları `--json` alır ve sürümlü sonuçlar döndürür; `tslink mcp` uygulama ve erişim işlemlerini MCP üzerinden sunar.
+- **Klasör değil, tek bir dosya.** Bir ajan `tslink share ./report.html` ile yalnızca HTML raporunu paylaşabilir; o klasördeki diğer dosyalara erişilemez.
 - **Sınırlı roller.** `viewer`, `app-operator` veya `people-manager`, belirttiğiniz uygulamalarla sınırlı. `tslink mcp-audit` bir ajanın neyi değiştirdiğini gösterir. Roller TSLink'in araçlarını sınırlar, ajanın kendi kabuğunu değil.
 
 [Ajan kılavuzu](agent-quickstart.md) · [MCP yetkileri](mcp-scopes.md) · [Uzak MCP](remote-mcp.md)
