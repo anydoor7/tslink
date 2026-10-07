@@ -49,6 +49,7 @@ Privatni primaoci trebaju Tailscale. Linkovi za goste su javni, mogu se proslije
 
 - **Adresa za svaku aplikaciju.** Web aplikacije, folderi, pojedinačni fajlovi i TCP portovi dobijaju vlastito ime u vašem tailnetu, pa koristite imena umjesto IP adresa.
 - **Podrazumijevano privatno.** Ništa nije javno dok ne napravite link za goste ili objavite kroz Funnel.
+- **Jedna aplikacija, ne cijela mašina.** Svaka aplikacija koju objavite dobija vlastiti čvor koji prosljeđuje samo do nje. Bez Tailscale aplikacije na hostu TSLink ne dodaje druge portove hosta u vaš tailnet.
 - **Početna stranica** sa spiskom vaših aplikacija i njihovim stanjem. [Portal](portal.md)
 - **Provjere stanja i upozorenja** putem komande ili webhooka, uz zapis pristupa koji uključuje i odbijene zahtjeve. [Stanje i upozorenja](health-and-alerts.md) · [Historija pristupa](access-log.md)
 - **Recepti za 15 self-hosted aplikacija**, među njima Home Assistant, Jellyfin, Immich i Ollama. `tslink apps detect` pronalazi one koje već rade. [Recepti za aplikacije](apps.md)
@@ -74,6 +75,7 @@ Razvojni server koji agent pokrene na `localhost` nije dostupan s vašeg telefon
 ```
 
 - **CLI ili MCP.** Komande za upravljanje primaju `--json` i vraćaju verzionisane rezultate; `tslink mcp` nudi operacije za aplikacije i pristup preko MCP-a.
+- **Jedan fajl, ne cijeli folder.** Agent može podijeliti samo svoj HTML izvještaj komandom `tslink share ./report.html`; ostali fajlovi u tom folderu ostaju nedostupni.
 - **Ograničene uloge.** `viewer`, `app-operator` ili `people-manager`, ograničene na aplikacije koje navedete. `tslink mcp-audit` pokazuje šta je agent promijenio. Uloge ograničavaju TSLink alate, a ne agentov vlastiti shell.
 
 [Vodič za agente](agent-quickstart.md) · [MCP ovlasti](mcp-scopes.md) · [Udaljeni MCP](remote-mcp.md)

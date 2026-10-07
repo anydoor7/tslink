@@ -49,6 +49,7 @@ Linux용 `.deb`, `.rpm` 패키지와 Windows 빌드는 [최신 릴리스](https:
 
 - **앱마다 주소 하나.** 웹 앱, 폴더, 단일 파일, TCP 포트가 tailnet 안에서 각자 이름을 가지므로 IP 주소 대신 이름을 씁니다.
 - **기본은 비공개.** 게스트 링크를 만들거나 Funnel로 공개하기 전에는 아무것도 공개되지 않습니다.
+- **컴퓨터 전체가 아니라 앱 하나.** 공개하는 앱마다 전용 노드가 생기고, 그 노드는 해당 앱으로만 전달합니다. 호스트에 Tailscale 앱이 없으면 TSLink는 호스트의 다른 포트를 tailnet에 추가하지 않습니다.
 - **홈 페이지**에서 앱과 상태를 한눈에 봅니다. [포털](portal.md)
 - **상태 점검과 알림**을 명령이나 webhook으로 받고, 접속 이력에는 거부된 요청도 남습니다. [상태 점검과 알림](health-and-alerts.md) · [접속 이력](access-log.md)
 - **셀프 호스팅 앱 15개용 레시피**. Home Assistant, Jellyfin, Immich, Ollama 등이 있습니다. `tslink apps detect`는 이미 실행 중인 앱을 찾습니다. [앱 구성 레시피](apps.md)
@@ -74,6 +75,7 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 - **CLI 또는 MCP.** 관리 명령은 `--json`을 받아 버전이 붙은 결과를 돌려주고, `tslink mcp`는 앱과 접근 관련 작업을 MCP로 제공합니다.
+- **폴더가 아니라 파일 하나.** 에이전트는 `tslink share ./report.html`로 HTML 보고서만 공유할 수 있고, 같은 폴더의 다른 파일에는 접근할 수 없습니다.
 - **제한된 역할.** `viewer`, `app-operator`, `people-manager` 중 하나를, 지정한 앱 범위로 줍니다. `tslink mcp-audit`로 에이전트가 바꾼 내용을 볼 수 있습니다. 역할은 TSLink의 도구를 제한할 뿐, 에이전트 자신의 셸까지 막지는 않습니다.
 
 [에이전트 빠른 시작](agent-quickstart.md) · [MCP 권한](mcp-scopes.md) · [원격 MCP](remote-mcp.md)

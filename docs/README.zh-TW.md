@@ -49,6 +49,7 @@ Linux 的 `.deb`、`.rpm` 套件和 Windows 版本在[最新版本](https://gith
 
 - **每個應用程式一個位址。** Web 應用程式、資料夾、單一檔案和 TCP 連接埠在你的 tailnet 裡各有自己的名稱，用名稱就好，不必記 IP 位址。
 - **預設私人。** 只有在你建立訪客連結或透過 Funnel 發布之後，才會有公開入口。
+- **只開放這個應用程式。** 你發布的每個應用程式都有自己的節點，只轉送到這個應用程式。主機上沒有安裝 Tailscale App 時，TSLink 不會把主機的其他連接埠加進你的 tailnet。
 - **一個入口頁**，列出你的應用程式和它們的健康狀態。[入口頁](portal.md)
 - **健康檢查與警示**，透過指令或 webhook 通知；存取紀錄也包含遭拒的請求。[健康檢查與警示](health-and-alerts.md) · [存取紀錄](access-log.md)
 - **15 個自架應用程式的設定範本**，包括 Home Assistant、Jellyfin、Immich 和 Ollama。`tslink apps detect` 會找出已在執行的那些。[應用設定範本](apps.md)
@@ -74,6 +75,7 @@ AI 代理在 `localhost` 上啟動的開發伺服器，你的手機連不到。�
 ```
 
 - **CLI 或 MCP。** 管理指令支援 `--json`，回傳帶版本號的結果；`tslink mcp` 透過 MCP 提供應用程式和存取管理操作。
+- **只分享一個檔案。** 代理可以用 `tslink share ./report.html` 只分享它的 HTML 報告；同一個資料夾裡的其他檔案仍然無法存取。
 - **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，權限範圍限於你指定的應用程式。`tslink mcp-audit` 顯示代理改了什麼。角色只限制 TSLink 的工具，管不到代理自己的 shell。
 
 [代理快速開始](agent-quickstart.md) · [MCP 權限](mcp-scopes.md) · [遠端 MCP](remote-mcp.md)

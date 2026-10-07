@@ -49,6 +49,7 @@ Los destinatarios privados necesitan Tailscale. Los enlaces de invitado son púb
 
 - **Una dirección para cada aplicación.** Aplicaciones web, carpetas, archivos sueltos y puertos TCP reciben cada uno su propio nombre en tu tailnet, así que usas nombres en lugar de direcciones IP.
 - **Privado por defecto.** Nada es público hasta que creas un enlace de invitado o publicas con Funnel.
+- **Una aplicación, no toda la máquina.** Cada aplicación que publicas tiene su propio nodo, que reenvía solo a esa aplicación. Sin la app de Tailscale en el host, TSLink no añade otros puertos del host a tu tailnet.
 - **Una página de inicio** que lista tus aplicaciones con su estado. [Portal](portal.md)
 - **Comprobaciones de estado y alertas** por comando o webhook, y un registro de acceso que incluye las solicitudes denegadas. [Estado y alertas](health-and-alerts.md) · [Historial de acceso](access-log.md)
 - **Recetas para 15 aplicaciones autoalojadas**, entre ellas Home Assistant, Jellyfin, Immich y Ollama. `tslink apps detect` encuentra las que ya están en marcha. [Recetas de aplicaciones](apps.md)
@@ -74,6 +75,7 @@ Un servidor de desarrollo que un agente arranca en `localhost` queda fuera del a
 ```
 
 - **CLI o MCP.** Los comandos de gestión aceptan `--json` y devuelven resultados versionados; `tslink mcp` ofrece operaciones de aplicaciones y acceso por MCP.
+- **Un archivo, no la carpeta.** Un agente puede compartir solo su informe HTML con `tslink share ./report.html`; los demás archivos de esa carpeta siguen inaccesibles.
 - **Roles limitados.** `viewer`, `app-operator` o `people-manager`, limitados a las aplicaciones que indiques. `tslink mcp-audit` muestra qué cambió un agente. Los roles limitan las herramientas de TSLink, no la propia shell del agente.
 
 [Guía para agentes](agent-quickstart.md) · [Permisos MCP](mcp-scopes.md) · [MCP remoto](remote-mcp.md)

@@ -49,6 +49,7 @@ Linux 向けの `.deb` と `.rpm` パッケージ、Windows 版は[最新リリ�
 
 - **アプリごとのアドレス。** Web アプリ、フォルダー、単一ファイル、TCP ポートがそれぞれ tailnet 内で名前を持つので、IP アドレスではなく名前で使えます。
 - **最初は非公開。** ゲストリンクを作るか Funnel で公開するまで、何も公開されません。
+- **マシン全体ではなく、アプリだけ。** 公開するアプリごとに専用のノードがあり、転送先はそのアプリだけです。ホストに Tailscale アプリを入れていなければ、TSLink がホストのほかのポートを tailnet に加えることはありません。
 - **ホームページ**にアプリと稼働状態を一覧表示します。[ポータル](portal.md)
 - **稼働監視と通知**はコマンドか webhook で。アクセス履歴には拒否されたリクエストも残ります。[稼働監視と通知](health-and-alerts.md) · [アクセス履歴](access-log.md)
 - **15 種類のセルフホストアプリ用レシピ**。Home Assistant、Jellyfin、Immich、Ollama などがあります。`tslink apps detect` は既に動いているものを見つけます。[アプリ設定レシピ](apps.md)
@@ -74,6 +75,7 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 - **CLI または MCP。** 管理コマンドは `--json` に対応し、バージョン付きの結果を返します。`tslink mcp` はアプリとアクセスの操作を MCP で提供します。
+- **フォルダーではなく、ファイル 1 つ。** エージェントは `tslink share ./report.html` で HTML レポートだけを共有できます。同じフォルダーのほかのファイルには届きません。
 - **限定されたロール。** `viewer`、`app-operator`、`people-manager` から選び、対象を指定したアプリに絞れます。`tslink mcp-audit` でエージェントの変更を確認できます。ロールが制限するのは TSLink のツールで、エージェント自身のシェルには及びません。
 
 [エージェントの入門](agent-quickstart.md) · [MCP 権限](mcp-scopes.md) · [リモート MCP](remote-mcp.md)

@@ -49,6 +49,7 @@ Người nhận riêng tư cần có Tailscale. Liên kết khách là công kha
 
 - **Mỗi ứng dụng một địa chỉ.** Ứng dụng web, thư mục, tệp đơn lẻ và cổng TCP đều có tên riêng trong tailnet của bạn, nên bạn dùng tên thay vì địa chỉ IP.
 - **Mặc định là riêng tư.** Không có gì công khai cho đến khi bạn tạo liên kết khách hoặc xuất bản qua Funnel.
+- **Một ứng dụng, không phải cả máy.** Mỗi ứng dụng bạn xuất bản có nút riêng, chỉ chuyển tiếp tới ứng dụng đó. Nếu máy chủ không cài ứng dụng Tailscale, TSLink không thêm cổng nào khác của máy chủ vào tailnet của bạn.
 - **Một trang chủ** liệt kê ứng dụng của bạn cùng tình trạng của chúng. [Cổng](portal.md)
 - **Kiểm tra tình trạng và cảnh báo** qua lệnh hoặc webhook, cùng nhật ký truy cập có cả các yêu cầu bị từ chối. [Tình trạng và cảnh báo](health-and-alerts.md) · [Lịch sử truy cập](access-log.md)
 - **Công thức cho 15 ứng dụng tự lưu trữ**, gồm Home Assistant, Jellyfin, Immich và Ollama. `tslink apps detect` tìm những ứng dụng đang chạy sẵn. [Công thức cấu hình](apps.md)
@@ -74,6 +75,7 @@ Máy chủ phát triển mà tác tử khởi động trên `localhost` thì đi
 ```
 
 - **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp các thao tác về ứng dụng và quyền truy cập qua MCP.
+- **Một tệp, không phải cả thư mục.** Tác tử có thể chỉ chia sẻ báo cáo HTML của nó bằng `tslink share ./report.html`; các tệp khác trong thư mục đó vẫn không truy cập được.
 - **Vai trò giới hạn.** `viewer`, `app-operator` hoặc `people-manager`, chỉ trong các ứng dụng bạn chỉ định. `tslink mcp-audit` cho thấy tác tử đã thay đổi gì. Vai trò giới hạn công cụ của TSLink, không giới hạn shell riêng của tác tử.
 
 [Hướng dẫn tác tử](agent-quickstart.md) · [Quyền MCP](mcp-scopes.md) · [MCP từ xa](remote-mcp.md)

@@ -49,6 +49,7 @@ Private mottakere trenger Tailscale. Gjestelenker er offentlige, kan videresende
 
 - **En adresse for hver app.** Webapper, mapper, enkeltfiler og TCP-porter får hver sitt navn i tailnetet ditt, så du bruker navn i stedet for IP-adresser.
 - **Privat som standard.** Ingenting er offentlig før du lager en gjestelenke eller publiserer via Funnel.
+- **Én app, ikke hele maskinen.** Hver app du publiserer, får sin egen node som bare videresender til den appen. Uten Tailscale-appen på verten legger TSLink ikke til andre porter fra verten i tailnetet ditt.
 - **En startside** som viser appene dine og statusen deres. [Portal](portal.md)
 - **Helsesjekker og varsler** via kommando eller webhook, og en tilgangslogg som også viser avviste forespørsler. [Helse og varsler](health-and-alerts.md) · [Tilgangshistorikk](access-log.md)
 - **Oppskrifter for 15 selvhostede apper**, blant annet Home Assistant, Jellyfin, Immich og Ollama. `tslink apps detect` finner dem som allerede kjører. [Appoppskrifter](apps.md)
@@ -74,6 +75,7 @@ En utviklingsserver som en agent starter på `localhost`, når du ikke fra telef
 ```
 
 - **CLI eller MCP.** Styringskommandoene tar `--json` og returnerer versjonerte resultater; `tslink mcp` tilbyr operasjoner for apper og tilgang over MCP.
+- **Én fil, ikke mappen.** En agent kan dele bare HTML-rapporten sin med `tslink share ./report.html`; de andre filene i mappen forblir utilgjengelige.
 - **Begrensede roller.** `viewer`, `app-operator` eller `people-manager`, avgrenset til appene du angir. `tslink mcp-audit` viser hva en agent har endret. Roller begrenser TSLinks verktøy, ikke agentens eget skall.
 
 [Agentveiledning](agent-quickstart.md) · [MCP-rettigheter](mcp-scopes.md) · [Ekstern MCP](remote-mcp.md)

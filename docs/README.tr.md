@@ -49,6 +49,7 @@ Kendi cihazlarınızda tek bir uygulama için Serve yeterli. TSLink uygulama adr
 
 - **Her uygulamaya bir adres.** Web uygulamaları, klasörler, tek dosyalar ve TCP portları tailnet'inizde kendi adını alır; IP adresleri yerine adları kullanırsınız.
 - **Varsayılan olarak özel.** Bir konuk bağlantısı oluşturana ya da Funnel ile yayımlayana kadar hiçbir şey herkese açık olmaz.
+- **Tüm makine değil, tek bir uygulama.** Yayımladığınız her uygulamanın, yalnızca o uygulamaya yönlendiren kendi düğümü olur. Ana makinede Tailscale uygulaması yoksa TSLink, tailnet'inize ana makinenin başka hiçbir portunu eklemez.
 - **Bir ana sayfa**, uygulamalarınızı sağlık durumlarıyla listeler. [Portal](portal.md)
 - **Sağlık kontrolleri ve uyarılar** komut ya da webhook ile; erişim günlüğü reddedilen istekleri de içerir. [Sağlık ve uyarılar](health-and-alerts.md) · [Erişim geçmişi](access-log.md)
 - **Kendi sunucunuzda barındırabileceğiniz 15 uygulama için tarifler**; Home Assistant, Jellyfin, Immich ve Ollama dahil. `tslink apps detect` zaten çalışanları bulur. [Uygulama tarifleri](apps.md)
@@ -74,6 +75,7 @@ Bir ajanın `localhost` üzerinde başlattığı geliştirme sunucusuna telefonu
 ```
 
 - **CLI veya MCP.** Yönetim komutları `--json` alır ve sürümlü sonuçlar döndürür; `tslink mcp` uygulama ve erişim işlemlerini MCP üzerinden sunar.
+- **Klasör değil, tek bir dosya.** Bir ajan `tslink share ./report.html` ile yalnızca HTML raporunu paylaşabilir; o klasördeki diğer dosyalara erişilemez.
 - **Sınırlı roller.** `viewer`, `app-operator` veya `people-manager`, belirttiğiniz uygulamalarla sınırlı. `tslink mcp-audit` bir ajanın neyi değiştirdiğini gösterir. Roller TSLink'in araçlarını sınırlar, ajanın kendi kabuğunu değil.
 
 [Ajan kılavuzu](agent-quickstart.md) · [MCP yetkileri](mcp-scopes.md) · [Uzak MCP](remote-mcp.md)

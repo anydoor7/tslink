@@ -49,6 +49,7 @@ Linux 的 `.deb`、`.rpm` 安装包和 Windows 版本在[最新发布](https://g
 
 - **每个应用一个地址。** Web 应用、文件夹、单个文件和 TCP 端口在你的 tailnet 里各有自己的名字，用名字就行，不用记 IP 地址。
 - **默认私有。** 只有在你创建访客链接或通过 Funnel 发布之后，才会有公开入口。
+- **只开放这个应用。** 你发布的每个应用都有自己的节点，只转发到这个应用。主机上没有安装 Tailscale 客户端时，TSLink 不会把主机的其他端口加进你的 tailnet。
 - **一个入口页**，列出你的应用和它们的健康状态。[入口页](portal.md)
 - **健康检查与告警**，通过命令或 webhook 通知；访问记录也包括遭到拒绝的请求。[健康检查与告警](health-and-alerts.md) · [访问记录](access-log.md)
 - **15 个自托管应用的配方**，包括 Home Assistant、Jellyfin、Immich 和 Ollama。`tslink apps detect` 会找出已经在运行的那些。[应用配方](apps.md)
@@ -74,6 +75,7 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 - **CLI 或 MCP。** 管理命令支持 `--json`，返回带版本号的结果；`tslink mcp` 通过 MCP 提供应用和访问管理操作。
+- **只分享一个文件。** 智能体可以用 `tslink share ./report.html` 只分享它的 HTML 报告；同一文件夹里的其他文件仍然访问不到。
 - **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，权限范围限于你指定的应用。`tslink mcp-audit` 显示智能体改了什么。角色只限制 TSLink 的工具，管不到智能体自己的 shell。
 
 [智能体快速开始](agent-quickstart.md) · [MCP 权限](mcp-scopes.md) · [远程 MCP](remote-mcp.md)
