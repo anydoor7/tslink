@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 แพ็กเกจ `.deb` และ `.rpm` สำหรับ Linux และบิลด์สำหรับ Windows อยู่ใน[รุ่นล่าสุด](https://github.com/anydoor7/tslink/releases/latest) ครั้งแรกที่คุณแชร์แอป TSLink จะแสดงลิงก์ลงชื่อเข้าใช้ Tailscale สำหรับแอปนั้น [เริ่มต้นใช้งาน](getting-started.md)
 
+<a id="why"></a>
+
+## เมื่อไหร่ที่ต้องใช้ TSLink
+
+ถ้าเปิดแอปเดียวบนอุปกรณ์ของคุณเอง Serve ก็พอ TSLink รวมที่อยู่ของแอป กำหนดเวลา และการเปลี่ยนสิทธิ์เข้าถึงไว้ในขั้นตอนเดียว
+
+| งาน | ใช้ Tailscale อย่างเดียว | TSLink |
+|---|---|---|
+| เว็บแอปหนึ่งตัวบนมือถือ | `tailscale serve 3000` ก็พอ | `tslink share 3000` |
+| หลายแอป แต่ละแอปมีชื่อของตัวเอง | ตั้งค่า Services หรือแยกโหนด | `share`/`add` หนึ่งครั้งต่อแอป และลงทะเบียนทีละโหนด |
+| หนึ่งคน หนึ่งแอป เจ็ดวัน | เขียนกฎนโยบาย แล้วใช้เครื่องมือ JIT หรือลบเอง | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/ไฟล์) |
+| ลิงก์สำหรับเบราว์เซอร์ สามวัน | Funnel แบบสาธารณะ ต้องเพิ่มด่านตรวจและตั้งเวลาปิดเอง | `tslink guest create photos --for 3d --public --print-link` (HTTP เท่านั้น) |
+
+ผู้รับแบบส่วนตัวต้องมี Tailscale ลิงก์ผู้เยี่ยมชมเป็นลิงก์สาธารณะ ใครมีลิงก์ก็เปิดและส่งต่อได้
+
+[การเปรียบเทียบฉบับเต็ม](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## แอปของคุณ บนอุปกรณ์ของคุณเอง

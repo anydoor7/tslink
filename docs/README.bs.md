@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux paketi `.deb` i `.rpm` te Windows verzije nalaze se u [najnovijem izdanju](https://github.com/anydoor7/tslink/releases/latest). Kada prvi put podijelite aplikaciju, TSLink prikaže Tailscale link za prijavu za nju. [Prvi koraci](getting-started.md)
 
+<a id="why"></a>
+
+## Kada vam treba TSLink
+
+Za jednu aplikaciju na vlastitim uređajima dovoljan je Serve. TSLink objedinjuje adrese aplikacija, rokove i promjene pristupa u jednom toku rada.
+
+| Zadatak | Samo Tailscale | TSLink |
+|---|---|---|
+| Jedna web aplikacija na telefonu | Dovoljno je `tailscale serve 3000` | `tslink share 3000` |
+| Više aplikacija, svaka sa svojim imenom | Podešavanje Services ili zasebni čvorovi | Jedan `share`/`add` po aplikaciji; prijavite svaki čvor |
+| Jedna osoba, jedna aplikacija, sedam dana | Pravila politike, pa JIT alat ili ručno uklanjanje | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/fajlovi) |
+| Link za preglednik, tri dana | Javni Funnel; sami dodajte kontrolu pristupa i zakazano gašenje | `tslink guest create photos --for 3d --public --print-link` (samo HTTP) |
+
+Privatni primaoci trebaju Tailscale. Linkovi za goste su javni: svako ko ima link može ga otvoriti i proslijediti.
+
+[Potpuno poređenje](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Vaše aplikacije, na vašim uređajima

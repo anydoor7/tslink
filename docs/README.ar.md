@@ -28,6 +28,23 @@ brew install --cask anydoor7/tap/tslink
 
 حزم Linux بصيغتي `.deb` و`.rpm` وإصدارات Windows متاحة في [أحدث إصدار](https://github.com/anydoor7/tslink/releases/latest). في أول مرة تشارك فيها تطبيقا، يعرض TSLink رابط تسجيل دخول إلى Tailscale خاصا به. [البدء](getting-started.md)
 
+<a id="why"></a>
+
+## متى تحتاج TSLink
+
+لتطبيق واحد على أجهزتك يكفي Serve. يجمع TSLink عناوين التطبيقات والمهل وتغييرات الوصول في سير عمل واحد.
+
+| المهمة | Tailscale وحده | TSLink |
+|---|---|---|
+| تطبيق ويب واحد على هاتفك | يكفي `tailscale serve 3000` | `tslink share 3000` |
+| عدة تطبيقات، لكل منها اسمه | إعداد Services، أو عقد منفصلة | أمر `share`/`add` واحد لكل تطبيق؛ وسجّل كل عقدة |
+| شخص واحد، تطبيق واحد، سبعة أيام | قواعد سياسة، ثم أداة JIT أو إزالة يدوية | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/ملفات) |
+| رابط للمتصفح، ثلاثة أيام | Funnel عام؛ أضف بنفسك بوابة وصول وإيقافًا مجدولًا | `tslink guest create photos --for 3d --public --print-link` (HTTP فقط) |
+
+يحتاج المستلمون الخاصون إلى Tailscale. روابط الضيوف عامة: يستطيع أي شخص لديه الرابط فتحه وإعادة إرساله.
+
+[المقارنة الكاملة](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## تطبيقاتك، على أجهزتك

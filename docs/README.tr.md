@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux `.deb` ve `.rpm` paketleri ile Windows sürümleri [son sürüm](https://github.com/anydoor7/tslink/releases/latest) sayfasında. Bir uygulamayı ilk kez paylaştığınızda TSLink onun için bir Tailscale oturum açma bağlantısı gösterir. [Başlarken](getting-started.md)
 
+<a id="why"></a>
+
+## TSLink'e ne zaman ihtiyaç duyarsınız
+
+Kendi cihazlarınızda tek bir uygulama için Serve yeterli. TSLink uygulama adreslerini, süreleri ve erişim değişikliklerini tek bir akışta toplar.
+
+| İş | Yalnızca Tailscale | TSLink |
+|---|---|---|
+| Telefonda tek bir web uygulaması | `tailscale serve 3000` yeterli | `tslink share 3000` |
+| Birden çok uygulama, her birine ayrı ad | Services kurulumu veya ayrı düğümler | Her uygulama için bir `share`/`add`; her düğümü kaydedin |
+| Bir kişi, bir uygulama, yedi gün | Politika kuralları, ardından bir JIT aracı veya elle kaldırma | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/dosyalar) |
+| Tarayıcı bağlantısı, üç gün | Herkese açık Funnel; erişim kapısını ve zamanlanmış kapatmayı siz ekleyin | `tslink guest create photos --for 3d --public --print-link` (yalnızca HTTP) |
+
+Özel alıcıların Tailscale'e ihtiyacı vardır. Konuk bağlantıları herkese açıktır: bağlantıya sahip olan herkes açabilir ve iletebilir.
+
+[Ayrıntılı karşılaştırma](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Uygulamalarınız, kendi cihazlarınızda

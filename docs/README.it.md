@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 I pacchetti Linux `.deb` e `.rpm` e le build per Windows sono nell'[ultima release](https://github.com/anydoor7/tslink/releases/latest). La prima volta che condividi un'app, TSLink mostra un link di accesso a Tailscale per quell'app. [Primi passi](getting-started.md)
 
+<a id="why"></a>
+
+## Quando ti serve TSLink
+
+Per un'app sui tuoi dispositivi basta Serve. TSLink riunisce indirizzi delle app, scadenze e modifiche agli accessi in un unico flusso.
+
+| Obiettivo | Solo Tailscale | TSLink |
+|---|---|---|
+| Una web app sul telefono | Basta `tailscale serve 3000` | `tslink share 3000` |
+| Più app, ognuna con il suo nome | Configurare Services, o nodi separati | Un `share`/`add` per app; registrare ogni nodo |
+| Una persona, un'app, sette giorni | Regole di policy, poi uno strumento JIT o la rimozione manuale | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/file) |
+| Link per browser, tre giorni | Funnel pubblico; aggiungere un controllo d'accesso e lo spegnimento programmato | `tslink guest create photos --for 3d --public --print-link` (solo HTTP) |
+
+I destinatari privati hanno bisogno di Tailscale. I link ospite sono pubblici: chi ha il link può aprirlo e inoltrarlo.
+
+[Confronto completo](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Le tue app, sui tuoi dispositivi

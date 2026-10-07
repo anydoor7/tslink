@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux용 `.deb`, `.rpm` 패키지와 Windows 빌드는 [최신 릴리스](https://github.com/anydoor7/tslink/releases/latest)에 있습니다. 앱을 처음 공유할 때 TSLink가 그 앱의 Tailscale 로그인 링크를 보여 줍니다. [시작하기](getting-started.md)
 
+<a id="why"></a>
+
+## TSLink가 필요한 경우
+
+내 기기에서 앱 하나를 여는 정도라면 Serve로 충분합니다. TSLink는 앱 주소, 기한, 접근 변경을 하나의 흐름으로 다룹니다.
+
+| 작업 | Tailscale만 사용 | TSLink |
+|---|---|---|
+| 휴대폰에서 웹 앱 하나 열기 | `tailscale serve 3000`이면 충분 | `tslink share 3000` |
+| 앱 여러 개, 이름은 따로 | Services 설정 또는 별도 노드 | 앱마다 `share`/`add` 한 번, 노드마다 등록 |
+| 한 사람에게 앱 하나를 7일간 | 정책 규칙을 쓴 뒤 JIT(임시 접근) 도구나 수동 삭제 | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/파일) |
+| 브라우저 링크, 3일간 | 공개 Funnel. 접근 관문과 예약 종료는 직접 추가 | `tslink guest create photos --for 3d --public --print-link` (HTTP만) |
+
+비공개로 공유받는 사람은 Tailscale이 필요합니다. 게스트 링크는 공개 링크라서 가진 사람은 누구나 열 수 있고 전달할 수도 있습니다.
+
+[전체 비교](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## 내 앱을 내 기기에서

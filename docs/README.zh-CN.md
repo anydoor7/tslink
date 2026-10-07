@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux 的 `.deb`、`.rpm` 安装包和 Windows 版本在[最新发布](https://github.com/anydoor7/tslink/releases/latest)页面。第一次分享应用时，TSLink 会给出这个应用的 Tailscale 登录链接。[上手指南](getting-started.md)
 
+<a id="why"></a>
+
+## 什么时候需要 TSLink
+
+只在自己的设备上打开一个应用，用 Serve 就够了。TSLink 把应用地址、期限和访问变更放进同一套流程。
+
+| 场景 | 只用 Tailscale | TSLink |
+|---|---|---|
+| 在手机上打开一个 Web 应用 | `tailscale serve 3000` 就够了 | `tslink share 3000` |
+| 多个应用，各用各的名字 | 配置 Services，或分别运行节点 | 每个应用一次 `share`/`add`，每个节点分别登录 |
+| 一个人，一个应用，七天 | 先写策略规则，再用 JIT 临时授权工具或手动移除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/文件） |
+| 浏览器链接，三天 | 公开的 Funnel；自己加访问关卡，并安排到期关闭 | `tslink guest create photos --for 3d --public --print-link`（仅 HTTP） |
+
+私有访问的对象需要安装 Tailscale。访客链接是公开的，拿到链接就能打开，也能转给别人。
+
+[完整对比](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## 你的应用，在自己的设备上打开

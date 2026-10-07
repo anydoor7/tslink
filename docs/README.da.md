@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux-pakker (`.deb` og `.rpm`) og Windows-builds ligger under [seneste udgivelse](https://github.com/anydoor7/tslink/releases/latest). Første gang du deler en app, viser TSLink et Tailscale-loginlink til den. [Kom godt i gang](getting-started.md)
 
+<a id="why"></a>
+
+## Hvornår du har brug for TSLink
+
+Til én app på dine egne enheder er Serve nok. TSLink samler app-adresser, frister og adgangsændringer i ét forløb.
+
+| Opgave | Kun Tailscale | TSLink |
+|---|---|---|
+| Én webapp på din telefon | `tailscale serve 3000` er nok | `tslink share 3000` |
+| Flere apps, hver sit navn | Opsætning af Services eller separate noder | Én `share`/`add` pr. app; tilmeld hver node |
+| Én person, én app, syv dage | Politikregler, derefter et JIT-værktøj eller manuel fjernelse | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/filer) |
+| Browserlink, tre dage | Offentlig Funnel; tilføj selv adgangskontrol og planlagt lukning | `tslink guest create photos --for 3d --public --print-link` (kun HTTP) |
+
+Private modtagere skal have Tailscale. Gæstelinks er offentlige: alle med linket kan åbne og videresende det.
+
+[Fuld sammenligning](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Dine apps, på dine egne enheder

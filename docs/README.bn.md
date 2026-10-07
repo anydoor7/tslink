@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux-এর `.deb` ও `.rpm` প্যাকেজ এবং Windows বিল্ড [সর্বশেষ রিলিজে](https://github.com/anydoor7/tslink/releases/latest) আছে। প্রথমবার কোনো অ্যাপ শেয়ার করলে TSLink সেটির জন্য একটি Tailscale সাইন-ইন লিংক দেখায়। [শুরু করা](getting-started.md)
 
+<a id="why"></a>
+
+## কখন TSLink দরকার
+
+নিজের ডিভাইসে একটি অ্যাপ খোলার জন্য Serve-ই যথেষ্ট। TSLink অ্যাপের ঠিকানা, মেয়াদ ও অ্যাক্সেস পরিবর্তন এক কাজের ধারায় রাখে।
+
+| কাজ | শুধু Tailscale | TSLink |
+|---|---|---|
+| ফোনে একটি ওয়েব অ্যাপ | `tailscale serve 3000`-ই যথেষ্ট | `tslink share 3000` |
+| একাধিক অ্যাপ, প্রতিটির আলাদা নাম | Services সেটআপ, অথবা আলাদা নোড | প্রতি অ্যাপে একবার `share`/`add`; প্রতিটি নোড নিবন্ধন করুন |
+| একজন মানুষ, একটি অ্যাপ, সাত দিন | নীতির নিয়ম, তারপর JIT টুল বা হাতে সরানো | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/ফাইল) |
+| ব্রাউজার লিংক, তিন দিন | প্রকাশ্য Funnel; প্রবেশ নিয়ন্ত্রণ ও নির্ধারিত বন্ধ নিজে যোগ করুন | `tslink guest create photos --for 3d --public --print-link` (শুধু HTTP) |
+
+ব্যক্তিগতভাবে যাদের সঙ্গে শেয়ার করবেন, তাদের Tailscale লাগবে। অতিথি লিংক প্রকাশ্য: লিংক যার কাছে আছে সে-ই খুলতে ও অন্যকে পাঠাতে পারে।
+
+[পূর্ণ তুলনা](comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## আপনার অ্যাপ, আপনার নিজের ডিভাইসে
