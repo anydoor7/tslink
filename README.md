@@ -30,7 +30,7 @@ Linux `.deb` and `.rpm` packages and Windows builds are on the [latest release](
 
 ## Your apps, on your own devices
 
-- **An address for each app.** Web apps, folders, single files and TCP ports each get their own name in your tailnet, so you open them by name instead of by IP address and port.
+- **An address for each app.** Web apps, folders, single files and TCP ports each get their own name in your tailnet, so you use names instead of IP addresses.
 - **Private by default.** Nothing is public until you create a guest link or publish through Funnel.
 - **A home page** that lists your apps with their health. [Portal](docs/portal.md)
 - **Health checks and alerts** by command or webhook, and an access log that includes denied requests. [Health and alerts](docs/health-and-alerts.md) · [Access history](docs/access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Guest links and public URLs always expire and work for web apps only; folders, files and TCP ports stay private. [People](docs/people.md) · [Guest links](docs/guest-links.md) · [Public access](docs/funnel.md)
+Guest links and new public URLs expire and work for web apps only; folders, files and TCP ports stay private. [People](docs/people.md) · [Guest links](docs/guest-links.md) · [Public access](docs/funnel.md)
 
 <a id="agents"></a>
 
 ## For AI agents
 
-A dev server an agent starts on `localhost` is out of reach from your phone. TSLink lets the agent give it a private address, report the exact URL and remove it when done, within a role you choose.
+A dev server an agent starts on `localhost` is out of reach from your phone. TSLink lets the agent give it a private address, report the exact URL and remove it when done.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI or MCP.** Management commands take `--json` and return versioned results; `tslink mcp` offers the same operations over MCP.
+- **CLI or MCP.** Management commands take `--json` and return versioned results; `tslink mcp` offers app and access operations over MCP.
 - **Limited roles.** `viewer`, `app-operator` or `people-manager`, scoped to the apps you name. `tslink mcp-audit` shows what an agent changed. Roles limit TSLink's tools, not the agent's own shell.
 
 [Agent quickstart](docs/agent-quickstart.md) · [MCP scopes](docs/mcp-scopes.md) · [Remote MCP](docs/remote-mcp.md)
@@ -81,11 +81,11 @@ One background process runs a separate Tailscale node for each app. Tailscale pr
 | Who | Needs |
 |---|---|
 | You | A Tailscale account with MagicDNS and HTTPS turned on |
-| The machine running your apps | Only TSLink, which embeds Tailscale |
+| The machine running your apps | TSLink, which embeds Tailscale (on Linux, a systemd user session) |
 | Your devices, and people you share with | The Tailscale app |
 | Guests | A browser |
 
-App names appear in public certificate logs, so pick names you are happy for others to see.
+Names of HTTPS apps appear in public certificate logs, so pick names you are happy for others to see.
 
 <a id="documentation"></a>
 
