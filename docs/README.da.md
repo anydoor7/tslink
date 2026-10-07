@@ -30,7 +30,7 @@ Linux-pakker (`.deb` og `.rpm`) og Windows-builds ligger under [seneste udgivels
 
 ## Dine apps, på dine egne enheder
 
-- **En adresse til hver app.** Webapps, mapper, enkeltfiler og TCP-porte får hver deres eget navn i dit tailnet, så du åbner dem ved navn i stedet for IP-adresse og port.
+- **En adresse til hver app.** Webapps, mapper, enkeltfiler og TCP-porte får hver deres eget navn i dit tailnet, så du bruger navne i stedet for IP-adresser.
 - **Privat som standard.** Intet er offentligt, før du opretter et gæstelink eller udgiver via Funnel.
 - **En startside**, der viser dine apps og deres tilstand. [Portal](portal.md)
 - **Sundhedstjek og alarmer** via kommando eller webhook, og en adgangslog, der også viser afviste forespørgsler. [Sundhed og alarmer](health-and-alerts.md) · [Adgangshistorik](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Gæstelinks og offentlige URL'er udløber altid og virker kun til webapps; mapper, filer og TCP-porte forbliver private. [Personer](people.md) · [Gæstelinks](guest-links.md) · [Offentlig adgang](funnel.md)
+Gæstelinks og nye offentlige URL'er udløber og virker kun til webapps; mapper, filer og TCP-porte forbliver private. [Personer](people.md) · [Gæstelinks](guest-links.md) · [Offentlig adgang](funnel.md)
 
 <a id="agents"></a>
 
 ## Til AI-agenter
 
-En udviklingsserver, som en agent starter på `localhost`, kan du ikke nå fra din telefon. Med TSLink kan agenten give den en privat adresse, oplyse den præcise URL og fjerne den igen bagefter, inden for en rolle du vælger.
+En udviklingsserver, som en agent starter på `localhost`, kan du ikke nå fra din telefon. Med TSLink kan agenten give den en privat adresse, oplyse den præcise URL og fjerne den igen bagefter.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI eller MCP.** Styringskommandoerne tager `--json` og returnerer versionerede resultater; `tslink mcp` tilbyder de samme handlinger over MCP.
+- **CLI eller MCP.** Styringskommandoerne tager `--json` og returnerer versionerede resultater; `tslink mcp` tilbyder handlinger for apps og adgang over MCP.
 - **Begrænsede roller.** `viewer`, `app-operator` eller `people-manager`, afgrænset til de apps du angiver. `tslink mcp-audit` viser, hvad en agent har ændret. Roller begrænser TSLinks værktøjer, ikke agentens egen shell.
 
 [Agentguide](agent-quickstart.md) · [MCP-rettigheder](mcp-scopes.md) · [Fjern-MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ En baggrundsproces kører en separat Tailscale-node for hver app. Tailscale stå
 | Hvem | Skal bruge |
 |---|---|
 | Dig | En Tailscale-konto med MagicDNS og HTTPS slået til |
-| Maskinen, der kører dine apps | Kun TSLink, som har Tailscale indbygget |
+| Maskinen, der kører dine apps | TSLink, som har Tailscale indbygget (på Linux en systemd-brugersession) |
 | Dine enheder og dem, du deler med | Tailscale-appen |
 | Gæster | En browser |
 
-Appnavne vises i offentlige certifikatlogs, så vælg navne, du ikke har noget imod, at andre ser.
+Navne på HTTPS-apps vises i offentlige certifikatlogs, så vælg navne, du ikke har noget imod, at andre ser.
 
 <a id="documentation"></a>
 

@@ -30,7 +30,7 @@ Linux `.deb` ve `.rpm` paketleri ile Windows sürümleri [son sürüm](https://g
 
 ## Uygulamalarınız, kendi cihazlarınızda
 
-- **Her uygulamaya bir adres.** Web uygulamaları, klasörler, tek dosyalar ve TCP portları tailnet'inizde kendi adını alır; onları IP adresi ve port yerine adıyla açarsınız.
+- **Her uygulamaya bir adres.** Web uygulamaları, klasörler, tek dosyalar ve TCP portları tailnet'inizde kendi adını alır; IP adresleri yerine adları kullanırsınız.
 - **Varsayılan olarak özel.** Bir konuk bağlantısı oluşturana ya da Funnel ile yayımlayana kadar hiçbir şey herkese açık olmaz.
 - **Bir ana sayfa**, uygulamalarınızı sağlık durumlarıyla listeler. [Portal](portal.md)
 - **Sağlık kontrolleri ve uyarılar** komut ya da webhook ile; erişim günlüğü reddedilen istekleri de içerir. [Sağlık ve uyarılar](health-and-alerts.md) · [Erişim geçmişi](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Konuk bağlantılarının ve herkese açık URL'lerin süresi her zaman dolar ve yalnızca web uygulamalarında çalışır; klasörler, dosyalar ve TCP portları özel kalır. [Kişiler](people.md) · [Konuk bağlantıları](guest-links.md) · [Herkese açık erişim](funnel.md)
+Konuk bağlantılarının ve yeni herkese açık URL'lerin süresi dolar ve yalnızca web uygulamalarında çalışır; klasörler, dosyalar ve TCP portları özel kalır. [Kişiler](people.md) · [Konuk bağlantıları](guest-links.md) · [Herkese açık erişim](funnel.md)
 
 <a id="agents"></a>
 
 ## Yapay zekâ ajanları için
 
-Bir ajanın `localhost` üzerinde başlattığı geliştirme sunucusuna telefonunuzdan ulaşamazsınız. TSLink, ajanın seçtiğiniz bir rol içinde ona özel bir adres vermesini, tam URL'yi bildirmesini ve iş bitince kaldırmasını sağlar.
+Bir ajanın `localhost` üzerinde başlattığı geliştirme sunucusuna telefonunuzdan ulaşamazsınız. TSLink, ajanın ona özel bir adres vermesini, tam URL'yi bildirmesini ve iş bitince kaldırmasını sağlar.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI veya MCP.** Yönetim komutları `--json` alır ve sürümlü sonuçlar döndürür; `tslink mcp` aynı işlemleri MCP üzerinden sunar.
+- **CLI veya MCP.** Yönetim komutları `--json` alır ve sürümlü sonuçlar döndürür; `tslink mcp` uygulama ve erişim işlemlerini MCP üzerinden sunar.
 - **Sınırlı roller.** `viewer`, `app-operator` veya `people-manager`, belirttiğiniz uygulamalarla sınırlı. `tslink mcp-audit` bir ajanın neyi değiştirdiğini gösterir. Roller TSLink'in araçlarını sınırlar, ajanın kendi kabuğunu değil.
 
 [Ajan kılavuzu](agent-quickstart.md) · [MCP yetkileri](mcp-scopes.md) · [Uzak MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ Tek bir arka plan süreci her uygulama için ayrı bir Tailscale düğümü çal
 | Kim | Ne gerekir |
 |---|---|
 | Siz | MagicDNS ve HTTPS'i açık bir Tailscale hesabı |
-| Uygulamalarınızı çalıştıran makine | Yalnızca TSLink (Tailscale içinde gelir) |
+| Uygulamalarınızı çalıştıran makine | TSLink (Tailscale içinde gelir; Linux'ta bir systemd kullanıcı oturumu) |
 | Cihazlarınız ve paylaştığınız kişiler | Tailscale uygulaması |
 | Konuklar | Bir tarayıcı |
 
-Uygulama adları herkese açık sertifika günlüklerinde görünür; başkalarının görmesinde sakınca olmayan adlar seçin.
+HTTPS uygulamalarının adları herkese açık sertifika günlüklerinde görünür; başkalarının görmesinde sakınca olmayan adlar seçin.
 
 <a id="documentation"></a>
 

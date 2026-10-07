@@ -30,7 +30,7 @@ Linux용 `.deb`, `.rpm` 패키지와 Windows 빌드는 [최신 릴리스](https:
 
 ## 내 앱을 내 기기에서
 
-- **앱마다 주소 하나.** 웹 앱, 폴더, 단일 파일, TCP 포트가 tailnet 안에서 각자 이름을 가지므로 IP 주소와 포트 대신 이름으로 엽니다.
+- **앱마다 주소 하나.** 웹 앱, 폴더, 단일 파일, TCP 포트가 tailnet 안에서 각자 이름을 가지므로 IP 주소 대신 이름을 씁니다.
 - **기본은 비공개.** 게스트 링크를 만들거나 Funnel로 공개하기 전에는 아무것도 공개되지 않습니다.
 - **홈 페이지**에서 앱과 상태를 한눈에 봅니다. [포털](portal.md)
 - **상태 점검과 알림**을 명령이나 webhook으로 받고, 접속 이력에는 거부된 요청도 남습니다. [상태 점검과 알림](health-and-alerts.md) · [접속 이력](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-게스트 링크와 공개 URL은 항상 만료되며 웹 앱에만 쓸 수 있습니다. 폴더, 파일, TCP 포트는 비공개로 남습니다. [사용자 공유](people.md) · [게스트 링크](guest-links.md) · [공개 접속](funnel.md)
+게스트 링크와 새 공개 URL은 만료되며 웹 앱에만 쓸 수 있습니다. 폴더, 파일, TCP 포트는 비공개로 남습니다. [사용자 공유](people.md) · [게스트 링크](guest-links.md) · [공개 접속](funnel.md)
 
 <a id="agents"></a>
 
 ## AI 에이전트용
 
-에이전트가 `localhost`에서 띄운 개발 서버는 휴대폰에서 닿지 않습니다. TSLink를 쓰면 에이전트가 여러분이 정한 역할 안에서 그 서버에 비공개 주소를 주고, 정확한 URL을 알려 주고, 끝나면 지울 수 있습니다.
+에이전트가 `localhost`에서 띄운 개발 서버는 휴대폰에서 닿지 않습니다. TSLink를 쓰면 에이전트가 그 서버에 비공개 주소를 주고, 정확한 URL을 알려 주고, 끝나면 지울 수 있습니다.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI 또는 MCP.** 관리 명령은 `--json`을 받아 버전이 붙은 결과를 돌려주고, `tslink mcp`는 같은 작업을 MCP로 제공합니다.
+- **CLI 또는 MCP.** 관리 명령은 `--json`을 받아 버전이 붙은 결과를 돌려주고, `tslink mcp`는 앱과 접근 관련 작업을 MCP로 제공합니다.
 - **제한된 역할.** `viewer`, `app-operator`, `people-manager` 중 하나를, 지정한 앱 범위로 줍니다. `tslink mcp-audit`로 에이전트가 바꾼 내용을 볼 수 있습니다. 역할은 TSLink의 도구를 제한할 뿐, 에이전트 자신의 셸까지 막지는 않습니다.
 
 [에이전트 빠른 시작](agent-quickstart.md) · [MCP 권한](mcp-scopes.md) · [원격 MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 | 누구 | 필요한 것 |
 |---|---|
 | 나 | MagicDNS와 HTTPS를 켠 Tailscale 계정 |
-| 앱을 실행하는 컴퓨터 | TSLink만 있으면 됨 (Tailscale 내장) |
+| 앱을 실행하는 컴퓨터 | TSLink (Tailscale 내장, Linux에서는 systemd 사용자 세션 필요) |
 | 내 기기와 공유 상대 | Tailscale 앱 |
 | 게스트 | 브라우저 |
 
-앱 이름은 공개 인증서 로그에 나타나므로 남이 봐도 괜찮은 이름을 고르세요.
+HTTPS 앱의 이름은 공개 인증서 로그에 나타나므로 남이 봐도 괜찮은 이름을 고르세요.
 
 <a id="documentation"></a>
 

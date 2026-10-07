@@ -30,7 +30,7 @@ Linux paketi `.deb` i `.rpm` te Windows verzije nalaze se u [najnovijem izdanju]
 
 ## Vaše aplikacije, na vašim uređajima
 
-- **Adresa za svaku aplikaciju.** Web aplikacije, folderi, pojedinačni fajlovi i TCP portovi dobijaju vlastito ime u vašem tailnetu, pa ih otvarate po imenu umjesto po IP adresi i portu.
+- **Adresa za svaku aplikaciju.** Web aplikacije, folderi, pojedinačni fajlovi i TCP portovi dobijaju vlastito ime u vašem tailnetu, pa koristite imena umjesto IP adresa.
 - **Podrazumijevano privatno.** Ništa nije javno dok ne napravite link za goste ili objavite kroz Funnel.
 - **Početna stranica** sa spiskom vaših aplikacija i njihovim stanjem. [Portal](portal.md)
 - **Provjere stanja i upozorenja** putem komande ili webhooka, uz zapis pristupa koji uključuje i odbijene zahtjeve. [Stanje i upozorenja](health-and-alerts.md) · [Historija pristupa](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Linkovi za goste i javni URL-ovi uvijek ističu i rade samo za web aplikacije; folderi, fajlovi i TCP portovi ostaju privatni. [Osobe](people.md) · [Linkovi za goste](guest-links.md) · [Javni pristup](funnel.md)
+Linkovi za goste i novi javni URL-ovi ističu i rade samo za web aplikacije; folderi, fajlovi i TCP portovi ostaju privatni. [Osobe](people.md) · [Linkovi za goste](guest-links.md) · [Javni pristup](funnel.md)
 
 <a id="agents"></a>
 
 ## Za AI agente
 
-Razvojni server koji agent pokrene na `localhost` nije dostupan s vašeg telefona. TSLink omogućava agentu da mu dodijeli privatnu adresu, javi tačan URL i ukloni ga kad završi, u okviru uloge koju vi odaberete.
+Razvojni server koji agent pokrene na `localhost` nije dostupan s vašeg telefona. TSLink omogućava agentu da mu dodijeli privatnu adresu, javi tačan URL i ukloni ga kad završi.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI ili MCP.** Komande za upravljanje primaju `--json` i vraćaju verzionisane rezultate; `tslink mcp` nudi iste operacije preko MCP-a.
+- **CLI ili MCP.** Komande za upravljanje primaju `--json` i vraćaju verzionisane rezultate; `tslink mcp` nudi operacije za aplikacije i pristup preko MCP-a.
 - **Ograničene uloge.** `viewer`, `app-operator` ili `people-manager`, ograničene na aplikacije koje navedete. `tslink mcp-audit` pokazuje šta je agent promijenio. Uloge ograničavaju TSLink alate, a ne agentov vlastiti shell.
 
 [Vodič za agente](agent-quickstart.md) · [MCP ovlasti](mcp-scopes.md) · [Udaljeni MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ Jedan pozadinski proces pokreće zaseban Tailscale čvor za svaku aplikaciju. Ta
 | Ko | Šta treba |
 |---|---|
 | Vi | Tailscale račun s uključenim MagicDNS i HTTPS |
-| Računar na kojem rade vaše aplikacije | Samo TSLink, koji ima ugrađen Tailscale |
+| Računar na kojem rade vaše aplikacije | TSLink, koji ima ugrađen Tailscale (na Linuxu i systemd korisnička sesija) |
 | Vaši uređaji i osobe s kojima dijelite | Tailscale aplikacija |
 | Gosti | Preglednik |
 
-Imena aplikacija pojavljuju se u javnim zapisima certifikata, pa birajte imena koja drugi smiju vidjeti.
+Imena HTTPS aplikacija pojavljuju se u javnim zapisima certifikata, pa birajte imena koja drugi smiju vidjeti.
 
 <a id="documentation"></a>
 

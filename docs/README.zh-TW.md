@@ -30,7 +30,7 @@ Linux 的 `.deb`、`.rpm` 套件和 Windows 版本在[最新版本](https://gith
 
 ## 你的應用程式，在自己的裝置上開啟
 
-- **每個應用程式一個網址。** Web 應用程式、資料夾、單一檔案和 TCP 連接埠在你的 tailnet 裡各有自己的名稱，用名稱開啟即可，不必記 IP 位址和連接埠。
+- **每個應用程式一個網址。** Web 應用程式、資料夾、單一檔案和 TCP 連接埠在你的 tailnet 裡各有自己的名稱，用名稱就好，不必記 IP 位址。
 - **預設私人。** 只有在你建立訪客連結或透過 Funnel 發布之後，才會有公開入口。
 - **一個入口頁**，列出你的應用程式和它們的健康狀態。[入口頁](portal.md)
 - **健康檢查與警示**，透過指令或 webhook 通知；存取紀錄也包含遭拒的請求。[健康檢查與警示](health-and-alerts.md) · [存取紀錄](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-訪客連結和公開網址一定會過期，而且只適用於 Web 應用程式；資料夾、檔案和 TCP 連接埠一律保持私人。[人員授權](people.md) · [訪客連結](guest-links.md) · [公開存取](funnel.md)
+訪客連結和新建立的公開網址會過期，而且只適用於 Web 應用程式；資料夾、檔案和 TCP 連接埠一律保持私人。[人員授權](people.md) · [訪客連結](guest-links.md) · [公開存取](funnel.md)
 
 <a id="agents"></a>
 
 ## 給 AI 代理
 
-AI 代理在 `localhost` 上啟動的開發伺服器，你的手機連不到。有了 TSLink，代理可以在你選定的角色範圍內給它一個私人網址，回報確切的 URL，用完再移除。
+AI 代理在 `localhost` 上啟動的開發伺服器，你的手機連不到。有了 TSLink，代理可以給它一個私人網址，回報確切的 URL，用完再移除。
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI 或 MCP。** 管理指令支援 `--json`，回傳帶版本號的結果；`tslink mcp` 透過 MCP 提供同樣的操作。
+- **CLI 或 MCP。** 管理指令支援 `--json`，回傳帶版本號的結果；`tslink mcp` 透過 MCP 提供應用程式和存取管理操作。
 - **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，只能管理你指定的應用程式。`tslink mcp-audit` 顯示代理改了什麼。角色只限制 TSLink 的工具，管不到代理自己的 shell。
 
 [代理快速開始](agent-quickstart.md) · [MCP 權限](mcp-scopes.md) · [遠端 MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ AI 代理在 `localhost` 上啟動的開發伺服器，你的手機連不到。�
 | 誰 | 需要什麼 |
 |---|---|
 | 你 | 已開啟 MagicDNS 和 HTTPS 的 Tailscale 帳號 |
-| 執行應用程式的機器 | 只要 TSLink，它內建 Tailscale |
+| 執行應用程式的機器 | TSLink，它內建 Tailscale；在 Linux 上還需要 systemd 使用者工作階段 |
 | 你的裝置，以及你分享的對象 | Tailscale App |
 | 訪客 | 瀏覽器 |
 
-應用程式名稱會出現在公開的憑證紀錄裡，請選你不介意別人看到的名稱。
+HTTPS 應用程式的名稱會出現在公開的憑證紀錄裡，請選你不介意別人看到的名稱。
 
 <a id="documentation"></a>
 

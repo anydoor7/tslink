@@ -30,7 +30,7 @@ Linux 向けの `.deb` と `.rpm` パッケージ、Windows 版は[最新リリ�
 
 ## 自分のアプリを、自分のデバイスで
 
-- **アプリごとのアドレス。** Web アプリ、フォルダー、単一ファイル、TCP ポートがそれぞれ tailnet 内で名前を持つので、IP アドレスとポートではなく名前で開けます。
+- **アプリごとのアドレス。** Web アプリ、フォルダー、単一ファイル、TCP ポートがそれぞれ tailnet 内で名前を持つので、IP アドレスではなく名前で使えます。
 - **最初は非公開。** ゲストリンクを作るか Funnel で公開するまで、何も公開されません。
 - **ホームページ**にアプリと稼働状態を一覧表示します。[ポータル](portal.md)
 - **稼働監視と通知**はコマンドか webhook で。アクセス履歴には拒否されたリクエストも残ります。[稼働監視と通知](health-and-alerts.md) · [アクセス履歴](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-ゲストリンクと公開 URL には必ず期限があり、使えるのは Web アプリだけです。フォルダー、ファイル、TCP ポートは非公開のままです。[ユーザー共有](people.md) · [ゲストリンク](guest-links.md) · [一般公開](funnel.md)
+ゲストリンクと新しい公開 URL には期限があり、使えるのは Web アプリだけです。フォルダー、ファイル、TCP ポートは非公開のままです。[ユーザー共有](people.md) · [ゲストリンク](guest-links.md) · [一般公開](funnel.md)
 
 <a id="agents"></a>
 
 ## AI エージェント向け
 
-エージェントが `localhost` で起動した開発サーバーには、スマートフォンから届きません。TSLink を使えば、エージェントはあなたが選んだロールの範囲で、そのサーバーにプライベートなアドレスを付け、正確な URL を報告し、終わったら削除できます。
+エージェントが `localhost` で起動した開発サーバーには、スマートフォンから届きません。TSLink を使えば、エージェントはそのサーバーにプライベートなアドレスを付け、正確な URL を報告し、終わったら削除できます。
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI または MCP。** 管理コマンドは `--json` に対応し、バージョン付きの結果を返します。`tslink mcp` は同じ操作を MCP で提供します。
+- **CLI または MCP。** 管理コマンドは `--json` に対応し、バージョン付きの結果を返します。`tslink mcp` はアプリとアクセスの操作を MCP で提供します。
 - **限定されたロール。** `viewer`、`app-operator`、`people-manager` から選び、対象を指定したアプリに絞れます。`tslink mcp-audit` でエージェントの変更を確認できます。ロールが制限するのは TSLink のツールで、エージェント自身のシェルには及びません。
 
 [エージェントの入門](agent-quickstart.md) · [MCP 権限](mcp-scopes.md) · [リモート MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 | 誰 | 必要なもの |
 |---|---|
 | あなた | MagicDNS と HTTPS を有効にした Tailscale アカウント |
-| アプリを動かすマシン | TSLink だけ（Tailscale を内蔵） |
+| アプリを動かすマシン | TSLink（Tailscale を内蔵。Linux では systemd のユーザーセッションも必要） |
 | 自分のデバイスと共有相手 | Tailscale アプリ |
 | ゲスト | ブラウザー |
 
-アプリ名は公開の証明書ログに載るので、人に見られても構わない名前にしてください。
+HTTPS アプリの名前は公開の証明書ログに載るので、人に見られても構わない名前にしてください。
 
 <a id="documentation"></a>
 

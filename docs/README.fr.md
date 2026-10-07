@@ -30,7 +30,7 @@ Les paquets Linux `.deb` et `.rpm` et les versions Windows se trouvent dans la [
 
 ## Vos applications, sur vos propres appareils
 
-- **Une adresse par application.** Applications web, dossiers, fichiers isolés et ports TCP reçoivent chacun leur propre nom dans votre tailnet : vous les ouvrez par leur nom, pas par adresse IP et port.
+- **Une adresse par application.** Applications web, dossiers, fichiers isolés et ports TCP reçoivent chacun leur propre nom dans votre tailnet : vous utilisez des noms plutôt que des adresses IP.
 - **Privé par défaut.** Rien n'est public tant que vous ne créez pas de lien invité ou ne publiez pas via Funnel.
 - **Une page d'accueil** qui liste vos applications et leur état. [Portail](portal.md)
 - **Contrôles de santé et alertes** par commande ou webhook, et un journal d'accès qui inclut les requêtes refusées. [Santé et alertes](health-and-alerts.md) · [Historique d'accès](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Les liens invités et les URL publiques expirent toujours et ne fonctionnent que pour les applications web ; dossiers, fichiers et ports TCP restent privés. [Personnes](people.md) · [Liens invités](guest-links.md) · [Accès public](funnel.md)
+Les liens invités et les nouvelles URL publiques expirent et ne fonctionnent que pour les applications web ; dossiers, fichiers et ports TCP restent privés. [Personnes](people.md) · [Liens invités](guest-links.md) · [Accès public](funnel.md)
 
 <a id="agents"></a>
 
 ## Pour les agents IA
 
-Un serveur de développement qu'un agent lance sur `localhost` est hors de portée de votre téléphone. TSLink permet à l'agent de lui donner une adresse privée, d'indiquer l'URL exacte et de la retirer une fois terminé, dans le rôle que vous choisissez.
+Un serveur de développement qu'un agent lance sur `localhost` est hors de portée de votre téléphone. TSLink permet à l'agent de lui donner une adresse privée, d'indiquer l'URL exacte et de la retirer une fois terminé.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI ou MCP.** Les commandes de gestion acceptent `--json` et renvoient des résultats versionnés ; `tslink mcp` propose les mêmes opérations via MCP.
+- **CLI ou MCP.** Les commandes de gestion acceptent `--json` et renvoient des résultats versionnés ; `tslink mcp` propose les opérations sur les applications et les accès via MCP.
 - **Rôles limités.** `viewer`, `app-operator` ou `people-manager`, restreints aux applications que vous désignez. `tslink mcp-audit` montre ce qu'un agent a modifié. Les rôles limitent les outils de TSLink, pas le shell de l'agent lui-même.
 
 [Guide rapide des agents](agent-quickstart.md) · [Droits MCP](mcp-scopes.md) · [MCP distant](remote-mcp.md)
@@ -81,11 +81,11 @@ Un processus en arrière-plan fait tourner un nœud Tailscale distinct pour chaq
 | Qui | Besoin |
 |---|---|
 | Vous | Un compte Tailscale avec MagicDNS et HTTPS activés |
-| La machine qui fait tourner vos applications | Seulement TSLink, qui intègre Tailscale |
+| La machine qui fait tourner vos applications | TSLink, qui intègre Tailscale (sous Linux, une session utilisateur systemd) |
 | Vos appareils et les personnes avec qui vous partagez | L'application Tailscale |
 | Invités | Un navigateur |
 
-Les noms d'applications apparaissent dans des journaux publics de certificats : choisissez des noms que d'autres peuvent voir sans gêne.
+Les noms des applications HTTPS apparaissent dans des journaux publics de certificats : choisissez des noms que d'autres peuvent voir sans gêne.
 
 <a id="documentation"></a>
 

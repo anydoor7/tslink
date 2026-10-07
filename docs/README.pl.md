@@ -30,7 +30,7 @@ Pakiety Linux `.deb` i `.rpm` oraz wersje dla Windows są w [najnowszym wydaniu]
 
 ## Twoje aplikacje na twoich urządzeniach
 
-- **Adres dla każdej aplikacji.** Aplikacje webowe, foldery, pojedyncze pliki i porty TCP dostają własne nazwy w twoim tailnecie, więc otwierasz je po nazwie, a nie po adresie IP i porcie.
+- **Adres dla każdej aplikacji.** Aplikacje webowe, foldery, pojedyncze pliki i porty TCP dostają własne nazwy w twoim tailnecie, więc używasz nazw zamiast adresów IP.
 - **Domyślnie prywatne.** Nic nie jest publiczne, dopóki nie utworzysz linku dla gościa albo nie opublikujesz przez Funnel.
 - **Strona startowa** z listą twoich aplikacji i ich stanem. [Portal](portal.md)
 - **Kontrole stanu i alerty** przez polecenie lub webhook oraz dziennik dostępu, w którym widać też odrzucone żądania. [Stan i alerty](health-and-alerts.md) · [Historia dostępu](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Linki dla gości i publiczne adresy URL zawsze wygasają i działają tylko dla aplikacji webowych; foldery, pliki i porty TCP pozostają prywatne. [Osoby](people.md) · [Linki dla gości](guest-links.md) · [Dostęp publiczny](funnel.md)
+Linki dla gości i nowe publiczne adresy URL wygasają i działają tylko dla aplikacji webowych; foldery, pliki i porty TCP pozostają prywatne. [Osoby](people.md) · [Linki dla gości](guest-links.md) · [Dostęp publiczny](funnel.md)
 
 <a id="agents"></a>
 
 ## Dla agentów AI
 
-Serwer deweloperski, który agent uruchamia na `localhost`, jest poza zasięgiem twojego telefonu. TSLink pozwala agentowi nadać mu prywatny adres, podać dokładny URL i usunąć go po zakończeniu, w ramach roli, którą wybierasz.
+Serwer deweloperski, który agent uruchamia na `localhost`, jest poza zasięgiem twojego telefonu. TSLink pozwala agentowi nadać mu prywatny adres, podać dokładny URL i usunąć go po zakończeniu.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI lub MCP.** Polecenia zarządzania przyjmują `--json` i zwracają wersjonowane wyniki; `tslink mcp` udostępnia te same operacje przez MCP.
+- **CLI lub MCP.** Polecenia zarządzania przyjmują `--json` i zwracają wersjonowane wyniki; `tslink mcp` udostępnia operacje na aplikacjach i dostępach przez MCP.
 - **Ograniczone role.** `viewer`, `app-operator` lub `people-manager`, zawężone do wskazanych aplikacji. `tslink mcp-audit` pokazuje, co agent zmienił. Role ograniczają narzędzia TSLink, a nie własną powłokę agenta.
 
 [Przewodnik agenta](agent-quickstart.md) · [Uprawnienia MCP](mcp-scopes.md) · [Zdalny MCP](remote-mcp.md)
@@ -81,11 +81,11 @@ Jeden proces w tle uruchamia osobny węzeł Tailscale dla każdej aplikacji. Tai
 | Kto | Czego potrzebuje |
 |---|---|
 | Ty | Konta Tailscale z włączonym MagicDNS i HTTPS |
-| Maszyna z twoimi aplikacjami | Tylko TSLinka, który ma wbudowany Tailscale |
+| Maszyna z twoimi aplikacjami | TSLinka, który ma wbudowany Tailscale (w Linuksie także sesji użytkownika systemd) |
 | Twoje urządzenia i osoby, którym udostępniasz | Aplikacji Tailscale |
 | Goście | Przeglądarki |
 
-Nazwy aplikacji pojawiają się w publicznych logach certyfikatów, więc wybieraj nazwy, które mogą zobaczyć inni.
+Nazwy aplikacji HTTPS pojawiają się w publicznych logach certyfikatów, więc wybieraj nazwy, które mogą zobaczyć inni.
 
 <a id="documentation"></a>
 

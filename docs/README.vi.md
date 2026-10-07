@@ -30,7 +30,7 @@ Gói `.deb` và `.rpm` cho Linux cùng bản dựng cho Windows có trong [bản
 
 ## Ứng dụng của bạn, trên thiết bị của bạn
 
-- **Mỗi ứng dụng một địa chỉ.** Ứng dụng web, thư mục, tệp đơn lẻ và cổng TCP đều có tên riêng trong tailnet của bạn, nên bạn mở bằng tên thay vì địa chỉ IP và cổng.
+- **Mỗi ứng dụng một địa chỉ.** Ứng dụng web, thư mục, tệp đơn lẻ và cổng TCP đều có tên riêng trong tailnet của bạn, nên bạn dùng tên thay vì địa chỉ IP.
 - **Mặc định là riêng tư.** Không có gì công khai cho đến khi bạn tạo liên kết khách hoặc xuất bản qua Funnel.
 - **Một trang chủ** liệt kê ứng dụng của bạn cùng tình trạng của chúng. [Cổng](portal.md)
 - **Kiểm tra tình trạng và cảnh báo** qua lệnh hoặc webhook, cùng nhật ký truy cập có cả các yêu cầu bị từ chối. [Tình trạng và cảnh báo](health-and-alerts.md) · [Lịch sử truy cập](access-log.md)
@@ -44,19 +44,19 @@ tslink guest create notes --for 3d --public --print-link    # a browser link, no
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Liên kết khách và URL công khai luôn hết hạn và chỉ dùng được cho ứng dụng web; thư mục, tệp và cổng TCP vẫn riêng tư. [Người dùng](people.md) · [Liên kết khách](guest-links.md) · [Truy cập công khai](funnel.md)
+Liên kết khách và URL công khai mới sẽ hết hạn và chỉ dùng được cho ứng dụng web; thư mục, tệp và cổng TCP vẫn riêng tư. [Người dùng](people.md) · [Liên kết khách](guest-links.md) · [Truy cập công khai](funnel.md)
 
 <a id="agents"></a>
 
 ## Dành cho tác tử AI
 
-Máy chủ phát triển mà tác tử khởi động trên `localhost` thì điện thoại của bạn không với tới được. TSLink cho phép tác tử cấp cho nó một địa chỉ riêng, báo URL chính xác và gỡ bỏ khi xong, trong phạm vi vai trò bạn chọn.
+Máy chủ phát triển mà tác tử khởi động trên `localhost` thì điện thoại của bạn không với tới được. TSLink cho phép tác tử cấp cho nó một địa chỉ riêng, báo URL chính xác và gỡ bỏ khi xong.
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp cùng các thao tác đó qua MCP.
+- **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp các thao tác về ứng dụng và quyền truy cập qua MCP.
 - **Vai trò giới hạn.** `viewer`, `app-operator` hoặc `people-manager`, chỉ trong các ứng dụng bạn chỉ định. `tslink mcp-audit` cho thấy tác tử đã thay đổi gì. Vai trò giới hạn công cụ của TSLink, không giới hạn shell riêng của tác tử.
 
 [Hướng dẫn tác tử](agent-quickstart.md) · [Quyền MCP](mcp-scopes.md) · [MCP từ xa](remote-mcp.md)
@@ -81,11 +81,11 @@ Một tiến trình nền chạy một nút Tailscale riêng cho mỗi ứng d�
 | Ai | Cần gì |
 |---|---|
 | Bạn | Tài khoản Tailscale đã bật MagicDNS và HTTPS |
-| Máy chạy ứng dụng của bạn | Chỉ TSLink, vốn đã tích hợp Tailscale |
+| Máy chạy ứng dụng của bạn | TSLink, vốn đã tích hợp Tailscale (trên Linux, cần một phiên người dùng systemd) |
 | Thiết bị của bạn và những người bạn chia sẻ | Ứng dụng Tailscale |
 | Khách | Trình duyệt |
 
-Tên ứng dụng xuất hiện trong nhật ký chứng chỉ công khai, nên hãy chọn tên mà bạn không ngại người khác nhìn thấy.
+Tên các ứng dụng HTTPS xuất hiện trong nhật ký chứng chỉ công khai, nên hãy chọn tên mà bạn không ngại người khác nhìn thấy.
 
 <a id="documentation"></a>
 
