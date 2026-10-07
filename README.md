@@ -26,6 +26,23 @@ brew install --cask anydoor7/tap/tslink
 
 Linux `.deb` and `.rpm` packages and Windows builds are on the [latest release](https://github.com/anydoor7/tslink/releases/latest). The first time you share an app, TSLink prints a Tailscale sign-in link for it. [Getting started](docs/getting-started.md)
 
+<a id="why"></a>
+
+## When you need TSLink
+
+Serve is enough for one app on your own devices. TSLink puts app addresses, deadlines and access changes in one workflow.
+
+| Job | Tailscale alone | TSLink |
+|---|---|---|
+| One web app on your phone | `tailscale serve 3000` is enough | `tslink share 3000` |
+| Several apps, separate names | Services setup, or separate nodes | One `share`/`add` per app; enroll each node |
+| One person, one app, seven days | Policy rules, then a JIT tool or manual removal | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/files) |
+| Browser link, three days | Public Funnel; add a gate and scheduled shutdown | `tslink guest create photos --for 3d --public --print-link` (HTTP only) |
+
+Private recipients need Tailscale. Guest links are public, forwardable bearer links.
+
+[Full comparison](docs/comparison.md#tailscale-alone-or-tslink)
+
 <a id="use-cases"></a>
 
 ## Your apps, on your own devices
