@@ -6,7 +6,7 @@
 </p>
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>내 Tailscale 네트워크 안에서, 앱마다 비공개 주소를.</strong></p>
-<p align="center">내 기기에서 열어 보세요. 공유할 때는 한 사람이나 링크 하나에, 정한 날짜까지.</p>
+<p align="center">내 기기에서 열어 보세요. 원하는 날짜까지 특정 사람에게 또는 링크로 공유하세요.</p>
 <p align="center"><a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <strong>한국어</strong> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">다른 언어</a></p>
 
 ```sh

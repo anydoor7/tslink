@@ -6,7 +6,7 @@
 </p>
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>あなたのアプリに、Tailscale ネットワーク上のプライベートなアドレスを。</strong></p>
-<p align="center">自分のデバイスから開けます。人やリンクに共有でき、期限の日付も自分で選べます。</p>
+<p align="center">自分のデバイスから開けます。相手を指定するかリンクで共有でき、期限も選べます。</p>
 <p align="center"><a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <strong>日本語</strong> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">他の言語</a></p>
 
 ```sh

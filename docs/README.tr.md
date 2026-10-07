@@ -34,7 +34,7 @@ Linux `.deb` ve `.rpm` paketleri ile Windows sürümleri [son sürüm](https://g
 - **Varsayılan olarak özel.** Bir konuk bağlantısı oluşturana ya da Funnel ile yayımlayana kadar hiçbir şey herkese açık olmaz.
 - **Bir ana sayfa**, uygulamalarınızı sağlık durumlarıyla listeler. [Portal](portal.md)
 - **Sağlık kontrolleri ve uyarılar** komut ya da webhook ile; erişim günlüğü reddedilen istekleri de içerir. [Sağlık ve uyarılar](health-and-alerts.md) · [Erişim geçmişi](access-log.md)
-- **15 kendi barındırılan uygulama için tarifler**; Home Assistant, Jellyfin, Immich ve Ollama dahil. `tslink apps detect` zaten çalışanları bulur. [Uygulama tarifleri](apps.md)
+- **Kendi sunucunuzda barındırabileceğiniz 15 uygulama için tarifler**; Home Assistant, Jellyfin, Immich ve Ollama dahil. `tslink apps detect` zaten çalışanları bulur. [Uygulama tarifleri](apps.md)
 
 ## İstediğinizde paylaşın
 
@@ -80,8 +80,8 @@ Tek bir arka plan süreci her uygulama için ayrı bir Tailscale düğümü çal
 
 | Kim | Ne gerekir |
 |---|---|
-| Siz | MagicDNS ve HTTPS'i açık bir Tailscale hesabı |
-| Uygulamalarınızı çalıştıran makine | TSLink (Tailscale içinde gelir; Linux'ta bir systemd kullanıcı oturumu) |
+| Siz | MagicDNS ve HTTPS'in etkin olduğu bir Tailscale hesabı |
+| Uygulamalarınızı çalıştıran makine | Tailscale'i içinde barındıran TSLink (Linux'ta ayrıca bir systemd kullanıcı oturumu gerekir) |
 | Cihazlarınız ve paylaştığınız kişiler | Tailscale uygulaması |
 | Konuklar | Bir tarayıcı |
 

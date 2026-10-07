@@ -33,7 +33,7 @@ I pacchetti Linux `.deb` e `.rpm` e le build per Windows sono nell'[ultima relea
 - **Un indirizzo per ogni app.** App web, cartelle, singoli file e porte TCP ricevono ciascuno un proprio nome nella tua tailnet, così usi nomi invece di indirizzi IP.
 - **Privato per impostazione predefinita.** Niente è pubblico finché non crei un link ospite o pubblichi tramite Funnel.
 - **Una home page** che elenca le tue app con il loro stato. [Portale](portal.md)
-- **Controlli di salute e avvisi** tramite comando o webhook, e un registro degli accessi che include le richieste negate. [Salute e avvisi](health-and-alerts.md) · [Cronologia accessi](access-log.md)
+- **Controlli dello stato e avvisi** tramite comando o webhook, e un registro degli accessi che include le richieste negate. [Salute e avvisi](health-and-alerts.md) · [Cronologia accessi](access-log.md)
 - **Ricette per 15 app self-hosted**, tra cui Home Assistant, Jellyfin, Immich e Ollama. `tslink apps detect` trova quelle già in esecuzione. [Ricette per app](apps.md)
 
 ## Condividi quando vuoi

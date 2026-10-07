@@ -32,7 +32,7 @@ Linux-pakker (`.deb` og `.rpm`) og Windows-bygg ligger under [siste utgivelse](h
 
 - **En adresse for hver app.** Webapper, mapper, enkeltfiler og TCP-porter får hver sitt navn i tailnetet ditt, så du bruker navn i stedet for IP-adresser.
 - **Privat som standard.** Ingenting er offentlig før du lager en gjestelenke eller publiserer via Funnel.
-- **En startside** som viser appene dine og helsen deres. [Portal](portal.md)
+- **En startside** som viser appene dine og statusen deres. [Portal](portal.md)
 - **Helsesjekker og varsler** via kommando eller webhook, og en tilgangslogg som også viser avviste forespørsler. [Helse og varsler](health-and-alerts.md) · [Tilgangshistorikk](access-log.md)
 - **Oppskrifter for 15 selvhostede apper**, blant annet Home Assistant, Jellyfin, Immich og Ollama. `tslink apps detect` finner dem som allerede kjører. [Appoppskrifter](apps.md)
 

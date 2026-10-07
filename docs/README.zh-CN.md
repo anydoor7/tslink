@@ -6,7 +6,7 @@
 </p>
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>你的应用，在你的 Tailscale 网络里有私有地址。</strong></p>
-<p align="center">用自己的设备打开。想分享时，可以给某个人或一个链接，有效期到你选的日期。</p>
+<p align="center">用自己的设备打开。可以把应用分享给某个人，也可以通过链接分享，有效期到你选的日期。</p>
 <p align="center"><a href="../README.md">English</a> · <strong>简体中文</strong> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">更多语言</a></p>
 
 ```sh
@@ -57,7 +57,7 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 - **CLI 或 MCP。** 管理命令支持 `--json`，返回带版本号的结果；`tslink mcp` 通过 MCP 提供应用和访问管理操作。
-- **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，只能管理你指定的应用。`tslink mcp-audit` 显示智能体改了什么。角色只限制 TSLink 的工具，管不到智能体自己的 shell。
+- **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，权限范围限于你指定的应用。`tslink mcp-audit` 显示智能体改了什么。角色只限制 TSLink 的工具，管不到智能体自己的 shell。
 
 [智能体快速开始](agent-quickstart.md) · [MCP 权限](mcp-scopes.md) · [远程 MCP](remote-mcp.md)
 

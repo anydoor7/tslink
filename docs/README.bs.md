@@ -81,7 +81,7 @@ Jedan pozadinski proces pokreće zaseban Tailscale čvor za svaku aplikaciju. Ta
 | Ko | Šta treba |
 |---|---|
 | Vi | Tailscale račun s uključenim MagicDNS i HTTPS |
-| Računar na kojem rade vaše aplikacije | TSLink, koji ima ugrađen Tailscale (na Linuxu i systemd korisnička sesija) |
+| Računar na kojem rade vaše aplikacije | TSLink, koji ima ugrađen Tailscale (na Linuxu je potrebna i korisnička sesija systemd-a) |
 | Vaši uređaji i osobe s kojima dijelite | Tailscale aplikacija |
 | Gosti | Preglednik |
 
