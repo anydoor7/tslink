@@ -39,7 +39,7 @@ For én app på dine egne enheter holder Serve. TSLink samler appadresser, frist
 | Én person, én app, sju dager | Policyregler, deretter et JIT-verktøy eller manuell fjerning | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/filer) |
 | Nettleserlenke, tre dager | Offentlig Funnel; legg selv til tilgangskontroll og planlagt stans | `tslink guest create photos --for 3d --public --print-link` (bare HTTP) |
 
-Private mottakere trenger Tailscale. Gjestelenker er offentlige: alle som har lenken, kan åpne og videresende den.
+Private mottakere trenger Tailscale. Gjestelenker er offentlige, kan videresendes og fungerer som tilgangsnøkler.
 
 [Full sammenligning](comparison.md#tailscale-alone-or-tslink)
 

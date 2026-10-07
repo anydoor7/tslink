@@ -39,7 +39,7 @@ Linux 的 `.deb`、`.rpm` 安装包和 Windows 版本在[最新发布](https://g
 | 一个人，一个应用，七天 | 先写策略规则，再用 JIT 临时授权工具或手动移除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/文件） |
 | 浏览器链接，三天 | 公开的 Funnel；自己加访问关卡，并安排到期关闭 | `tslink guest create photos --for 3d --public --print-link`（仅 HTTP） |
 
-私有访问的对象需要安装 Tailscale。访客链接是公开的，拿到链接就能打开，也能转给别人。
+私有访问的对象需要安装 Tailscale。访客链接是公开且可转发的访问凭证。
 
 [完整对比](comparison.md#tailscale-alone-or-tslink)
 

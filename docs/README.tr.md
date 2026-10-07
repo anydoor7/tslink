@@ -39,7 +39,7 @@ Kendi cihazlarınızda tek bir uygulama için Serve yeterli. TSLink uygulama adr
 | Bir kişi, bir uygulama, yedi gün | Politika kuralları, ardından bir JIT aracı veya elle kaldırma | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/dosyalar) |
 | Tarayıcı bağlantısı, üç gün | Herkese açık Funnel; erişim kapısını ve zamanlanmış kapatmayı siz ekleyin | `tslink guest create photos --for 3d --public --print-link` (yalnızca HTTP) |
 
-Özel alıcıların Tailscale'e ihtiyacı vardır. Konuk bağlantıları herkese açıktır: bağlantıya sahip olan herkes açabilir ve iletebilir.
+Özel alıcıların Tailscale'e ihtiyacı vardır. Konuk bağlantıları herkese açıktır, iletilebilir ve erişim anahtarı işlevi görür.
 
 [Ayrıntılı karşılaştırma](comparison.md#tailscale-alone-or-tslink)
 

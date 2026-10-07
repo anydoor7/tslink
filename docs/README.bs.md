@@ -39,7 +39,7 @@ Za jednu aplikaciju na vlastitim uređajima dovoljan je Serve. TSLink objedinjuj
 | Jedna osoba, jedna aplikacija, sedam dana | Pravila politike, pa JIT alat ili ručno uklanjanje | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/fajlovi) |
 | Link za preglednik, tri dana | Javni Funnel; sami dodajte kontrolu pristupa i zakazano gašenje | `tslink guest create photos --for 3d --public --print-link` (samo HTTP) |
 
-Privatni primaoci trebaju Tailscale. Linkovi za goste su javni: svako ko ima link može ga otvoriti i proslijediti.
+Privatni primaoci trebaju Tailscale. Linkovi za goste su javni, mogu se proslijediti i služe kao pristupne vjerodajnice.
 
 [Potpuno poređenje](comparison.md#tailscale-alone-or-tslink)
 

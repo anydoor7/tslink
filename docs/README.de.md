@@ -39,7 +39,7 @@ Für eine App auf deinen eigenen Geräten reicht Serve. TSLink bündelt App-Adre
 | Eine Person, eine App, sieben Tage | Richtlinienregeln, dann ein JIT-Tool oder manuelles Entfernen | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/Dateien) |
 | Browserlink, drei Tage | Öffentlicher Funnel; Zugangsschutz und geplantes Abschalten selbst ergänzen | `tslink guest create photos --for 3d --public --print-link` (nur HTTP) |
 
-Private Empfänger brauchen Tailscale. Gastlinks sind öffentlich: Wer den Link hat, kann ihn öffnen und weitergeben.
+Private Empfänger brauchen Tailscale. Gastlinks sind öffentliche, weitergebbare Zugangsdaten.
 
 [Ausführlicher Vergleich](comparison.md#tailscale-alone-or-tslink)
 

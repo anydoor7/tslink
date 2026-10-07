@@ -39,7 +39,7 @@ Linux용 `.deb`, `.rpm` 패키지와 Windows 빌드는 [최신 릴리스](https:
 | 한 사람에게 앱 하나를 7일간 | 정책 규칙을 쓴 뒤 JIT(임시 접근) 도구나 수동 삭제 | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/파일) |
 | 브라우저 링크, 3일간 | 공개 Funnel. 접근 관문과 예약 종료는 직접 추가 | `tslink guest create photos --for 3d --public --print-link` (HTTP만) |
 
-비공개로 공유받는 사람은 Tailscale이 필요합니다. 게스트 링크는 공개 링크라서 가진 사람은 누구나 열 수 있고 전달할 수도 있습니다.
+비공개로 공유받는 사람은 Tailscale이 필요합니다. 게스트 링크는 공개된 접근 자격 증명이며 다른 사람에게 전달할 수 있습니다.
 
 [전체 비교](comparison.md#tailscale-alone-or-tslink)
 

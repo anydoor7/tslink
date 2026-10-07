@@ -39,7 +39,7 @@ Linux 的 `.deb`、`.rpm` 套件和 Windows 版本在[最新版本](https://gith
 | 一個人，一個應用程式，七天 | 先寫政策規則，再用 JIT 臨時授權工具或手動移除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/檔案） |
 | 瀏覽器連結，三天 | 公開的 Funnel；自行加上存取關卡，並安排到期關閉 | `tslink guest create photos --for 3d --public --print-link`（僅限 HTTP） |
 
-私人存取的對象需要安裝 Tailscale。訪客連結是公開的，拿到連結就能開啟，也能轉傳給別人。
+私人存取的對象需要安裝 Tailscale。訪客連結是公開且可轉傳的存取憑證。
 
 [完整比較](comparison.md#tailscale-alone-or-tslink)
 

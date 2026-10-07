@@ -41,7 +41,7 @@ brew install --cask anydoor7/tap/tslink
 | شخص واحد، تطبيق واحد، سبعة أيام | قواعد سياسة، ثم أداة JIT أو إزالة يدوية | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/ملفات) |
 | رابط للمتصفح، ثلاثة أيام | Funnel عام؛ أضف بنفسك بوابة وصول وإيقافًا مجدولًا | `tslink guest create photos --for 3d --public --print-link` (HTTP فقط) |
 
-يحتاج المستلمون الخاصون إلى Tailscale. روابط الضيوف عامة: يستطيع أي شخص لديه الرابط فتحه وإعادة إرساله.
+يحتاج المستلمون الخاصون إلى Tailscale. روابط الضيوف عامة وقابلة لإعادة الإرسال، وتُستخدم كبيانات اعتماد للوصول.
 
 [المقارنة الكاملة](comparison.md#tailscale-alone-or-tslink)
 

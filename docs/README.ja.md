@@ -39,7 +39,7 @@ Linux 向けの `.deb` と `.rpm` パッケージ、Windows 版は[最新リリ�
 | 1 人に 1 つのアプリを 7 日間 | ポリシールールを書き、JIT（一時アクセス）ツールか手動で削除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/ファイル） |
 | ブラウザー用リンクを 3 日間 | 公開の Funnel。アクセス制限と期限での停止は自分で用意 | `tslink guest create photos --for 3d --public --print-link`（HTTP のみ） |
 
-非公開で共有する相手には Tailscale が必要です。ゲストリンクは公開リンクで、持っている人なら誰でも開けて、転送もできます。
+非公開で共有する相手には Tailscale が必要です。ゲストリンクは公開リンクで、アクセス用の鍵として他の人にも渡せます。
 
 [詳しい比較](comparison.md#tailscale-alone-or-tslink)
 

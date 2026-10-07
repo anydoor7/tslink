@@ -39,7 +39,7 @@ Với một ứng dụng trên thiết bị của bạn, Serve là đủ. TSLink
 | Một người, một ứng dụng, bảy ngày | Quy tắc chính sách, rồi dùng công cụ JIT hoặc tự gỡ | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/tệp) |
 | Liên kết trình duyệt, ba ngày | Funnel công khai; tự thêm lớp kiểm soát truy cập và lịch tắt | `tslink guest create photos --for 3d --public --print-link` (chỉ HTTP) |
 
-Người nhận riêng tư cần có Tailscale. Liên kết khách là công khai: ai có liên kết cũng mở và chuyển tiếp được.
+Người nhận riêng tư cần có Tailscale. Liên kết khách là công khai, có thể chuyển tiếp và dùng làm thông tin xác thực để truy cập.
 
 [So sánh đầy đủ](comparison.md#tailscale-alone-or-tslink)
 

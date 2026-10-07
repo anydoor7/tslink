@@ -39,7 +39,7 @@ Per un'app sui tuoi dispositivi basta Serve. TSLink riunisce indirizzi delle app
 | Una persona, un'app, sette giorni | Regole di policy, poi uno strumento JIT o la rimozione manuale | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/file) |
 | Link per browser, tre giorni | Funnel pubblico; aggiungere un controllo d'accesso e lo spegnimento programmato | `tslink guest create photos --for 3d --public --print-link` (solo HTTP) |
 
-I destinatari privati hanno bisogno di Tailscale. I link ospite sono pubblici: chi ha il link può aprirlo e inoltrarlo.
+I destinatari privati hanno bisogno di Tailscale. I link ospite sono pubblici, inoltrabili e fungono da credenziali di accesso.
 
 [Confronto completo](comparison.md#tailscale-alone-or-tslink)
 

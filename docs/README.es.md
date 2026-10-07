@@ -39,7 +39,7 @@ Para una aplicación en tus propios dispositivos, Serve es suficiente. TSLink re
 | Una persona, una aplicación, siete días | Reglas de política y luego una herramienta JIT o retirarlas a mano | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/archivos) |
 | Enlace para navegador, tres días | Funnel público; añadir un control de acceso y un apagado programado | `tslink guest create photos --for 3d --public --print-link` (solo HTTP) |
 
-Los destinatarios privados necesitan Tailscale. Los enlaces de invitado son públicos: quien tenga el enlace puede abrirlo y reenviarlo.
+Los destinatarios privados necesitan Tailscale. Los enlaces de invitado son públicos, se pueden reenviar y sirven como credenciales de acceso.
 
 [Comparación completa](comparison.md#tailscale-alone-or-tslink)
 

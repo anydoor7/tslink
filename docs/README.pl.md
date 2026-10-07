@@ -39,7 +39,7 @@ Do jednej aplikacji na własnych urządzeniach wystarczy Serve. TSLink łączy a
 | Jedna osoba, jedna aplikacja, siedem dni | Reguły zasad, potem narzędzie JIT albo ręczne usunięcie | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/pliki) |
 | Link w przeglądarce, trzy dni | Publiczny Funnel; kontrolę dostępu i zaplanowane wyłączenie trzeba dodać samemu | `tslink guest create photos --for 3d --public --print-link` (tylko HTTP) |
 
-Prywatni odbiorcy potrzebują Tailscale. Linki dla gości są publiczne: każdy, kto ma link, może go otworzyć i przekazać dalej.
+Prywatni odbiorcy potrzebują Tailscale. Linki dla gości są publiczne, można je przekazywać dalej i służą jako dane dostępowe.
 
 [Pełne porównanie](comparison.md#tailscale-alone-or-tslink)
 

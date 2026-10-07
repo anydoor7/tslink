@@ -39,7 +39,7 @@ Pour une application sur vos propres appareils, Serve suffit. TSLink réunit adr
 | Une personne, une application, sept jours | Règles de politique, puis un outil JIT ou un retrait manuel | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/fichiers) |
 | Lien navigateur, trois jours | Funnel public ; ajouter un contrôle d'accès et un arrêt programmé | `tslink guest create photos --for 3d --public --print-link` (HTTP uniquement) |
 
-Les destinataires privés ont besoin de Tailscale. Les liens invités sont publics : quiconque a le lien peut l'ouvrir et le transférer.
+Les destinataires privés ont besoin de Tailscale. Les liens invités sont publics, transférables et servent de clés d'accès.
 
 [Comparaison complète](comparison.md#tailscale-alone-or-tslink)
 
