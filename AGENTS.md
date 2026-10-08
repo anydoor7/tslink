@@ -72,7 +72,7 @@ internal/
 
 ### Key Dependencies
 
-- `tailscale.com v1.102.4` — tsnet (embedded nodes) + `client/tailscale` (LocalClient for identity verification)
+- `tailscale.com v1.104.1` — tsnet (embedded nodes) + `client/local` (LocalClient for identity verification)
 - `tailscale.com/client/tailscale/v2 v2.10.1` — Tailscale REST API client (ACL management, device management, auth key derivation)
 - `github.com/zalando/go-keyring v0.2.6` — cross-platform keychain
 - `github.com/spf13/cobra` — CLI framework
@@ -80,8 +80,8 @@ internal/
 
 ### Toolchain notes
 
-**Go version (`go.mod`, `go 1.26.6`)**: the module floor is 1.26.6 and there is no
-separate `toolchain` line. `tailscale.com@v1.102.4` itself requires `go 1.26.6`, so
+**Go version (`go.mod`, `go 1.27.1`)**: the module floor is 1.27.1 and there is no
+separate `toolchain` line. `tailscale.com@v1.104.1` itself requires `go 1.27.1`, so
 `go mod tidy` raised the floor to match and dropped the now-redundant toolchain
 directive. Raise the floor only when a dependency or a stdlib CVE forces it;
 `toolchain` is a floor, not a pin, so a newer local Go is used as-is.
@@ -100,7 +100,9 @@ version 2` against 1.27 sources, and one that is merely old reports the same thi
 two different causes, one message. Install it with the toolchain you build with and
 without a `GOTOOLCHAIN` override, pinned to the version CI uses
 (`STATICCHECK_VERSION` in `.github/workflows/release-candidate.yml`):
-`go install honnef.co/go/tools/cmd/staticcheck@v0.7.0`. Note the release name and the
+`go install honnef.co/go/tools/cmd/staticcheck@v0.8.0`. This is the first stable
+release supporting Go 1.27 ([2026.2 release notes](https://staticcheck.dev/changes/2026.2/)).
+Note the release name and the
 module version differ -- release 2026.2.1 is module `v0.8.1` -- so a version reported
 by `staticcheck -version` reads as two numbers for the same build.
 
@@ -119,7 +121,8 @@ This section teaches an agent how to install, configure, and operate tslink. The
 
 ### Prerequisites
 
-- Go 1.26.6+ installed
+- Go 1.27.1+ installed; macOS 13 Ventura or later is required
+  ([Go release notes](https://go.dev/doc/go1.27#darwin))
 - A Tailscale account. The default zero-credential path needs no admin-console token.
 - Optional, only for the durable Tier 2 path, one of:
   - API access token ([generate here](https://login.tailscale.com/admin/settings/keys)) — expires periodically

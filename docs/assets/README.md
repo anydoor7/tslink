@@ -18,7 +18,7 @@ or live service status. Node names, localhost ports, and client types are exampl
 | `system-architecture-light.svg` / `system-architecture-dark.svg` | Configuration and request paths for the architecture guides, 960 x 714 |
 | `system-architecture-light-mobile.svg` / `system-architecture-dark-mobile.svg` | The same architecture with a compact vertical flow, 400 x 995 |
 | `badge-license.svg` | Apache 2.0 license with an original document glyph |
-| `badge-go.svg` | Go 1.26.6+ with an original terminal glyph |
+| `badge-go.svg` | Go 1.27.1+ with an original terminal glyph |
 | `badge-tsnet.svg` | Tailscale / tsnet with an original network glyph |
 | `badge-mcp.svg` | MCP / scoped with an original connector glyph; tool availability depends on the session |
 

@@ -28,7 +28,7 @@ env:
   # Pinned analysis tool versions. CI stays deterministic; the vulnerability
   # database itself is still fetched fresh at run time (see the govulncheck
   # jobs) because the advisory set is time-dependent.
-  STATICCHECK_VERSION: v0.7.0
+  STATICCHECK_VERSION: v0.8.0
   GOVULNCHECK_VERSION: v1.6.0
   TSLINK_RELEASE_TARGETS: "darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64"
 

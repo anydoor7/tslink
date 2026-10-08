@@ -551,11 +551,11 @@ func embeddedNotices(mod module) ([]noticeFile, error) {
 
 var embeddedAssetNotices = map[string]assetNotice{
 	"github.com/tailscale/web-client-prebuilt/build/assets/Inter.var.latin-Dxq58mVK.woff2": {sha256: "39e72c0794c12f2dbb14a0f61ca946b535f795b1478fcf795bd26e5cb52ded34", name: "Embedded Inter font license", text: interFontLicense},
-	"github.com/tailscale/web-client-prebuilt/build/assets/index-BbZBz4S-.js.gz":           {sha256: "afcaf7d02cdc01ef53033a0d3eeb890215280b1a66ba2f4f5ac937cd04645cbb", name: "Embedded web-client runtime dependency notices", text: webRuntimeLicenses},
-	"github.com/tailscale/web-client-prebuilt/build/assets/index-DVk8gqX9.css.gz":          {sha256: "74b1f29b0be3226675d0d342eb1e447f29053f21bc64fb9831c7f897231fae70", name: "Embedded web-client runtime dependency notices", text: webRuntimeLicenses},
-	"github.com/tailscale/web-client-prebuilt/build/index.html":                            {sha256: "329206698f2882cec38a917f7adac14615f7178ebf5936283f2e939fe214b358", name: "Embedded web-client runtime dependency notices", text: webRuntimeLicenses},
-	"tailscale.com/util/eventbus/assets/htmx.min.js.gz":                                    {sha256: "ec7f20487b73846cb39c5e056b7978c1ce580747792f080c05249160fd21fcc7", name: "Embedded HTMX license", text: htmxLicense},
-	"tailscale.com/util/eventbus/assets/htmx-websocket.min.js.gz":                          {sha256: "a5073ddd34006a9f0d2a3459b74e098afa7879c33d095cf24b9f207414ffc20c", name: "Embedded HTMX WebSocket license", text: htmxWebSocketLicense},
+	"github.com/tailscale/web-client-prebuilt/build/assets/index-BbgPCR4_.js.zst":          {sha256: "1783978e84f76845d53fc23fa12169ef7b36d237a2a010b2b834721b7b88e00e", name: "Embedded web-client runtime dependency notices", text: webRuntimeLicenses},
+	"github.com/tailscale/web-client-prebuilt/build/assets/index-UKv3Effy.css.zst":         {sha256: "703babdf3c5b9a449fde743aec256a1366ee7c21a4e7a80417fe07122df83cbd", name: "Embedded web-client runtime dependency notices", text: webRuntimeLicenses},
+	"github.com/tailscale/web-client-prebuilt/build/index.html":                            {sha256: "7b5d84ac57ad7f2f1c342732f659559b0b1e21a79b650f16c67bdc3a1e5a9637", name: "Embedded web-client runtime dependency notices", text: webRuntimeLicenses},
+	"tailscale.com/util/eventbus/assets/htmx.min.js.gz":                                    {sha256: "9b7ec3eeedbf701a6a719cb90716b0da7a4a9bb70225f919f8d767e2b649bb1b", name: "Embedded HTMX license", text: htmxLicense},
+	"tailscale.com/util/eventbus/assets/htmx-websocket.min.js.gz":                          {sha256: "5e09625192bb4635770b3e8419f95d74cffa9205e9427d7f8051e165deb45100", name: "Embedded HTMX WebSocket license", text: htmxWebSocketLicense},
 }
 
 // Retained upstream notice payload; generation never fetches the network.
@@ -660,10 +660,11 @@ OTHER DEALINGS IN THE FONT SOFTWARE.`
 
 // Retained upstream notice payload; generation never fetches the network.
 const webRuntimeLicenses = `Upstream web-client runtime dependency notices, conservatively included for the pinned embedded bundle.
-Notice-source manifest and lock: https://github.com/tailscale/tailscale/tree/716e4fcc97759308f79875ff1809da945df70574/client/web
+Notice-source manifest and lock: https://github.com/tailscale/tailscale/tree/6608b9a387513e69ed260e323376a17aa4029084/client/web
+These match tailscale.com v1.104.1; the pinned prebuilt JavaScript also retains Tailscale's BSD-3-Clause and React/classnames MIT headers.
 Versions below identify notice sources, not a claim that every package survives bundler tree shaking.
 
-Sources: @babel/runtime@7.23.4/package/LICENSE
+Sources: @babel/runtime@7.28.2/package/LICENSE
 
 MIT License
 
@@ -1604,6 +1605,34 @@ Sources: zustand@4.4.7/package/LICENSE
 MIT License
 
 Copyright (c) 2019 Paul Henschel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: vite@5.4.21/package/LICENSE.md (core license; emitted modulepreload helper)
+Registry: https://registry.npmjs.org/vite/5.4.21
+
+# Vite core license
+Vite is released under the MIT license:
+
+MIT License
+
+Copyright (c) 2019-present, VoidZero Inc. and Vite contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

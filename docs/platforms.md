@@ -4,15 +4,18 @@
 
 - [Tailscale account](https://tailscale.com) (free for personal use)
 - Tailscale installed on the devices you want to access from (phone, tablet, etc.)
-- Go 1.26.6+ (if building from source)
+- Go 1.27.1+ (if building from source)
 
 ## Platform Support
 
 | Platform | Daemon | Auto-start | Stop behavior |
 |----------|--------|------------|---------------|
-| macOS | `--daemon` | LaunchAgent | Graceful SIGTERM |
+| macOS 13 Ventura or later | `--daemon` | LaunchAgent | Graceful SIGTERM |
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
 | Windows | `--daemon` | Per-user Task Scheduler (Startup fallback) | Graceful named event |
+
+Go 1.27 requires macOS 13 Ventura or later ([Go release notes](https://go.dev/doc/go1.27#darwin)).
+TSLink builds using this toolchain no longer support macOS 12 Monterey or earlier.
 
 ## Windows registry access
 

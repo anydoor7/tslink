@@ -33,7 +33,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tsnet"
 )
 
@@ -2628,10 +2628,10 @@ func funnelAccessCause(status *ipnstate.Status) (string, error) {
 	if status == nil || status.Self == nil {
 		return registry.ProvisionReasonNetmapTimeout, errors.New("tsnet status did not include the service node")
 	}
-	if !status.Self.HasCap(tailcfg.CapabilityHTTPS) {
+	if !status.Self.HasCap(nodecap.HTTPS) {
 		return registry.ProvisionReasonHTTPSDisabled, errors.New("HTTPS is disabled for the tailnet, so Funnel is unavailable")
 	}
-	if !status.Self.HasCap(tailcfg.NodeAttrFunnel) {
+	if !status.Self.HasCap(nodecap.Funnel) {
 		return registry.ProvisionReasonNetmapTimeout, errors.New("the Funnel node attribute is not present in the service node netmap")
 	}
 	if err := ipn.CheckFunnelPort(443, status.Self); err != nil {

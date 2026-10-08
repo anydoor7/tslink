@@ -10,7 +10,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 
 ### Prerequisites
 
-- Go 1.26.6 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and local checks should use a compatible toolchain.
+- Go 1.27.1 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and local checks should use a compatible toolchain.
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 

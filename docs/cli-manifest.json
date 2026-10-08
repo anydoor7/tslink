@@ -11,7 +11,7 @@
   ],
   "registry_schema_version": 2,
   "toolchain": {
-    "minimum_go_version": "1.26.6"
+    "minimum_go_version": "1.27.1"
   },
   "exit_codes": {
     "auth": 3,
