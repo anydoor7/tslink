@@ -73,8 +73,8 @@ internal/
 ### Key Dependencies
 
 - `tailscale.com v1.104.1` — tsnet (embedded nodes) + `client/local` (LocalClient for identity verification)
-- `tailscale.com/client/tailscale/v2 v2.10.1` — Tailscale REST API client (ACL management, device management, auth key derivation)
-- `github.com/zalando/go-keyring v0.2.6` — cross-platform keychain
+- `tailscale.com/client/tailscale/v2 v2.11.0` — Tailscale REST API client (ACL management, device management, auth key derivation)
+- `github.com/zalando/go-keyring v0.2.8` — cross-platform keychain
 - `github.com/spf13/cobra` — CLI framework
 - `github.com/fsnotify/fsnotify` — registry hot-reload
 
