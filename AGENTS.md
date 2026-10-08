@@ -80,11 +80,15 @@ internal/
 
 ### Toolchain notes
 
-**Go version (`go.mod`, `go 1.27.1`)**: the module floor is 1.27.1 and there is no
-separate `toolchain` line. `tailscale.com@v1.104.1` itself requires `go 1.27.1`, so
-`go mod tidy` raised the floor to match and dropped the now-redundant toolchain
-directive. Raise the floor only when a dependency or a stdlib CVE forces it;
-`toolchain` is a floor, not a pin, so a newer local Go is used as-is.
+**Go version (`go.mod`, `go 1.27.1`, `toolchain go1.27.2`)**: the module floor
+remains 1.27.1, as required by `tailscale.com@v1.104.1`. Builds and CI use Go
+1.27.2 with `golang.org/x/net v0.60.0` to fix
+[GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617). Raise the floor only when a
+dependency or a stdlib CVE forces it; the `toolchain` directive selects a
+preferred toolchain, not an exact pin, so a newer local Go is used as-is.
+[setup-go v7.0.0](https://github.com/actions/setup-go/blob/v7.0.0/README.md#breaking-changes-in-v6)
+prefers the `toolchain` directive for `go-version-file: go.mod`; staticcheck is
+the temporary exception below.
 
 **Builds on Go 1.27+ natively.** If a compile error appears inside the module cache
 referencing `json.SkipFunc` or `json.DiscardUnknownMembers`, check the transitive
@@ -94,17 +98,20 @@ are `encoding/json/v2` experimental API that 1.27 changed, and the fix is upgrad
 cache rather than this repository, so it reads like a local toolchain problem when it
 is a dependency problem.
 
-**`staticcheck` must be built with the same Go release it analyzes.** A staticcheck
-compiled by 1.26 reports `export data version 4 is greater than maximum supported
-version 2` against 1.27 sources, and one that is merely old reports the same thing —
-two different causes, one message. Install it with the toolchain you build with and
-without a `GOTOOLCHAIN` override, pinned to the version CI uses
-(`STATICCHECK_VERSION` in `.github/workflows/release-candidate.yml`):
-`go install honnef.co/go/tools/cmd/staticcheck@v0.8.0`. This is the first stable
-release supporting Go 1.27 ([2026.2 release notes](https://staticcheck.dev/changes/2026.2/)).
-Note the release name and the
-module version differ -- release 2026.2.1 is module `v0.8.1` -- so a version reported
-by `staticcheck -version` reads as two numbers for the same build.
+**`staticcheck` temporarily uses Go 1.27.1.** Released staticcheck versions cannot
+read Go 1.27.2's export data (`export data version 5 is greater than maximum
+supported version 4`; [upstream issue #1832](https://github.com/dominikh/go-tools/issues/1832)).
+CI pins Go 1.27.1 with `GOTOOLCHAIN=local` only in that analysis job;
+`scripts/check.sh` uses `GOTOOLCHAIN=go1.27.1` for its three-platform staticcheck
+step and fails with installation instructions if the tool is missing. Install
+the version CI uses (`STATICCHECK_VERSION` in `.github/workflows/release-candidate.yml`)
+with `GOTOOLCHAIN=go1.27.1 go install honnef.co/go/tools/cmd/staticcheck@v0.8.1`
+([2026.2.1 release](https://github.com/dominikh/go-tools/releases/tag/2026.2.1)).
+After staticcheck publishes Go 1.27.2 support, upgrade `STATICCHECK_VERSION`,
+remove both overrides and the CI version pin, and restore that job's
+`go-version-file: go.mod`. CI build artifacts and vulnerability scans use
+the fixed Go 1.27.2 toolchain. Release 2026.2.1 is module `v0.8.1`, so
+`staticcheck -version` reports both names for the same build.
 
 **macOS: `git` belongs to Xcode.** After an Xcode major upgrade the license resets and
 `/usr/bin/git` exits 69 until `sudo xcodebuild -license accept` is run. `go build`
@@ -121,7 +128,8 @@ This section teaches an agent how to install, configure, and operate tslink. The
 
 ### Prerequisites
 
-- Go 1.27.1+ installed; macOS 13 Ventura or later is required
+- Go 1.27.1+ installed; builds select Go 1.27.2 via `go.mod` (see Toolchain notes);
+  macOS 13 Ventura or later is required
   ([Go release notes](https://go.dev/doc/go1.27#darwin))
 - A Tailscale account. The default zero-credential path needs no admin-console token.
 - Optional, only for the durable Tier 2 path, one of:

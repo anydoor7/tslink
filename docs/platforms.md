@@ -4,7 +4,13 @@
 
 - [Tailscale account](https://tailscale.com) (free for personal use)
 - Tailscale installed on the devices you want to access from (phone, tablet, etc.)
-- Go 1.27.1+ (if building from source)
+- Go 1.27.1+ (if building from source); `go.mod` selects Go 1.27.2 for patched builds
+
+The module minimum remains Go 1.27.1. Builds and CI use Go 1.27.2 with
+`golang.org/x/net v0.60.0` to fix [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617).
+Staticcheck temporarily analyzes with Go 1.27.1 until a supporting release ships;
+then upgrade `STATICCHECK_VERSION` and remove that exception, as described in
+[CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
 
 ## Platform Support
 

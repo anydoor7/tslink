@@ -6,6 +6,8 @@ replace github.com/fsnotify/fsnotify => ./third_party/fsnotify
 
 go 1.27.1
 
+toolchain go1.27.2
+
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/fsnotify/fsnotify v1.10.1
@@ -62,7 +64,7 @@ require (
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
