@@ -11,7 +11,7 @@ macOS 13 Ventura or later ([Go release notes](https://go.dev/doc/go1.27#darwin))
 
 ## Install
 
-The installation and page-creation examples below use **bash or zsh**.
+The macOS/Linux installation and page-creation examples below use **bash or zsh**.
 For Windows requirements, see [platform support](platforms.md).
 
 On macOS and Linux, install the Homebrew cask. Keep the fully qualified name:
@@ -26,7 +26,18 @@ brew install --cask anydoor7/tap/tslink
 To upgrade, run `brew upgrade --cask tslink`. If TSLink runs as a background service,
 run `tslink install` again afterwards so the service starts the upgraded binary.
 
-On Windows, download `tslink_<version>_windows_<arch>.zip` from the
+On Windows, install with [Scoop](https://scoop.sh) in PowerShell. Add the bucket once:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+To upgrade, run `scoop update; scoop update tslink`. If TSLink runs as a background service,
+run `tslink install` again afterwards so the service starts the upgraded binary.
+Scoop selects the native x64 or ARM64 zip and checks its SHA-256 hash.
+
+For a manual Windows installation, download `tslink_<version>_windows_<arch>.zip` from the
 [latest release](https://github.com/anydoor7/tslink/releases/latest), check it against
 `checksums.txt`, and run `tslink install` from the extracted folder to start TSLink at sign-in.
 The zip is not Authenticode-signed; its integrity comes from the Sigstore-signed checksums

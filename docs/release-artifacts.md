@@ -1,7 +1,9 @@
 # Release Artifacts
 
 Stable releases, starting with v0.1.0, publish the installable artifacts below
-on GitHub Releases and update the `anydoor7/homebrew-tap` cask. Installing from
+on GitHub Releases and update the `anydoor7/homebrew-tap` cask. The
+`anydoor7/scoop-bucket` Windows manifest is seeded with v0.1.1 and updated by
+the release pipeline on subsequent stable releases. Installing from
 source with Git and Go remains an alternative.
 
 After a stable release is published and the `anydoor7/homebrew-tap` repository is populated, install with Homebrew on macOS or Linux:
@@ -16,7 +18,20 @@ Keep the fully qualified name. Homebrew refuses casks from a third-party tap it 
 |---|---|---|
 | macOS | Homebrew cask and `tar.gz` archives | The Homebrew cask uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. Stable macOS binaries are signed with a Developer ID certificate and notarized by Apple; Gatekeeper runs them directly, whether they arrive through the cask or a downloaded archive, provided the first run can reach Apple to check the notarization ticket (a bare binary cannot carry a stapled ticket). Pre-release tags may ship unsigned archives: Gatekeeper blocks those, so use them only for validation. |
 | Linux | Homebrew cask, `.deb`, `.rpm`, and `tar.gz` archives | The cask and packages contain the native `tslink` binary. The first `tslink add` registers and starts the user service automatically. |
-| Windows | `.zip` archives | Windows support is archive-only today. There is no MSI/MSIX/Winget package or Windows code-signed installer yet, and Homebrew does not run on Windows itself (inside WSL 2 it installs the Linux binary). Run `tslink install` from the extracted binary to register a per-user scheduled task that starts TSLink at sign-in (`--startup` selects the Startup-folder fallback). |
+| Windows | Scoop and `.zip` archives (x64 / ARM64) | Scoop installs the native zip and checks its SHA-256 hash. Zips are not Authenticode-signed; verify manual downloads against `checksums.txt`. Run `tslink install` to register a per-user scheduled task that starts TSLink now and at sign-in (`--startup` selects the Startup-folder fallback). Homebrew inside WSL installs the Linux binary. |
+
+On Windows, add the Scoop bucket once and install:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+Upgrade with `scoop update; scoop update tslink` (refresh buckets, then update TSLink),
+then run `tslink install` again if TSLink runs
+as a background service so the scheduled task starts the upgraded binary.
+Scoop uses GoReleaser `skip_upload: auto`; pre-releases do not update the bucket,
+and snapshots never publish.
 
 Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, `checksums.txt`, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for `checksums.txt` and SBOM sidecars. The signed `checksums.txt` covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.
 
@@ -37,3 +52,45 @@ Pushes to `main` and tags always run the full exact-SHA three-OS Release Candida
 All release targets still receive static analysis, cross-build and vulnerability checks. Consolidated jobs preserve each target's failure and existing artifact names. The always-running `gate` aggregate rejects failures, cancellations and unexpected skips; only checks excluded by the selected tier may be skipped. Branch protection on `main` requires this single aggregate check, reported as `Release candidate gate / gate`. See [Contributing](../CONTRIBUTING.md#continuous-integration) for the classification rules and local policy tests.
 
 See [Verify a release](verify-release.md) for artifact, checksum, signature, SBOM, and attestation checks.
+
+### Maintainer: post-release winget submission
+
+After a stable GitHub release is public, an owner with existing `gh` authentication
+can prepare the winget 1.12.0 manifests locally:
+
+```bash
+python3 scripts/winget-manifests.py v0.1.1 --out /tmp/tslink-winget
+```
+
+The generator downloads that release's `checksums.txt` and Sigstore bundle with
+`gh release download`, then uses `cosign verify-blob` with the release workflow's
+exact tag identity and GitHub Actions OIDC issuer. It takes x64/ARM64 hashes from
+the checksums and the publication date from release metadata. Prerelease tags,
+draft releases, missing Windows zips, and failed signatures are refused. Without
+cosign it fails unless `--allow-unverified` is explicitly passed for local
+inspection; this override cannot bypass a failed signature check.
+
+After inspecting the three YAMLs and recording Windows native validation,
+install and upgrade results, the owner can submit:
+
+```bash
+scripts/winget-submit.sh v0.1.1
+```
+
+This requires an existing public `monody0007/winget-pkgs` fork (a user-account fork:
+`gh pr create --head <owner>:<branch>` does not support organization-owned forks,
+cli/cli#10093), `gh` logged in as monody0007, and git, Python 3 and cosign.
+It checks upstream for the version directory and open PRs,
+with a known upstream file as the positive control for a 404. It verifies the
+release, syncs the fork, commits only the three YAMLs on `tslink-0.1.1`, pushes
+that branch and opens a PR using the caller's existing `gh` authentication.
+Sync failures, including upstream workflow permission failures, stop the script;
+existing branches and duplicate PRs require owner inspection, with no force-push
+or automatic fork creation. No release CI secret is needed. If PR creation fails
+after a push, inspect the retained fork branch and upstream PRs before retrying.
+The PR body does not claim Windows tests were performed by the script.
+
+winget availability still requires Microsoft review, merge, indexing and a native
+Windows readback. A generated manifest or an open PR is not installation availability.
+On a red release publish job, check attestations with
+`gh attestation verify <artifact> --repo anydoor7/tslink` before recovery; never re-tag.

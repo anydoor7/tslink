@@ -23,6 +23,27 @@ then upgrade `STATICCHECK_VERSION` and remove that exception, as described in
 Go 1.27 requires macOS 13 Ventura or later ([Go release notes](https://go.dev/doc/go1.27#darwin)).
 TSLink builds using this toolchain no longer support macOS 12 Monterey or earlier.
 
+## Windows installation and upgrades
+
+Install [Scoop](https://scoop.sh) first, then run these commands in PowerShell.
+Add the bucket once; it provides native x64 and ARM64 builds:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+Upgrade with `scoop update; scoop update tslink`. If TSLink runs as a background service,
+run `tslink install` again afterwards, as with Homebrew, so its scheduled task
+starts the upgraded binary.
+
+Alternatively, download the Windows zip from the
+[latest release](https://github.com/anydoor7/tslink/releases/latest), verify it
+against `checksums.txt`, and extract it to a persistent location on your PATH.
+The zip is not Authenticode-signed; see [Verify a release](verify-release.md)
+for the Sigstore-signed checksums and provenance verification. Run `tslink install`
+to start TSLink now and at sign-in.
+
 ## Windows registry access
 
 Registry readers allow Windows delete sharing, so the daemon can replace

@@ -20,9 +20,20 @@ tslink add db --tcp localhost:5432   # any TCP port
 
 ## ইনস্টল
 
+macOS হোস্টের জন্য macOS 13 Ventura বা পরবর্তী সংস্করণ প্রয়োজন ([সমর্থিত প্ল্যাটফর্ম](platforms.md))।
+
 ```sh
 brew install --cask anydoor7/tap/tslink
 ```
+
+Windows-এ Scoop দিয়ে ইনস্টল করুন:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+আপগ্রেড করতে `brew upgrade --cask tslink` বা `scoop update; scoop update tslink` চালান। TSLink ব্যাকগ্রাউন্ড সেবা হিসেবে চললে আপগ্রেডের পরে আবার `tslink install` চালান।
 
 Linux-এর `.deb` ও `.rpm` প্যাকেজ এবং Windows বিল্ড [সর্বশেষ রিলিজে](https://github.com/anydoor7/tslink/releases/latest) আছে। প্রথমবার কোনো অ্যাপ শেয়ার করলে TSLink সেটির জন্য একটি Tailscale সাইন-ইন লিংক দেখায়। [শুরু করা](getting-started.md)
 

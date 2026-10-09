@@ -119,7 +119,7 @@ func stepIndex(t *testing.T, steps []publishStep, what string, match func(publis
 // before any tool is installed.
 func credentialGateIndex(t *testing.T, steps []publishStep) int {
 	return stepIndex(t, steps, "stable credential gate", func(s publishStep) bool {
-		return s.If == stableOnly && s.Run != ""
+		return s.If == stableOnly && s.Run != "" && s.Env["HOMEBREW_TAP_APP_CLIENT_ID"] == tapClientIDExpr
 	})
 }
 
@@ -155,7 +155,7 @@ func TestStablePublishMintsScopedTapToken(t *testing.T) {
 		"client-id":           tapClientIDExpr,
 		"private-key":         tapPrivateKeyExpr,
 		"owner":               cask.Repository.Owner,
-		"repositories":        cask.Repository.Name,
+		"repositories":        cask.Repository.Name + ",scoop-bucket",
 		"permission-contents": "write",
 	}
 	for key, value := range want {
@@ -165,7 +165,7 @@ func TestStablePublishMintsScopedTapToken(t *testing.T) {
 	}
 	for key, value := range m.With {
 		if _, ok := want[key]; !ok {
-			t.Errorf("token mint sets unexpected input %s=%q; the tap token needs only Contents write on one repository", key, value)
+			t.Errorf("token mint sets unexpected input %s=%q; the package-manager token needs only Contents write on the tap and bucket", key, value)
 		}
 	}
 	if cask.Repository.Owner != "anydoor7" || cask.Repository.Name != "homebrew-tap" {

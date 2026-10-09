@@ -52,8 +52,8 @@ checksum:
   name_template: "checksums.txt"
 
 # A tag with a pre-release suffix (v0.2.0-rc.1) becomes a GitHub pre-release
-# and never the latest release, and homebrew_casks skip_upload: auto keeps it
-# out of the tap. release.yml publishes only tags without +build metadata, so
+# and never the latest release. All package-manager publishers use
+# skip_upload: auto to keep it out of their repositories. release.yml publishes only tags without +build metadata, so
 # a hyphen there always starts the pre-release field and its hyphen test for
 # pre-releases picks the same tags.
 release:
@@ -157,6 +157,7 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/anydoor7/tslink"
     description: "Give each local app a private Tailscale address and control who can reach it"
+    license: "Apache-2.0"
     skip_upload: auto
     commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
     # The darwin binaries are Developer ID signed and notarized by Apple (see
@@ -186,6 +187,24 @@ homebrew_casks:
       {{- end }}
       After brew upgrade, run tslink install again if TSLink runs as a
       background service, so the service starts the upgraded binary.
+
+# Windows archives remain unsigned by Authenticode. Scoop uses the same
+# checksummed zip assets, including native ARM64, without install hooks.
+# Snapshots render manifests but never publish; auto also excludes pre-releases.
+scoops:
+  - name: tslink
+    ids: [archive]
+    repository:
+      owner: anydoor7
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    directory: bucket
+    homepage: "https://github.com/anydoor7/tslink"
+    description: "Give each local app a private Tailscale address and control who can reach it"
+    license: "Apache-2.0"
+    skip_upload: auto
+    commit_msg_template: "Scoop update for {{ .ProjectName }} version {{ .Tag }}"
 
 changelog:
   sort: asc
