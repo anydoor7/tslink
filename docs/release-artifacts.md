@@ -77,8 +77,10 @@ install and upgrade results, the owner can submit:
 scripts/winget-submit.sh v0.1.1
 ```
 
-This requires an existing public `anydoor7/winget-pkgs` fork and `gh`, git,
-Python 3 and cosign. It checks upstream for the version directory and open PRs,
+This requires an existing public `monody0007/winget-pkgs` fork (a user-account fork:
+`gh pr create --head <owner>:<branch>` does not support organization-owned forks,
+cli/cli#10093), `gh` logged in as monody0007, and git, Python 3 and cosign.
+It checks upstream for the version directory and open PRs,
 with a known upstream file as the positive control for a 404. It verifies the
 release, syncs the fork, commits only the three YAMLs on `tslink-0.1.1`, pushes
 that branch and opens a PR using the caller's existing `gh` authentication.

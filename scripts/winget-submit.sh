@@ -10,10 +10,14 @@ LC_ALL=C
 version="${tag#v}"
 branch="tslink-${version}"
 manifest_dir="manifests/a/anydoor7/TSLink/${version}"
+# gh pr create --head only supports user-owned forks (cli/cli#10093).
+fork_owner=monody0007
+fork_repo="${fork_owner}/winget-pkgs"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 for command in gh git python3 cosign; do
     command -v "$command" >/dev/null || fail "Required command missing: ${command}"
 done
+[ "$(gh api user --jq .login)" = "$fork_owner" ] || fail "Run as ${fork_owner}; the winget fork is ${fork_repo}"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/tslink-winget-submit.XXXXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
@@ -33,10 +37,17 @@ PY
 then
     fail 'Upstream version lookup failed without HTTP 404; nothing was changed'
 fi
+if gh api repos/microsoft/winget-pkgs/contents/manifests/a/anydoor7/TSLink > /dev/null 2> "$scratch/pkg-error"; then
+    kind="New version"
+elif grep -q '(HTTP 404)' "$scratch/pkg-error"; then
+    kind="New package"
+else
+    fail 'Upstream package lookup failed without HTTP 404; nothing was changed'
+fi
 # Inspect all open PR pages, including file paths, rather than trusting an empty
 # search-index result or a truncated first page to rule out a duplicate.
 gh api --paginate --slurp 'repos/microsoft/winget-pkgs/pulls?state=open&per_page=100' > "$scratch/pulls.json"
-python3 - "$scratch/pulls.json" "$scratch/numbers" "$version" "$branch" <<'PY'
+python3 - "$scratch/pulls.json" "$scratch/numbers" "$version" "$branch" "$fork_repo" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -47,23 +58,30 @@ for page in pages:
         title = pr["title"].lower()
         if ("anydoor7.tslink" in title and sys.argv[3] in title) or (
                 pr["head"]["ref"] == sys.argv[4]
-                and pr["head"]["repo"] and pr["head"]["repo"]["full_name"] == "anydoor7/winget-pkgs"):
+                and pr["head"]["repo"] and pr["head"]["repo"]["full_name"] == sys.argv[5]):
             sys.exit("An open PR already covers this package/version: " + pr["html_url"])
         numbers.append(str(pr["number"]))
+if not numbers:
+    sys.exit("Open PR listing returned no PRs; cannot rule out duplicates")
 Path(sys.argv[2]).write_text("\n".join(numbers))
 PY
-while IFS= read -r number || [ -n "$number" ]; do
-    gh api --paginate --slurp "repos/microsoft/winget-pkgs/pulls/${number}/files?per_page=100" > "$scratch/files.json"
-    python3 - "$scratch/files.json" "$manifest_dir/" <<'PY'
+gh api graphql --paginate --slurp -f query='query($endCursor: String) { repository(owner: "microsoft", name: "winget-pkgs") { pullRequests(states: OPEN, first: 50, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { number files(first: 100) { totalCount nodes { path } } } } } }' > "$scratch/files.json"
+python3 - "$scratch/files.json" "$manifest_dir/" <<'PY'
 import json
 from pathlib import Path
 import sys
-if any(f["filename"].startswith(sys.argv[2]) for page in json.loads(Path(sys.argv[1]).read_text()) for f in page):
-    sys.exit("An open PR already changes this manifest directory")
+prs = [pr for page in json.loads(Path(sys.argv[1]).read_text())
+       for pr in page["data"]["repository"]["pullRequests"]["nodes"]]
+if not prs:
+    sys.exit("Open PR files listing returned no PRs")
+for pr in prs:
+    if pr["files"]["totalCount"] > len(pr["files"]["nodes"]):
+        continue  # >100-file bulk PRs cannot add a single new package version
+    if any(f["path"].startswith(sys.argv[2]) for f in pr["files"]["nodes"]):
+        sys.exit("An open PR already changes this manifest directory")
 PY
-done < "$scratch/numbers"
 
-gh api repos/anydoor7/winget-pkgs > "$scratch/fork.json"
+gh api "repos/${fork_repo}" > "$scratch/fork.json"
 python3 - "$scratch/fork.json" <<'PY'
 import json
 from pathlib import Path
@@ -71,17 +89,18 @@ import sys
 repo = json.loads(Path(sys.argv[1]).read_text())
 if (not repo.get("fork") or repo.get("parent", {}).get("full_name") != "microsoft/winget-pkgs"
         or repo.get("private") or repo.get("archived") or repo.get("default_branch") != "master"):
-    sys.exit("anydoor7/winget-pkgs must already be a public, unarchived fork with default branch master")
+    sys.exit("the winget-pkgs fork must already be a public, unarchived fork of microsoft/winget-pkgs with default branch master")
 PY
 # Verify the release before the first remote mutation. Submission has no
 # --allow-unverified escape hatch.
 python3 "$script_dir/winget-manifests.py" "$tag" --out "$scratch/generated"
-gh repo sync anydoor7/winget-pkgs --source microsoft/winget-pkgs --branch master
+gh repo sync "$fork_repo" --source microsoft/winget-pkgs --branch master
 # Sync failure (including workflow permission refusal) stops before branching.
 # No force-sync or force-push; an existing branch also stops for owner inspection.
 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-    clone --depth 1 --single-branch --branch master https://github.com/anydoor7/winget-pkgs.git "$scratch/fork"
+    clone --depth 1 --filter=blob:none --sparse --single-branch --branch master "https://github.com/${fork_repo}.git" "$scratch/fork"
 cd "$scratch/fork"
+git sparse-checkout set --no-cone "/${manifest_dir}/"
 set +e
 git ls-remote --exit-code --heads origin "$branch" > "$scratch/remote-branch"
 status="$?"
@@ -98,7 +117,7 @@ printf '%s\n' "${files[@]}" | sort > "$scratch/expected"
 sort "$scratch/staged" > "$scratch/actual"
 cmp "$scratch/expected" "$scratch/actual" || fail 'The commit must contain exactly the three manifest YAMLs'
 git -c user.name=monody0007 -c user.email=52037177+monody0007@users.noreply.github.com \
-    commit -m "New version: anydoor7.TSLink version ${version}"
+    commit -m "${kind}: anydoor7.TSLink version ${version}"
 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --set-upstream origin "$branch"
 cat > "$scratch/pr-body.md" <<EOF
 Adds anydoor7.TSLink ${version} from the published ${tag} release.
@@ -108,5 +127,5 @@ the TSLink release workflow identity. Contains only the three winget 1.12.0 YAML
 Windows native manifest validation, install and upgrade have not been run by
 this script. Maintainers must record those checks before claiming acceptance.
 EOF
-gh pr create --repo microsoft/winget-pkgs --base master --head "anydoor7:${branch}" \
-    --title "New version: anydoor7.TSLink version ${version}" --body-file "$scratch/pr-body.md"
+gh pr create --repo microsoft/winget-pkgs --base master --head "${fork_owner}:${branch}" \
+    --title "${kind}: anydoor7.TSLink version ${version}" --body-file "$scratch/pr-body.md"
