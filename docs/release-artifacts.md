@@ -1,7 +1,9 @@
 # Release Artifacts
 
 Stable releases, starting with v0.1.0, publish the installable artifacts below
-on GitHub Releases and update the `anydoor7/homebrew-tap` cask. Installing from
+on GitHub Releases and update the `anydoor7/homebrew-tap` cask. The
+`anydoor7/scoop-bucket` Windows manifest is seeded with v0.1.1 and updated by
+the release pipeline on subsequent stable releases. Installing from
 source with Git and Go remains an alternative.
 
 After a stable release is published and the `anydoor7/homebrew-tap` repository is populated, install with Homebrew on macOS or Linux:
@@ -16,7 +18,19 @@ Keep the fully qualified name. Homebrew refuses casks from a third-party tap it 
 |---|---|---|
 | macOS | Homebrew cask and `tar.gz` archives | The Homebrew cask uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. Stable macOS binaries are signed with a Developer ID certificate and notarized by Apple; Gatekeeper runs them directly, whether they arrive through the cask or a downloaded archive, provided the first run can reach Apple to check the notarization ticket (a bare binary cannot carry a stapled ticket). Pre-release tags may ship unsigned archives: Gatekeeper blocks those, so use them only for validation. |
 | Linux | Homebrew cask, `.deb`, `.rpm`, and `tar.gz` archives | The cask and packages contain the native `tslink` binary. The first `tslink add` registers and starts the user service automatically. |
-| Windows | `.zip` archives | Windows support is archive-only today. There is no MSI/MSIX/Winget package or Windows code-signed installer yet, and Homebrew does not run on Windows itself (inside WSL 2 it installs the Linux binary). Run `tslink install` from the extracted binary to register a per-user scheduled task that starts TSLink at sign-in (`--startup` selects the Startup-folder fallback). |
+| Windows | Scoop and `.zip` archives (x64 / ARM64) | Scoop installs the native zip and checks its SHA-256 hash. Zips are not Authenticode-signed; verify manual downloads against `checksums.txt`. Run `tslink install` to register a per-user scheduled task that starts TSLink now and at sign-in (`--startup` selects the Startup-folder fallback). Homebrew inside WSL installs the Linux binary. |
+
+On Windows, add the Scoop bucket once and install:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+Upgrade with `scoop update tslink`, then run `tslink install` again if TSLink runs
+as a background service so the scheduled task starts the upgraded binary.
+Scoop uses GoReleaser `skip_upload: auto`; pre-releases do not update the bucket,
+and snapshots never publish.
 
 Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, `checksums.txt`, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for `checksums.txt` and SBOM sidecars. The signed `checksums.txt` covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.
 

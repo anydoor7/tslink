@@ -24,6 +24,15 @@ tslink add db --tcp localhost:5432   # any TCP port
 brew install --cask anydoor7/tap/tslink
 ```
 
+บน Windows ให้ติดตั้งด้วย Scoop:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+หากต้องการอัปเกรด ให้รัน `brew upgrade --cask tslink` หรือ `scoop update tslink` หาก TSLink ทำงานเป็นบริการเบื้องหลัง ให้รัน `tslink install` อีกครั้งหลังอัปเกรด
+
 แพ็กเกจ `.deb` และ `.rpm` สำหรับ Linux และบิลด์สำหรับ Windows อยู่ใน[รุ่นล่าสุด](https://github.com/anydoor7/tslink/releases/latest) ครั้งแรกที่คุณแชร์แอป TSLink จะแสดงลิงก์ลงชื่อเข้าใช้ Tailscale สำหรับแอปนั้น [เริ่มต้นใช้งาน](getting-started.md)
 
 <a id="why"></a>

@@ -119,7 +119,7 @@ func stepIndex(t *testing.T, steps []publishStep, what string, match func(publis
 // before any tool is installed.
 func credentialGateIndex(t *testing.T, steps []publishStep) int {
 	return stepIndex(t, steps, "stable credential gate", func(s publishStep) bool {
-		return s.If == stableOnly && s.Run != ""
+		return s.If == stableOnly && s.Run != "" && s.Env["HOMEBREW_TAP_APP_CLIENT_ID"] == tapClientIDExpr
 	})
 }
 
@@ -155,7 +155,7 @@ func TestStablePublishMintsScopedTapToken(t *testing.T) {
 		"client-id":           tapClientIDExpr,
 		"private-key":         tapPrivateKeyExpr,
 		"owner":               cask.Repository.Owner,
-		"repositories":        cask.Repository.Name,
+		"repositories":        cask.Repository.Name + ",scoop-bucket",
 		"permission-contents": "write",
 	}
 	for key, value := range want {
@@ -165,7 +165,7 @@ func TestStablePublishMintsScopedTapToken(t *testing.T) {
 	}
 	for key, value := range m.With {
 		if _, ok := want[key]; !ok {
-			t.Errorf("token mint sets unexpected input %s=%q; the tap token needs only Contents write on one repository", key, value)
+			t.Errorf("token mint sets unexpected input %s=%q; the package-manager token needs only Contents write on the tap and bucket", key, value)
 		}
 	}
 	if cask.Repository.Owner != "anydoor7" || cask.Repository.Name != "homebrew-tap" {
@@ -207,6 +207,7 @@ func TestStableCredentialGateExecutes(t *testing.T) {
 		"MACOS_NOTARY_KEY_ID":          "key-id-fixture",
 		"MACOS_NOTARY_KEY":             "cDgtZml4dHVyZQ==",
 		"HOMEBREW_TAP_APP_CLIENT_ID":   "Iv23-fixture",
+		"WINGET_GITHUB_TOKEN":          "winget-fixture-secret",
 		"HOMEBREW_TAP_APP_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----\nfixture\n-----END RSA PRIVATE KEY-----\n",
 	}
 	for key := range complete {
@@ -223,6 +224,7 @@ func TestStableCredentialGateExecutes(t *testing.T) {
 		{name: "complete"},
 		{name: "no App client ID", change: map[string]string{"HOMEBREW_TAP_APP_CLIENT_ID": ""}, wantErr: "HOMEBREW_TAP_APP_CLIENT_ID"},
 		{name: "no App private key", change: map[string]string{"HOMEBREW_TAP_APP_PRIVATE_KEY": ""}, wantErr: "HOMEBREW_TAP_APP_PRIVATE_KEY"},
+		{name: "no winget token", change: map[string]string{"WINGET_GITHUB_TOKEN": ""}, wantErr: "WINGET_GITHUB_TOKEN"},
 		{name: "no signing identity", change: map[string]string{"MACOS_SIGN_P12": ""}, wantErr: "macOS signing secrets"},
 		// GNU and uutils base64 -d reject PEM text, as on the ubuntu runner;
 		// the BSD base64 on macOS skips characters it cannot decode.

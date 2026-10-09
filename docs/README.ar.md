@@ -26,6 +26,15 @@ tslink add db --tcp localhost:5432   # any TCP port
 brew install --cask anydoor7/tap/tslink
 ```
 
+على Windows، ثبّت باستخدام Scoop:
+
+```powershell
+scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
+scoop install anydoor7/tslink
+```
+
+للترقية، شغّل `brew upgrade --cask tslink` أو `scoop update tslink`. إذا كان TSLink يعمل كخدمة في الخلفية، فأعد تشغيل `tslink install` بعد الترقية.
+
 حزم Linux بصيغتي `.deb` و`.rpm` وإصدارات Windows متاحة في [أحدث إصدار](https://github.com/anydoor7/tslink/releases/latest). في أول مرة تشارك فيها تطبيقا، يعرض TSLink رابط تسجيل دخول إلى Tailscale خاصا به. [البدء](getting-started.md)
 
 <a id="why"></a>
