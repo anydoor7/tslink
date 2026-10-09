@@ -3,6 +3,29 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [0.1.1] - 2026-10-09
+
+Security update. Commands, flags and stored data are unchanged from 0.1.0.
+
+### Upgrade
+
+- Homebrew: `brew upgrade --cask anydoor7/tap/tslink`. Other installs: download the new archive or package from this release.
+- If TSLink runs as a background service, run `tslink install` again after upgrading so the service starts the new binary.
+
+### Security
+
+- Built with Go 1.27.2. The 0.1.0 Linux amd64 binary was built with Go 1.26.6, and `govulncheck -mode=binary` reports vulnerable standard-library symbols for 12 advisories: GO-2026-6599, GO-2026-6600, GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608, GO-2026-6609, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613 and GO-2026-6617. They cover HTTP/2 server crashes, resource exhaustion and flow-control errors, HTTP/2 response smuggling via malformed headers, HTTP/1 connection desynchronization after CONNECT, Range header parsing without a size limit, MIME header memory-limit bypasses, `html/template` escaping and malformed `crypto/tls` ECH extension references. With Go 1.27.2, `govulncheck ./...` reports no reachable vulnerabilities in the 0.1.1 source on macOS arm64.
+- `tailscale.com` is updated to v1.104.1 and `golang.org/x/net` to v0.60.0.
+
+### Changed
+
+- Building from source needs Go 1.27.1 or newer, and `tslink manifest --json` reports that minimum.
+
+### Documentation
+
+- The README is shorter, adds a "When you need TSLink" comparison with doing the same by hand, and is available in 21 translations.
+- Guest links are described as public links that can be forwarded: whoever has the link reaches the guest gate, and a PIN, when set, is still required. The 0.1.0 notes said "Anyone holding the link can use it", which left out the PIN.
+
 ## [0.1.0] - 2026-10-06
 
 First public release. TSLink gives each app on your computer or server, whether a web app, a folder or file, or a TCP port, its own private address on your Tailscale network, so you can open it from your own devices. You decide who else can reach it: people you name, browser guests with an expiring link, or, only when you ask for it, the public internet. Run it yourself from the CLI or through an AI agent over MCP. TSLink needs a Tailscale account and is an independent project, not made or endorsed by Tailscale.
