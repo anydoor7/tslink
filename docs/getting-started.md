@@ -6,7 +6,8 @@ You need a Tailscale account with
 [MagicDNS and HTTPS enabled](https://tailscale.com/docs/how-to/set-up-https-certificates)
 and a receiving device signed into your tailnet. Tailnet policy must allow the connection.
 TSLink embeds Tailscale on the publishing host, so no separate Tailscale installation is needed there.
-Building from source also needs Go 1.26.6+ and Git.
+Building from source also needs Go 1.27.1+ and Git. macOS hosts require
+macOS 13 Ventura or later ([Go release notes](https://go.dev/doc/go1.27#darwin)).
 
 ## Install
 

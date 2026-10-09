@@ -66,7 +66,7 @@ func TestShareReuseRearmsAnExpiredFunnelDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			second, parseErr := applyShareExposure(shareTargetSpec{}, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: tc.secondTTL, FunnelTTLSet: tc.secondSet})
+			_, parseErr := applyShareExposure(shareTargetSpec{}, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: tc.secondTTL, FunnelTTLSet: tc.secondSet})
 			if tc.secondTTL == "never" {
 				if parseErr == nil || !strings.Contains(parseErr.Error(), "never is allowed only") {
 					t.Fatal(parseErr)
@@ -77,7 +77,7 @@ func TestShareReuseRearmsAnExpiredFunnelDeadline(t *testing.T) {
 				}
 				return
 			}
-			second = shareIntentForRegression(t, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: tc.secondTTL, FunnelTTLSet: tc.secondSet})
+			second := shareIntentForRegression(t, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: tc.secondTTL, FunnelTTLSet: tc.secondSet})
 			outcome, err := registerShareWithOutcome(path, second, "")
 			stored, loadErr := registry.Load(path)
 			if loadErr != nil || len(stored.Services) != 1 {

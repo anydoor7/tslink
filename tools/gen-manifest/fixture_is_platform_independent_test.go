@@ -36,7 +36,6 @@ func committedFixture(t *testing.T) cmd.CLIManifest {
 func nativeFor(t *testing.T, goos, goarch string) cmd.CLIManifest {
 	t.Helper()
 	manifest := cmd.Manifest()
-	manifest.Toolchain.MinimumGoVersion = "1.26.6"
 	manifest.Platform = cmd.PlatformInfo{GOOS: goos, GOARCH: goarch}
 	manifest.Commands = slices.Clone(manifest.Commands)
 	committed := map[string]cmd.CommandInfo{}

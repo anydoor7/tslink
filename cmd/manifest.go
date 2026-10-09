@@ -165,7 +165,7 @@ func Manifest() CLIManifest {
 		SupportedPlatforms:    SupportedManifestPlatforms(),
 		RegistrySchemaVersion: registry.PeopleRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
-			MinimumGoVersion: "1.26.6",
+			MinimumGoVersion: "1.27.1",
 		},
 		ExitCodes: map[string]int{
 			"success":   output.ExitSuccess,

@@ -3,7 +3,7 @@
 # locally what CI runs, on any platform:
 #
 #   build, vet (this platform, then linux, darwin and windows), gofmt,
-#   go mod tidy, staticcheck when it is installed (the three platforms, as CI),
+#   go mod tidy, staticcheck (the three platforms, as CI),
 #   the CLI manifest and third-party notice checks, and the test suite.
 #
 # Usage: scripts/check.sh [go test flags...]
@@ -47,12 +47,18 @@ if [ -z "${staticcheck}" ] && [ -x "$(go env GOPATH)/bin/staticcheck" ]; then
 	staticcheck="$(go env GOPATH)/bin/staticcheck"
 fi
 if [ -n "${staticcheck}" ]; then
+	# Released staticcheck cannot read Go 1.27.2 export data:
+	# https://github.com/dominikh/go-tools/issues/1832
+	# Once a supporting release ships, upgrade CI's STATICCHECK_VERSION and
+	# remove this override together with the CI Go 1.27.1 exception.
 	for goos in linux darwin windows; do
-		step "GOOS=${goos} staticcheck ./..."
-		GOOS="${goos}" "${staticcheck}" ./...
+		step "GOTOOLCHAIN=go1.27.1 GOOS=${goos} staticcheck ./..."
+		GOTOOLCHAIN=go1.27.1 GOOS="${goos}" "${staticcheck}" ./...
 	done
 else
-	step "staticcheck: not installed, skipped (go install honnef.co/go/tools/cmd/staticcheck@latest)"
+	staticcheck_version="$(awk '$1 == "STATICCHECK_VERSION:" { print $2 }' .github/workflows/release-candidate.yml)"
+	printf 'staticcheck is required; install it with:\n  GOTOOLCHAIN=go1.27.1 go install honnef.co/go/tools/cmd/staticcheck@%s\n' "${staticcheck_version:?missing CI staticcheck version}" >&2
+	exit 1
 fi
 
 step "go run ./tools/gen-manifest -check"

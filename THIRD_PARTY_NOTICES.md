@@ -16,15 +16,15 @@ Linked third-party modules: 55
 | Module | Version | Module-root license | Included files |
 |---|---|---|---|
 | `filippo.io/edwards25519` | v1.2.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/alexbrainman/sspi` | v0.0.0-20231016080023-1a75b4708caa | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/coder/websocket` | v1.8.14 | ISC | `LICENSE.txt` |
-| `github.com/creachadair/msync` | v0.8.1 | BSD-2-Clause | `LICENSE` |
+| `github.com/alexbrainman/sspi` | v0.0.0-20250919150558-7d374ff0d59e | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/coder/websocket` | v1.8.15 | ISC | `LICENSE.txt` |
+| `github.com/creachadair/msync` | v0.10.1 | BSD-2-Clause | `LICENSE` |
 | `github.com/danieljoos/wincred` | v1.2.3 | MIT | `LICENSE` |
-| `github.com/dblohm7/wingoes` | v0.0.0-20240119213807-a09d6be7affa | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/dblohm7/wingoes` | v0.0.0-20260526185140-fb298caac7ca | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/fsnotify/fsnotify` | v1.10.1 | BSD-3-Clause | `LICENSE`, `NOTICE.tslink` |
-| `github.com/fxamacker/cbor/v2` | v2.9.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/gaissmai/bart` | v0.26.1 | MIT | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/go-json-experiment/json` | v0.0.0-20260214004413-d219187c3433 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/fxamacker/cbor/v2` | v2.9.3 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/gaissmai/bart` | v0.29.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/go-json-experiment/json` | v0.0.0-20260820222146-c27c302e5fc3 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/godbus/dbus/v5` | v5.2.2 | BSD-2-Clause | `LICENSE` |
 | `github.com/golang/groupcache` | v0.0.0-20241129210726-2c02b8208cf8 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/google/btree` | v1.1.3 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
@@ -32,14 +32,14 @@ Linked third-party modules: 55
 | `github.com/hdevalence/ed25519consensus` | v0.2.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/huin/goupnp` | v1.3.0 | BSD-2-Clause | `LICENSE` |
 | `github.com/inconshreveable/mousetrap` | v1.1.0 | Apache-2.0 | `LICENSE` |
-| `github.com/jsimonetti/rtnetlink` | v1.4.1 | MIT | `LICENSE.md` |
-| `github.com/klauspost/compress` | v1.19.1 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt` |
-| `github.com/mdlayher/netlink` | v1.7.3-0.20250113171957-fbb4dce95f42 | MIT | `LICENSE.md` |
-| `github.com/mdlayher/socket` | v0.5.0 | MIT | `LICENSE.md` |
+| `github.com/jsimonetti/rtnetlink` | v1.4.2 | MIT | `LICENSE.md` |
+| `github.com/klauspost/compress` | v1.20.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt` |
+| `github.com/mdlayher/netlink` | v1.11.2 | MIT | `LICENSE.md` |
+| `github.com/mdlayher/socket` | v0.7.0 | MIT | `LICENSE.md` |
 | `github.com/mitchellh/go-ps` | v1.0.0 | MIT | `LICENSE.md` |
 | `github.com/modelcontextprotocol/go-sdk` | v1.8.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/pires/go-proxyproto` | v0.8.1 | Apache-2.0 | `LICENSE` |
-| `github.com/safchain/ethtool` | v0.3.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/pires/go-proxyproto` | v0.15.0 | Apache-2.0 | `LICENSE` |
+| `github.com/safchain/ethtool` | v0.7.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/segmentio/asm` | v1.1.3 | MIT | `LICENSE` |
 | `github.com/segmentio/encoding` | v0.5.4 | MIT | `LICENSE` |
 | `github.com/skip2/go-qrcode` | v0.0.0-20200617195104-da1b6568686e | MIT | `LICENSE`, `Linked source copyright and license headers` |
@@ -47,28 +47,28 @@ Linked third-party modules: 55
 | `github.com/spf13/pflag` | v1.0.10 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/tailscale/certstore` | v0.1.1-0.20260409135935-3638fb84b77d | MIT | `LICENSE.md` |
 | `github.com/tailscale/go-winio` | v0.0.0-20231025203758-c4f33415bf55 | MIT | `LICENSE` |
-| `github.com/tailscale/hujson` | v0.0.0-20260302212456-ecc657c15afd | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/tailscale/hujson` | v0.0.0-20260727124030-b80ff77dac4f | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/tailscale/peercred` | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/tailscale/web-client-prebuilt` | v0.0.0-20250124233751-d4cd19a26976 | BSD-3-Clause | `Embedded Inter font license`, `Embedded web-client runtime dependency notices`, `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/tailscale/wireguard-go` | v0.0.0-20260715223240-2e01ba5b00f0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/tailscale/web-client-prebuilt` | v0.0.0-20260917222731-e0ed2d0d0fea | BSD-3-Clause | `Embedded Inter font license`, `Embedded web-client runtime dependency notices`, `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/tailscale/wireguard-go` | v0.0.0-20260928213032-417aef361226 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/x448/float16` | v0.8.4 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/yosida95/uritemplate/v3` | v3.0.2 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/zalando/go-keyring` | v0.2.8 | MIT | `LICENSE`, `Linked source copyright and license headers`, `internal/shellescape/LICENSE` |
 | `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
-| `go4.org/netipx` | v0.0.0-20231129151722-fdeea329fbba | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `go4.org/netipx` | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/exp` | v0.0.0-20260410095643-746e56fc9e2f | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/net` | v0.58.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/oauth2` | v0.36.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/exp` | v0.0.0-20260908205506-85c1c2202aba | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/net` | v0.60.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/oauth2` | v0.37.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/sync` | v0.23.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/sys` | v0.48.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/term` | v0.46.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/text` | v0.42.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/time` | v0.15.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/time` | v0.16.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.zx2c4.com/wireguard/windows` | v0.5.3 | MIT | `COPYING`, `Linked source copyright and license headers` |
-| `gvisor.dev/gvisor` | v0.0.0-20260224225140-573d5e7127a8 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
-| `tailscale.com` | v1.102.5 | BSD-3-Clause | `Embedded HTMX WebSocket license`, `Embedded HTMX license`, `LICENSE`, `Linked source copyright and license headers` |
+| `golang.zx2c4.com/wireguard/windows` | v1.0.1 | MIT | `COPYING`, `Linked source copyright and license headers` |
+| `gvisor.dev/gvisor` | v0.0.0-20260915211658-a6f909f08a72 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
+| `tailscale.com` | v1.104.1 | BSD-3-Clause | `Embedded HTMX WebSocket license`, `Embedded HTMX license`, `LICENSE`, `Linked source copyright and license headers` |
 | `tailscale.com/client/tailscale/v2` | v2.11.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 
 ## Included License And Notice Text
@@ -131,10 +131,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `github.com/alexbrainman/sspi` v0.0.0-20231016080023-1a75b4708caa
+### `github.com/alexbrainman/sspi` v0.0.0-20250919150558-7d374ff0d59e
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `github.com/alexbrainman/sspi@v0.0.0-20231016080023-1a75b4708caa` from the resolved Go module graph
+- Evidence source: `github.com/alexbrainman/sspi@v0.0.0-20250919150558-7d374ff0d59e` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -189,10 +189,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `github.com/coder/websocket` v1.8.14
+### `github.com/coder/websocket` v1.8.15
 
 - Module-root license: ISC (nested and embedded components may differ)
-- Evidence source: `github.com/coder/websocket@v1.8.14` from the resolved Go module graph
+- Evidence source: `github.com/coder/websocket@v1.8.15` from the resolved Go module graph
 - Included files: `LICENSE.txt`
 
 #### LICENSE.txt
@@ -213,10 +213,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ~~~~
 
-### `github.com/creachadair/msync` v0.8.1
+### `github.com/creachadair/msync` v0.10.1
 
 - Module-root license: BSD-2-Clause (nested and embedded components may differ)
-- Evidence source: `github.com/creachadair/msync@v0.8.1` from the resolved Go module graph
+- Evidence source: `github.com/creachadair/msync@v0.10.1` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -282,10 +282,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
-### `github.com/dblohm7/wingoes` v0.0.0-20240119213807-a09d6be7affa
+### `github.com/dblohm7/wingoes` v0.0.0-20260526185140-fb298caac7ca
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `github.com/dblohm7/wingoes@v0.0.0-20240119213807-a09d6be7affa` from the resolved Go module graph
+- Evidence source: `github.com/dblohm7/wingoes@v0.0.0-20260526185140-fb298caac7ca` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -330,6 +330,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 
 // Copyright (c) 2023 Tailscale Inc & AUTHORS. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright (c) 2024 Tailscale Inc & AUTHORS. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -462,10 +466,10 @@ change touches a backend:
     go test -race -count=1 ./...
 ~~~~
 
-### `github.com/fxamacker/cbor/v2` v2.9.0
+### `github.com/fxamacker/cbor/v2` v2.9.3
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `github.com/fxamacker/cbor/v2@v2.9.0` from the resolved Go module graph
+- Evidence source: `github.com/fxamacker/cbor/v2@v2.9.3` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -501,10 +505,10 @@ SOFTWARE.
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 ~~~~
 
-### `github.com/gaissmai/bart` v0.26.1
+### `github.com/gaissmai/bart` v0.29.0
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `github.com/gaissmai/bart@v0.26.1` from the resolved Go module graph
+- Evidence source: `github.com/gaissmai/bart@v0.29.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -512,7 +516,7 @@ SOFTWARE.
 ~~~~text
 MIT License
 
-Copyright (c) 2024 Karl Gaissmaier
+Copyright (c) 2026 Karl Gaissmaier
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -536,17 +540,14 @@ SOFTWARE.
 #### Linked source copyright and license headers
 
 ~~~~text
-// Copyright (c) 2024 Karl Gaissmaier
-// SPDX-License-Identifier: MIT
-
-// Copyright (c) 2025 Karl Gaissmaier
+// Copyright (c) 2026 Karl Gaissmaier
 // SPDX-License-Identifier: MIT
 ~~~~
 
-### `github.com/go-json-experiment/json` v0.0.0-20260214004413-d219187c3433
+### `github.com/go-json-experiment/json` v0.0.0-20260820222146-c27c302e5fc3
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `github.com/go-json-experiment/json@v0.0.0-20260214004413-d219187c3433` from the resolved Go module graph
+- Evidence source: `github.com/go-json-experiment/json@v0.0.0-20260820222146-c27c302e5fc3` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -609,6 +610,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 
 // Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 ~~~~
@@ -1450,10 +1455,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
    limitations under the License.
 ~~~~
 
-### `github.com/jsimonetti/rtnetlink` v1.4.1
+### `github.com/jsimonetti/rtnetlink` v1.4.2
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `github.com/jsimonetti/rtnetlink@v1.4.1` from the resolved Go module graph
+- Evidence source: `github.com/jsimonetti/rtnetlink@v1.4.2` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
 #### LICENSE.md
@@ -1471,10 +1476,10 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~
 
-### `github.com/klauspost/compress` v1.19.1
+### `github.com/klauspost/compress` v1.20.0
 
 - Module-root license: Apache-2.0 (nested and embedded components may differ)
-- Evidence source: `github.com/klauspost/compress@v1.19.1` from the resolved Go module graph
+- Evidence source: `github.com/klauspost/compress@v1.20.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt`
 
 #### LICENSE
@@ -1875,10 +1880,10 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~
 
-### `github.com/mdlayher/netlink` v1.7.3-0.20250113171957-fbb4dce95f42
+### `github.com/mdlayher/netlink` v1.11.2
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `github.com/mdlayher/netlink@v1.7.3-0.20250113171957-fbb4dce95f42` from the resolved Go module graph
+- Evidence source: `github.com/mdlayher/netlink@v1.11.2` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
 #### LICENSE.md
@@ -1886,7 +1891,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~text
 # MIT License
 
-Copyright (C) 2016-2022 Matt Layher
+Copyright (C) 2016-2026 Matt Layher
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -1895,10 +1900,10 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~
 
-### `github.com/mdlayher/socket` v0.5.0
+### `github.com/mdlayher/socket` v0.7.0
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `github.com/mdlayher/socket@v0.5.0` from the resolved Go module graph
+- Evidence source: `github.com/mdlayher/socket@v0.7.0` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
 #### LICENSE.md
@@ -2202,10 +2207,10 @@ the full license text.
 // that can be found in the LICENSE file.
 ~~~~
 
-### `github.com/pires/go-proxyproto` v0.8.1
+### `github.com/pires/go-proxyproto` v0.15.0
 
 - Module-root license: Apache-2.0 (nested and embedded components may differ)
-- Evidence source: `github.com/pires/go-proxyproto@v0.8.1` from the resolved Go module graph
+- Evidence source: `github.com/pires/go-proxyproto@v0.15.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -2414,10 +2419,10 @@ the full license text.
    limitations under the License.
 ~~~~
 
-### `github.com/safchain/ethtool` v0.3.0
+### `github.com/safchain/ethtool` v0.7.0
 
 - Module-root license: Apache-2.0 (nested and embedded components may differ)
-- Evidence source: `github.com/safchain/ethtool@v0.3.0` from the resolved Go module graph
+- Evidence source: `github.com/safchain/ethtool@v0.7.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -2611,7 +2616,7 @@ the full license text.
       same "printed page" as the copyright notice for easier
       identification within third-party archives.
 
-   Copyright {yyyy} {name of copyright owner}
+   Copyright (c) 2015 The Ethtool Authors
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -3066,10 +3071,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
-### `github.com/tailscale/hujson` v0.0.0-20260302212456-ecc657c15afd
+### `github.com/tailscale/hujson` v0.0.0-20260727124030-b80ff77dac4f
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `github.com/tailscale/hujson@v0.0.0-20260302212456-ecc657c15afd` from the resolved Go module graph
+- Evidence source: `github.com/tailscale/hujson@v0.0.0-20260727124030-b80ff77dac4f` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -3160,10 +3165,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `github.com/tailscale/web-client-prebuilt` v0.0.0-20250124233751-d4cd19a26976
+### `github.com/tailscale/web-client-prebuilt` v0.0.0-20260917222731-e0ed2d0d0fea
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `github.com/tailscale/web-client-prebuilt@v0.0.0-20250124233751-d4cd19a26976` from the resolved Go module graph
+- Evidence source: `github.com/tailscale/web-client-prebuilt@v0.0.0-20260917222731-e0ed2d0d0fea` from the resolved Go module graph
 - Included files: `Embedded Inter font license`, `Embedded web-client runtime dependency notices`, `LICENSE`, `Linked source copyright and license headers`
 
 #### Embedded Inter font license
@@ -3273,10 +3278,11 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ~~~~text
 Upstream web-client runtime dependency notices, conservatively included for the pinned embedded bundle.
-Notice-source manifest and lock: https://github.com/tailscale/tailscale/tree/716e4fcc97759308f79875ff1809da945df70574/client/web
+Notice-source manifest and lock: https://github.com/tailscale/tailscale/tree/6608b9a387513e69ed260e323376a17aa4029084/client/web
+These match tailscale.com v1.104.1; the pinned prebuilt JavaScript also retains Tailscale's BSD-3-Clause and React/classnames MIT headers.
 Versions below identify notice sources, not a claim that every package survives bundler tree shaking.
 
-Sources: @babel/runtime@7.23.4/package/LICENSE
+Sources: @babel/runtime@7.28.2/package/LICENSE
 
 MIT License
 
@@ -4235,6 +4241,34 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Sources: vite@5.4.21/package/LICENSE.md (core license; emitted modulepreload helper)
+Registry: https://registry.npmjs.org/vite/5.4.21
+
+# Vite core license
+Vite is released under the MIT license:
+
+MIT License
+
+Copyright (c) 2019-present, VoidZero Inc. and Vite contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ~~~~
 
 #### LICENSE
@@ -4277,10 +4311,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // SPDX-License-Identifier: BSD-3-Clause
 ~~~~
 
-### `github.com/tailscale/wireguard-go` v0.0.0-20260715223240-2e01ba5b00f0
+### `github.com/tailscale/wireguard-go` v0.0.0-20260928213032-417aef361226
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `github.com/tailscale/wireguard-go@v0.0.0-20260715223240-2e01ba5b00f0` from the resolved Go module graph
+- Evidence source: `github.com/tailscale/wireguard-go@v0.0.0-20260928213032-417aef361226` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -4338,6 +4372,8 @@ SOFTWARE.
 // Copyright 2015 Microsoft
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
+
+// SPDX-License-Identifier: BSD-3-Clause
 
 // SPDX-License-Identifier: MIT
 ~~~~
@@ -4749,10 +4785,10 @@ limitations under the License.
 */
 ~~~~
 
-### `go4.org/netipx` v0.0.0-20231129151722-fdeea329fbba
+### `go4.org/netipx` v0.0.0-20260823151212-3075585bcbeb
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `go4.org/netipx@v0.0.0-20231129151722-fdeea329fbba` from the resolved Go module graph
+- Evidence source: `go4.org/netipx@v0.0.0-20260823151212-3075585bcbeb` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -4873,10 +4909,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/exp` v0.0.0-20260410095643-746e56fc9e2f
+### `golang.org/x/exp` v0.0.0-20260908205506-85c1c2202aba
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/exp@v0.0.0-20260410095643-746e56fc9e2f` from the resolved Go module graph
+- Evidence source: `golang.org/x/exp@v0.0.0-20260908205506-85c1c2202aba` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -4919,10 +4955,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/net` v0.58.0
+### `golang.org/x/net` v0.60.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/net@v0.58.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/net@v0.60.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5013,10 +5049,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/oauth2` v0.36.0
+### `golang.org/x/oauth2` v0.37.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/oauth2@v0.36.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/oauth2@v0.37.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5371,10 +5407,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/time` v0.15.0
+### `golang.org/x/time` v0.16.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/time@v0.15.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/time@v0.16.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5458,16 +5494,16 @@ SOFTWARE.
  */
 ~~~~
 
-### `golang.zx2c4.com/wireguard/windows` v0.5.3
+### `golang.zx2c4.com/wireguard/windows` v1.0.1
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `golang.zx2c4.com/wireguard/windows@v0.5.3` from the resolved Go module graph
+- Evidence source: `golang.zx2c4.com/wireguard/windows@v1.0.1` from the resolved Go module graph
 - Included files: `COPYING`, `Linked source copyright and license headers`
 
 #### COPYING
 
 ~~~~text
-Copyright (C) 2018-2021 WireGuard LLC. All Rights Reserved.
+Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -5493,14 +5529,14 @@ DEALINGS IN THE SOFTWARE.
 ~~~~text
 /* SPDX-License-Identifier: MIT
  *
- * Copyright (C) 2019-2021 WireGuard LLC. All Rights Reserved.
+ * Copyright (C) 2019-2026 WireGuard LLC. All Rights Reserved.
  */
 ~~~~
 
-### `gvisor.dev/gvisor` v0.0.0-20260224225140-573d5e7127a8
+### `gvisor.dev/gvisor` v0.0.0-20260915211658-a6f909f08a72
 
 - Module-root license: Apache-2.0 (nested and embedded components may differ)
-- Evidence source: `gvisor.dev/gvisor@v0.0.0-20260224225140-573d5e7127a8` from the resolved Go module graph
+- Evidence source: `gvisor.dev/gvisor@v0.0.0-20260915211658-a6f909f08a72` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5959,12 +5995,26 @@ Some files carry the "BSD" license, noted at the top of each file:
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2026 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 ~~~~
 
-### `tailscale.com` v1.102.5
+### `tailscale.com` v1.104.1
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `tailscale.com@v1.102.5` from the resolved Go module graph
+- Evidence source: `tailscale.com@v1.104.1` from the resolved Go module graph
 - Included files: `Embedded HTMX WebSocket license`, `Embedded HTMX license`, `LICENSE`, `Linked source copyright and license headers`
 
 #### Embedded HTMX WebSocket license
@@ -6054,10 +6104,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // https://github.com/golang/groupcache/blob/5b532d6fd5efaf7fa130d4e859a2fde0fc3a9e1b/lru/lru.go
 // ... which was Apache licensed:
 // https://github.com/golang/groupcache/blob/master/LICENSE
-
-// Copyright (c) Tailscale Inc & contributors
-// SPDX-License-Identifier: BSD-3-Clause
-//go:build gofuzz
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style

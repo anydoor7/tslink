@@ -36,6 +36,7 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tsnet"
 )
 
@@ -427,16 +428,16 @@ func funnelEnabledStatus(dnsName string) *ipnstate.Status {
 	return &ipnstate.Status{Self: &ipnstate.PeerStatus{
 		DNSName: dnsName,
 		CapMap: tailcfg.NodeCapMap{
-			tailcfg.CapabilityHTTPS:                      nil,
-			tailcfg.NodeAttrFunnel:                       nil,
-			tailcfg.CapabilityFunnelPorts + "?ports=443": nil,
+			nodecap.HTTPS:                      nil,
+			nodecap.Funnel:                     nil,
+			nodecap.FunnelPorts + "?ports=443": nil,
 		},
 	}}
 }
 
 func funnelMissingStatus(dnsName string) *ipnstate.Status {
 	status := funnelEnabledStatus(dnsName)
-	delete(status.Self.CapMap, tailcfg.NodeAttrFunnel)
+	delete(status.Self.CapMap, nodecap.Funnel)
 	return status
 }
 
@@ -3766,9 +3767,9 @@ func TestVerifyFunnelAccessClassifiesNonPolicyPrerequisitesWithoutPolling(t *tes
 	t.Cleanup(func() { tsnetStatusClientFn = oldStatusClient })
 
 	httpsMissing := funnelEnabledStatus("public-app.tailnet.ts.net.")
-	delete(httpsMissing.Self.CapMap, tailcfg.CapabilityHTTPS)
+	delete(httpsMissing.Self.CapMap, nodecap.HTTPS)
 	portMissing := funnelEnabledStatus("public-app.tailnet.ts.net.")
-	delete(portMissing.Self.CapMap, tailcfg.CapabilityFunnelPorts+"?ports=443")
+	delete(portMissing.Self.CapMap, nodecap.FunnelPorts+"?ports=443")
 	cases := []struct {
 		name       string
 		status     *ipnstate.Status

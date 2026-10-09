@@ -108,13 +108,13 @@ a service node immediately invalidates its cached deadline; it remains unknown
 until the new node reports its own deadline. Sharing edits retain the backend's
 failure streak.
 
-The pinned `tailscale.com v1.102.4` exposes
-[`PeerStatus.KeyExpiry` in ipn/ipnstate/ipnstate.go:336-338](https://github.com/tailscale/tailscale/blob/v1.102.4/ipn/ipnstate/ipnstate.go#L336-L338).
+The pinned `tailscale.com v1.104.1` exposes
+[`PeerStatus.KeyExpiry` in ipn/ipnstate/ipnstate.go:341-343](https://github.com/tailscale/tailscale/blob/v1.104.1/ipn/ipnstate/ipnstate.go#L341-L343).
 The self status calls `peerStatusFromNode` at
-[`ipn/ipnlocal/local.go:1517-1530`](https://github.com/tailscale/tailscale/blob/v1.102.4/ipn/ipnlocal/local.go#L1517-L1530),
+[`ipn/ipnlocal/local.go:1555-1567`](https://github.com/tailscale/tailscale/blob/v1.104.1/ipn/ipnlocal/local.go#L1555-L1567),
 which copies nonzero `Node.KeyExpiry` at
-[`local.go:1654-1656`](https://github.com/tailscale/tailscale/blob/v1.102.4/ipn/ipnlocal/local.go#L1654-L1656).
-[`LocalClient.StatusWithoutPeers`, client/local/local.go:779-788](https://github.com/tailscale/tailscale/blob/v1.102.4/client/local/local.go#L779-L788)
+[`local.go:1690-1693`](https://github.com/tailscale/tailscale/blob/v1.104.1/ipn/ipnlocal/local.go#L1690-L1693).
+[`LocalClient.StatusWithoutPeers`, client/local/local.go:801-811](https://github.com/tailscale/tailscale/blob/v1.104.1/client/local/local.go#L801-L811)
 reads `/localapi/v0/status?peers=false`. A missing self/deadline or failed local
 read is `unknown`, including when expiry might be disabled. Do not treat it as
 proof of a permanent key.
