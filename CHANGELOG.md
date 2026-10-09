@@ -14,7 +14,7 @@ Security update. Commands, flags and stored data are unchanged from 0.1.0.
 
 ### Security
 
-- Built with Go 1.27.2. The 0.1.0 binaries were built with Go 1.26.6, and `govulncheck` reports 12 Go standard library advisories reachable from them: GO-2026-6599, GO-2026-6600, GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608, GO-2026-6609, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613 and GO-2026-6617. They cover HTTP/2 server crashes and resource exhaustion, HTTP/1 connection desynchronization after CONNECT, unbounded Range and MIME header parsing, `html/template` escaping and a `crypto/tls` ECH check. `govulncheck` reports none reachable from 0.1.1.
+- Built with Go 1.27.2. The 0.1.0 Linux amd64 binary was built with Go 1.26.6, and `govulncheck -mode=binary` reports vulnerable standard-library symbols for 12 advisories: GO-2026-6599, GO-2026-6600, GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608, GO-2026-6609, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613 and GO-2026-6617. They cover HTTP/2 server crashes, resource exhaustion and flow-control errors, HTTP/2 response smuggling via malformed headers, HTTP/1 connection desynchronization after CONNECT, Range header parsing without a size limit, MIME header memory-limit bypasses, `html/template` escaping and malformed `crypto/tls` ECH extension references. With Go 1.27.2, `govulncheck ./...` reports no reachable vulnerabilities in the 0.1.1 source on macOS arm64.
 - `tailscale.com` is updated to v1.104.1 and `golang.org/x/net` to v0.60.0.
 
 ### Changed
