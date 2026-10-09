@@ -65,8 +65,9 @@ if not numbers:
     sys.exit("Open PR listing returned no PRs; cannot rule out duplicates")
 Path(sys.argv[2]).write_text("\n".join(numbers))
 PY
-gh api graphql --paginate --slurp -f query='query($endCursor: String) { repository(owner: "microsoft", name: "winget-pkgs") { pullRequests(states: OPEN, first: 50, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { number files(first: 100) { totalCount nodes { path } } } } } }' > "$scratch/files.json"
-python3 - "$scratch/files.json" "$manifest_dir/" <<'PY'
+gh api graphql --paginate --slurp -f query='query($endCursor: String) { repository(owner: "microsoft", name: "winget-pkgs") { pullRequests(states: OPEN, first: 20, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { number files(first: 50) { totalCount nodes { path } } } } } }' > "$scratch/files.json"
+# 20 PRs x 50 files per page: larger pages return HTTP 502 on winget-pkgs (measured 2026-10-09).
+python3 - "$scratch/files.json" "$manifest_dir/" "$scratch/unlisted" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -74,12 +75,24 @@ prs = [pr for page in json.loads(Path(sys.argv[1]).read_text())
        for pr in page["data"]["repository"]["pullRequests"]["nodes"]]
 if not prs:
     sys.exit("Open PR files listing returned no PRs")
+unlisted = []
 for pr in prs:
+    if pr.get("files") is None:
+        unlisted.append(str(pr["number"]))  # GraphQL can omit files; checked over REST below
+        continue
     if pr["files"]["totalCount"] > len(pr["files"]["nodes"]):
-        continue  # >100-file bulk PRs cannot add a single new package version
+        continue  # >50-file bulk PRs cannot add a single new package version
     if any(f["path"].startswith(sys.argv[2]) for f in pr["files"]["nodes"]):
         sys.exit("An open PR already changes this manifest directory")
+Path(sys.argv[3]).write_text("".join(n + "\n" for n in unlisted))  # read loop needs a final newline
 PY
+while read -r number; do
+    [ -n "$number" ] || continue
+    gh api --paginate "repos/microsoft/winget-pkgs/pulls/${number}/files" --jq '.[].filename' > "$scratch/pr-files"
+    if grep -q "^${manifest_dir}/" "$scratch/pr-files"; then
+        fail "Open PR #${number} already changes ${manifest_dir}"
+    fi
+done < "$scratch/unlisted"
 
 gh api "repos/${fork_repo}" > "$scratch/fork.json"
 python3 - "$scratch/fork.json" <<'PY'
