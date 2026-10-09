@@ -20,6 +20,8 @@ tslink add db --tcp localhost:5432   # any TCP port
 
 ## 설치
 
+macOS 호스트에는 macOS 13 Ventura 이상이 필요합니다([플랫폼 지원](platforms.md)).
+
 ```sh
 brew install --cask anydoor7/tap/tslink
 ```
