@@ -33,7 +33,7 @@ scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
 scoop install anydoor7/tslink
 ```
 
-升級時執行 `brew upgrade --cask tslink` 或 `scoop update tslink`。若 TSLink 作為背景服務執行，升級後請再次執行 `tslink install`。
+升級時執行 `brew upgrade --cask tslink` 或 `scoop update; scoop update tslink`。若 TSLink 作為背景服務執行，升級後請再次執行 `tslink install`。
 
 Linux 的 `.deb`、`.rpm` 套件和 Windows 版本在[最新版本](https://github.com/anydoor7/tslink/releases/latest)頁面。第一次分享應用程式時，TSLink 會給出這個應用程式的 Tailscale 登入連結。[入門指南](getting-started.md)
 

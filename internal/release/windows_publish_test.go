@@ -25,7 +25,10 @@ func TestWindowsPublisherConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	description := goreleaserConfig(t).Casks[0].Description
-	for _, publisher := range []string{"scoops", "winget"} {
+	if _, exists := config["winget"]; exists {
+		t.Fatal("winget must be an owner-run post-release submission, outside GoReleaser")
+	}
+	for _, publisher := range []string{"scoops"} {
 		items, ok := config[publisher].([]interface{})
 		if !ok || len(items) != 1 {
 			t.Fatalf("%s must declare exactly one publisher", publisher)
@@ -34,30 +37,10 @@ func TestWindowsPublisherConfiguration(t *testing.T) {
 		want := map[string]interface{}{
 			"name": "tslink", "ids": []interface{}{"archive"}, "skip_upload": "auto",
 			"homepage": "https://github.com/anydoor7/tslink", "license": "Apache-2.0",
-			"repository.owner": "anydoor7",
-		}
-		if publisher == "scoops" {
-			want["directory"] = "bucket"
-			want["description"] = description
-			want["repository.name"] = "scoop-bucket"
-			want["repository.branch"] = "main"
-			want["repository.token"] = "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
-			want["commit_msg_template"] = "Scoop update for {{ .ProjectName }} version {{ .Tag }}"
-		} else {
-			want["publisher"] = "anydoor7"
-			want["package_name"] = "TSLink"
-			want["package_identifier"] = "anydoor7.TSLink"
-			want["short_description"] = description
-			want["license_url"] = "https://github.com/anydoor7/tslink/blob/{{ .Tag }}/LICENSE"
-			want["release_notes_url"] = "https://github.com/anydoor7/tslink/releases/tag/{{ .Tag }}"
-			want["installation_notes"] = "After upgrading, run tslink install again if TSLink runs as a background service."
-			want["repository.name"] = "winget-pkgs"
-			want["repository.branch"] = "tslink-{{ .Version }}"
-			want["repository.token"] = "{{ .Env.WINGET_GITHUB_TOKEN }}"
-			want["repository.pull_request.enabled"] = true
-			want["repository.pull_request.base.owner"] = "microsoft"
-			want["repository.pull_request.base.name"] = "winget-pkgs"
-			want["repository.pull_request.base.branch"] = "master"
+			"repository.owner": "anydoor7", "directory": "bucket", "description": description,
+			"repository.name": "scoop-bucket", "repository.branch": "main",
+			"repository.token":    "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}",
+			"commit_msg_template": "Scoop update for {{ .ProjectName }} version {{ .Tag }}",
 		}
 		for key, expected := range want {
 			t.Run(publisher+"/"+key, func(t *testing.T) {
@@ -88,9 +71,20 @@ func TestWindowsPublisherWorkflow(t *testing.T) {
 	if steps[preflight].If != stableOnly {
 		t.Fatal("publisher readback must run only for stable tags")
 	}
-	for _, index := range []int{gate, preflight, release} {
-		if steps[index].Env["WINGET_GITHUB_TOKEN"] != "${{ secrets.WINGET_GITHUB_TOKEN }}" {
-			t.Errorf("step %s must receive WINGET_GITHUB_TOKEN from the release environment", steps[index].Name)
+	if steps[release].ID != "goreleaser" {
+		t.Fatal("Release step must expose its outcome as goreleaser")
+	}
+	attest := stepIndex(t, steps, "attestation", func(s publishStep) bool {
+		return s.Name == "Attest release artifacts"
+	})
+	if attest <= release || steps[attest].If != "${{ !cancelled() && steps.goreleaser.outcome != 'skipped' && hashFiles('dist/checksums.txt') != '' }}" {
+		t.Fatal("attestation must run after an attempted release with checksums, including publisher failure")
+	}
+	for _, step := range steps {
+		for key := range step.Env {
+			if strings.Contains(strings.ToUpper(key), "WINGET") {
+				t.Errorf("step %s must not receive winget credentials", step.Name)
+			}
 		}
 	}
 	if steps[preflight].Env["HOMEBREW_TAP_GITHUB_TOKEN"] != tapTokenOutput {
@@ -106,59 +100,42 @@ func TestWindowsPublisherPreflightExecutes(t *testing.T) {
 	if err != nil {
 		t.Skip("Python 3 is required on the Linux publish runner")
 	}
-	for _, fault := range []string{"", "missing-token", "bucket-denied", "bucket-uninitialized", "tap-readonly", "fine-grained", "broad-scope", "fork-readonly", "wrong-parent", "fork-archived", "upstream-branch"} {
+	for _, fault := range []string{"", "missing-token", "bucket-not-covered", "bucket-private", "tap-archived", "bucket-uninitialized", "readback-denied"} {
 		t.Run(fault, func(t *testing.T) {
+			seen := map[string]bool{}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen[r.URL.Path] = true
 				token := "app-secret-fixture"
-				if r.URL.Path == "/user" || strings.Contains(r.URL.Path, "winget-pkgs") {
-					token = "winget-secret-fixture"
-				}
 				if r.Header.Get("Authorization") != "Bearer "+token {
 					t.Error("readback used the wrong credential")
 				}
 				if r.Method != "GET" {
 					t.Error("preflight attempted a mutation")
 				}
-				data := map[string]interface{}{"permissions": map[string]bool{"push": true}}
+				// GitHub App installation-token responses omit permissions.
+				data := map[string]interface{}{}
 				switch r.URL.Path {
-				case "/repos/anydoor7/scoop-bucket":
-					if fault == "bucket-denied" {
+				case "/installation/repositories":
+					if r.URL.RawQuery != "per_page=100" {
+						t.Error("installation readback must request its full scoped list")
+					}
+					if fault == "readback-denied" {
 						http.Error(w, token, http.StatusForbidden)
 						return
 					}
+					tap := map[string]interface{}{"full_name": "anydoor7/homebrew-tap", "private": false, "archived": fault == "tap-archived"}
+					bucket := map[string]interface{}{"full_name": "anydoor7/scoop-bucket", "private": fault == "bucket-private", "archived": false}
+					repos := []interface{}{tap}
+					if fault != "bucket-not-covered" {
+						repos = append(repos, bucket)
+					}
+					data["repositories"] = repos
 				case "/repos/anydoor7/scoop-bucket/branches/main":
 					if fault == "bucket-uninitialized" {
 						http.Error(w, token, http.StatusNotFound)
 						return
 					}
-				case "/repos/anydoor7/homebrew-tap":
-					if fault == "tap-readonly" {
-						data["permissions"] = map[string]bool{"push": false}
-					}
 				case "/repos/anydoor7/homebrew-tap/branches/main":
-				case "/user":
-					scope := "public_repo"
-					if fault == "fine-grained" {
-						scope = ""
-					} else if fault == "broad-scope" {
-						scope = "repo"
-					}
-					w.Header().Set("X-OAuth-Scopes", scope)
-				case "/repos/anydoor7/winget-pkgs":
-					data["fork"] = true
-					data["parent"] = map[string]string{"full_name": "microsoft/winget-pkgs"}
-					if fault == "fork-readonly" {
-						data["permissions"] = map[string]bool{"push": false}
-					} else if fault == "wrong-parent" {
-						data["parent"] = map[string]string{"full_name": "other/winget-pkgs"}
-					} else if fault == "fork-archived" {
-						data["archived"] = true
-					}
-				case "/repos/microsoft/winget-pkgs":
-					data["default_branch"] = "master"
-					if fault == "upstream-branch" {
-						data["default_branch"] = "main"
-					}
 				default:
 					t.Errorf("unexpected readback path %s", r.URL.Path)
 				}
@@ -166,13 +143,20 @@ func TestWindowsPublisherPreflightExecutes(t *testing.T) {
 			}))
 			defer server.Close()
 			cmd := exec.Command(python, filepath.Join(repoRoot(t), "scripts/windows-publish-preflight.py"))
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_API_URL=" + server.URL, "HOMEBREW_TAP_GITHUB_TOKEN=app-secret-fixture"}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_API_URL=" + server.URL}
 			if fault != "missing-token" {
-				cmd.Env = append(cmd.Env, "WINGET_GITHUB_TOKEN=winget-secret-fixture")
+				cmd.Env = append(cmd.Env, "HOMEBREW_TAP_GITHUB_TOKEN=app-secret-fixture")
 			}
 			out, err := cmd.CombinedOutput()
 			if (err != nil) != (fault != "") {
 				t.Fatalf("fault %q: err=%v, output=%s", fault, err, out)
+			}
+			if fault == "" {
+				for _, path := range []string{"/installation/repositories", "/repos/anydoor7/homebrew-tap/branches/main", "/repos/anydoor7/scoop-bucket/branches/main"} {
+					if !seen[path] {
+						t.Errorf("successful preflight did not read %s", path)
+					}
+				}
 			}
 			if fault != "" && !strings.Contains(string(out), "::error::") {
 				t.Fatalf("failure lacks workflow annotation: %s", out)

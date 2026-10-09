@@ -33,7 +33,7 @@ scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
 scoop install anydoor7/tslink
 ```
 
-Pour mettre à jour, exécutez `brew upgrade --cask tslink` ou `scoop update tslink`. Si TSLink fonctionne comme service en arrière-plan, relancez ensuite `tslink install`.
+Pour mettre à jour, exécutez `brew upgrade --cask tslink` ou `scoop update; scoop update tslink`. Si TSLink fonctionne comme service en arrière-plan, relancez ensuite `tslink install`.
 
 Les paquets Linux `.deb` et `.rpm` et les versions Windows se trouvent dans la [dernière version](https://github.com/anydoor7/tslink/releases/latest). La première fois que vous partagez une application, TSLink affiche un lien de connexion Tailscale pour celle-ci. [Prise en main](getting-started.md)
 

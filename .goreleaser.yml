@@ -188,8 +188,8 @@ homebrew_casks:
       After brew upgrade, run tslink install again if TSLink runs as a
       background service, so the service starts the upgraded binary.
 
-# Windows archives remain unsigned by Authenticode. These publishers use the
-# same checksummed zip assets, including native ARM64, without install hooks.
+# Windows archives remain unsigned by Authenticode. Scoop uses the same
+# checksummed zip assets, including native ARM64, without install hooks.
 # Snapshots render manifests but never publish; auto also excludes pre-releases.
 scoops:
   - name: tslink
@@ -205,34 +205,6 @@ scoops:
     license: "Apache-2.0"
     skip_upload: auto
     commit_msg_template: "Scoop update for {{ .ProjectName }} version {{ .Tag }}"
-
-# Submits a PR for Microsoft review; this does not make winget available until
-# the PR is merged and indexed. v2.17 uses one repository token for both push
-# and PR creation (a separate PR token is supported only from v2.18).
-winget:
-  - name: tslink
-    ids: [archive]
-    publisher: anydoor7
-    package_name: TSLink
-    package_identifier: anydoor7.TSLink
-    short_description: "Give each local app a private Tailscale address and control who can reach it"
-    license: "Apache-2.0"
-    homepage: "https://github.com/anydoor7/tslink"
-    license_url: "https://github.com/anydoor7/tslink/blob/{{ .Tag }}/LICENSE"
-    release_notes_url: "https://github.com/anydoor7/tslink/releases/tag/{{ .Tag }}"
-    installation_notes: "After upgrading, run tslink install again if TSLink runs as a background service."
-    skip_upload: auto
-    repository:
-      owner: anydoor7
-      name: winget-pkgs
-      branch: "tslink-{{ .Version }}"
-      token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
-      pull_request:
-        enabled: true
-        base:
-          owner: microsoft
-          name: winget-pkgs
-          branch: master
 
 changelog:
   sort: asc

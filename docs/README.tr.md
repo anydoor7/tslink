@@ -33,7 +33,7 @@ scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
 scoop install anydoor7/tslink
 ```
 
-Yükseltmek için `brew upgrade --cask tslink` veya `scoop update tslink` çalıştırın. TSLink arka plan hizmeti olarak çalışıyorsa yükseltmeden sonra `tslink install` komutunu yeniden çalıştırın.
+Yükseltmek için `brew upgrade --cask tslink` veya `scoop update; scoop update tslink` çalıştırın. TSLink arka plan hizmeti olarak çalışıyorsa yükseltmeden sonra `tslink install` komutunu yeniden çalıştırın.
 
 Linux `.deb` ve `.rpm` paketleri ile Windows sürümleri [son sürüm](https://github.com/anydoor7/tslink/releases/latest) sayfasında. Bir uygulamayı ilk kez paylaştığınızda TSLink onun için bir Tailscale oturum açma bağlantısı gösterir. [Başlarken](getting-started.md)
 

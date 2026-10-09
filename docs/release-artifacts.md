@@ -27,7 +27,8 @@ scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
 scoop install anydoor7/tslink
 ```
 
-Upgrade with `scoop update tslink`, then run `tslink install` again if TSLink runs
+Upgrade with `scoop update; scoop update tslink` (refresh buckets, then update TSLink),
+then run `tslink install` again if TSLink runs
 as a background service so the scheduled task starts the upgraded binary.
 Scoop uses GoReleaser `skip_upload: auto`; pre-releases do not update the bucket,
 and snapshots never publish.
@@ -51,3 +52,43 @@ Pushes to `main` and tags always run the full exact-SHA three-OS Release Candida
 All release targets still receive static analysis, cross-build and vulnerability checks. Consolidated jobs preserve each target's failure and existing artifact names. The always-running `gate` aggregate rejects failures, cancellations and unexpected skips; only checks excluded by the selected tier may be skipped. Branch protection on `main` requires this single aggregate check, reported as `Release candidate gate / gate`. See [Contributing](../CONTRIBUTING.md#continuous-integration) for the classification rules and local policy tests.
 
 See [Verify a release](verify-release.md) for artifact, checksum, signature, SBOM, and attestation checks.
+
+### Maintainer: post-release winget submission
+
+After a stable GitHub release is public, an owner with existing `gh` authentication
+can prepare the winget 1.12.0 manifests locally:
+
+```bash
+python3 scripts/winget-manifests.py v0.1.1 --out /tmp/tslink-winget
+```
+
+The generator downloads that release's `checksums.txt` and Sigstore bundle with
+`gh release download`, then uses `cosign verify-blob` with the release workflow's
+exact tag identity and GitHub Actions OIDC issuer. It takes x64/ARM64 hashes from
+the checksums and the publication date from release metadata. Prerelease tags,
+draft releases, missing Windows zips, and failed signatures are refused. Without
+cosign it fails unless `--allow-unverified` is explicitly passed for local
+inspection; this override cannot bypass a failed signature check.
+
+After inspecting the three YAMLs and recording Windows native validation,
+install and upgrade results, the owner can submit:
+
+```bash
+scripts/winget-submit.sh v0.1.1
+```
+
+This requires an existing public `anydoor7/winget-pkgs` fork and `gh`, git,
+Python 3 and cosign. It checks upstream for the version directory and open PRs,
+with a known upstream file as the positive control for a 404. It verifies the
+release, syncs the fork, commits only the three YAMLs on `tslink-0.1.1`, pushes
+that branch and opens a PR using the caller's existing `gh` authentication.
+Sync failures, including upstream workflow permission failures, stop the script;
+existing branches and duplicate PRs require owner inspection, with no force-push
+or automatic fork creation. No release CI secret is needed. If PR creation fails
+after a push, inspect the retained fork branch and upstream PRs before retrying.
+The PR body does not claim Windows tests were performed by the script.
+
+winget availability still requires Microsoft review, merge, indexing and a native
+Windows readback. A generated manifest or an open PR is not installation availability.
+On a red release publish job, check attestations with
+`gh attestation verify <artifact> --repo anydoor7/tslink` before recovery; never re-tag.

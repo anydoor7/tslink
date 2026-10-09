@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${TSLINK_RELEASE_PUBLISH_ENABLED}" != "true" ]; then
-            echo "::error::Release publishing is disabled. Enable repository variable TSLINK_RELEASE_PUBLISH_ENABLED=true only after external readback proves the release environment, required reviewers, refs/tags/v* ruleset, branch protection, Homebrew tap, Scoop bucket, and winget fork credentials are configured."
+            echo "::error::Release publishing is disabled. Enable repository variable TSLINK_RELEASE_PUBLISH_ENABLED=true only after external readback proves the release environment, required reviewers, refs/tags/v* ruleset, branch protection, Homebrew tap, and Scoop bucket are configured."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,7 +113,6 @@ jobs:
         env:
           HOMEBREW_TAP_APP_CLIENT_ID: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
           HOMEBREW_TAP_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
-          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -135,10 +134,6 @@ jobs:
           fi
           if [ -z "${HOMEBREW_TAP_APP_CLIENT_ID}" ] || [ -z "${HOMEBREW_TAP_APP_PRIVATE_KEY}" ]; then
             echo "::error::Stable releases require the package-manager GitHub App: variable HOMEBREW_TAP_APP_CLIENT_ID and secret HOMEBREW_TAP_APP_PRIVATE_KEY in the release environment, for an App installed on anydoor7/homebrew-tap and anydoor7/scoop-bucket with Contents read/write"
-            exit 1
-          fi
-          if [ -z "${WINGET_GITHUB_TOKEN}" ]; then
-            echo "::error::Stable releases require WINGET_GITHUB_TOKEN in the release environment: an expiring classic PAT with only public_repo scope, push access to anydoor7/winget-pkgs, and permission to open PRs in microsoft/winget-pkgs"
             exit 1
           fi
       - name: Install cosign
@@ -166,9 +161,9 @@ jobs:
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
-          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
         run: python3 scripts/windows-publish-preflight.py
       - name: Release
+        id: goreleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           # Must be >= 2.11 for the `homebrew_casks` config key and match the
@@ -181,7 +176,6 @@ jobs:
           # Empty on pre-release tags, where skip_upload: auto skips publishers.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
           SCOOP_BUCKET_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
-          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
           # macOS Developer ID signing + notarization (see .goreleaser.yml
           # `notarize`). Leaving MACOS_SIGN_P12 empty disables the step; the
           # stable-tag gate above refuses that, pre-release tags may run unsigned.
@@ -191,6 +185,9 @@ jobs:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }} # base64 of the .p8
       - name: Attest release artifacts
+        # Cask/Scoop use ContinueOnError in GoReleaser v2.17: the GitHub release
+        # may already be public after a publisher fails, so still attest dist/.
+        if: ${{ !cancelled() && steps.goreleaser.outcome != 'skipped' && hashFiles('dist/checksums.txt') != '' }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           # Keep in sync with .goreleaser.yml release assets: installable

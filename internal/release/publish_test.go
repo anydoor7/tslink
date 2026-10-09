@@ -207,7 +207,6 @@ func TestStableCredentialGateExecutes(t *testing.T) {
 		"MACOS_NOTARY_KEY_ID":          "key-id-fixture",
 		"MACOS_NOTARY_KEY":             "cDgtZml4dHVyZQ==",
 		"HOMEBREW_TAP_APP_CLIENT_ID":   "Iv23-fixture",
-		"WINGET_GITHUB_TOKEN":          "winget-fixture-secret",
 		"HOMEBREW_TAP_APP_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----\nfixture\n-----END RSA PRIVATE KEY-----\n",
 	}
 	for key := range complete {
@@ -224,7 +223,6 @@ func TestStableCredentialGateExecutes(t *testing.T) {
 		{name: "complete"},
 		{name: "no App client ID", change: map[string]string{"HOMEBREW_TAP_APP_CLIENT_ID": ""}, wantErr: "HOMEBREW_TAP_APP_CLIENT_ID"},
 		{name: "no App private key", change: map[string]string{"HOMEBREW_TAP_APP_PRIVATE_KEY": ""}, wantErr: "HOMEBREW_TAP_APP_PRIVATE_KEY"},
-		{name: "no winget token", change: map[string]string{"WINGET_GITHUB_TOKEN": ""}, wantErr: "WINGET_GITHUB_TOKEN"},
 		{name: "no signing identity", change: map[string]string{"MACOS_SIGN_P12": ""}, wantErr: "macOS signing secrets"},
 		// GNU and uutils base64 -d reject PEM text, as on the ubuntu runner;
 		// the BSD base64 on macOS skips characters it cannot decode.

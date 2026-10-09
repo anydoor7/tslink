@@ -33,7 +33,7 @@ scoop bucket add anydoor7 https://github.com/anydoor7/scoop-bucket
 scoop install anydoor7/tslink
 ```
 
-Upgrade with `scoop update tslink`. If TSLink runs as a background service,
+Upgrade with `scoop update; scoop update tslink`. If TSLink runs as a background service,
 run `tslink install` again afterwards, as with Homebrew, so its scheduled task
 starts the upgraded binary.
 
