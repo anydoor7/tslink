@@ -22,17 +22,13 @@ if tool == "gh":
     if args[0] == "api":
         if args[1] == "user":
             print("someone-else" if fault == "wrong-user" else "monody0007"); sys.exit(0)
-        if args[1] == "graphql":
-            def page(number, paths, total=None, more=False):
-                nodes = [{"number": number, "files": {"totalCount": len(paths) if total is None else total, "nodes": [{"path": p} for p in paths]}}]
-                return {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": more, "endCursor": str(number)}, "nodes": nodes}}}}
-            pages = [page(42, ["unrelated.yaml"], more=True),
-                     page(43, ["manifests/a/anydoor7/TSLink/0.1.1/anydoor7.TSLink.yaml"] if fault == "existing-pr-files" else [])]
-            if fault == "null-files-dup":
-                pages[1]["data"]["repository"]["pullRequests"]["nodes"][0]["files"] = None
-            if fault == "empty-files-listing":
-                pages = [{"data": {"repository": {"pullRequests": {"nodes": []}}}}]
-            print(json.dumps(pages)); sys.exit(0)
+        if args[1:4] == ["-X", "GET", "search/issues"]:
+            query = args[args.index("-f") + 1]
+            if "anydoor7.TSLink" in query:
+                print(1 if fault == "search-hit" else 0)
+            else:
+                print(0 if fault == "search-control-zero" else 2755)
+            sys.exit(0)
         path = next(arg for arg in args if arg.startswith("repos/"))
         if path.endswith("doc/manifest/README.md"):
             if fault == "control-error": sys.exit(1)
@@ -52,8 +48,6 @@ if tool == "gh":
             if fault == "existing-pr": pr["title"] = "New version: anydoor7.TSLink version 0.1.1"
             if fault == "existing-pr-head": pr["head"] = {"ref": "tslink-0.1.1", "repo": {"full_name": "monody0007/winget-pkgs"}}
             print(json.dumps([[]] if fault == "empty-listing" else [[pr]]))
-        elif path.endswith("/pulls/43/files"):
-            print("manifests/a/anydoor7/TSLink/0.1.1/anydoor7.TSLink.yaml" if fault == "null-files-dup" else "unrelated.yaml")
         elif "/files?" in path:
             print("[]")  # Log the old transport so the call-count assertion rejects it.
         elif path == "repos/monody0007/winget-pkgs":
@@ -134,9 +128,9 @@ class SubmitTests(unittest.TestCase):
                 while args[0] == "-c": args = args[2:]
                 git_operations.append(args[0])
         self.assertEqual(git_operations[:4], ["clone", "sparse-checkout", "ls-remote", "checkout"])
-        graphql = [c for c in calls if c[:3] == ["gh", "api", "graphql"]]
-        self.assertEqual(len(graphql), 1)
-        self.assertEqual(graphql[0][3:], ["--paginate", "--slurp", "-f", 'query=query($endCursor: String) { repository(owner: "microsoft", name: "winget-pkgs") { pullRequests(states: OPEN, first: 20, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { number files(first: 50) { totalCount nodes { path } } } } } }'])
+        searches = [c for c in calls if c[:5] == ["gh", "api", "-X", "GET", "search/issues"]]
+        self.assertEqual([c[6] for c in searches], ["q=repo:microsoft/winget-pkgs is:pr is:open", 'q=repo:microsoft/winget-pkgs is:pr is:open "anydoor7.TSLink"'])
+        self.assertFalse(any(c[:3] == ["gh", "api", "graphql"] for c in calls))
         self.assertFalse(any(c[0] == "gh" and any("/files?" in arg for arg in c) for c in calls))
         commit = next(c for c in calls if c[0] == "git" and "commit" in c)
         self.assertEqual(commit[commit.index("-m") + 1], "New package: anydoor7.TSLink version 0.1.1")
@@ -151,7 +145,7 @@ class SubmitTests(unittest.TestCase):
         self.assertEqual(pr[pr.index("--title") + 1], "New version: anydoor7.TSLink version 0.1.1")
 
     def test_readback_and_signature_failures_prevent_remote_mutation(self):
-        for fault in ("wrong-user", "control-error", "control-null", "existing-version", "forbidden", "package-forbidden", "existing-pr", "existing-pr-head", "empty-listing", "empty-files-listing", "existing-pr-files", "null-files-dup", "signature-error"):
+        for fault in ("wrong-user", "control-error", "control-null", "existing-version", "forbidden", "package-forbidden", "existing-pr", "existing-pr-head", "empty-listing", "search-control-zero", "search-hit", "signature-error"):
             with self.subTest(fault=fault):
                 result, calls = self.run_fixture(fault)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
