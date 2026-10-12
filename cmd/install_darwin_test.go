@@ -824,6 +824,7 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 		strings.Join([]string{"bootout", "gui/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootout", "user/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootstrap", "gui/501", plistPath}, "\x00"),
+		strings.Join([]string{"kickstart", "gui/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"print", "gui/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"print", "gui/501/" + plistLabel}, "\x00"),
 	}
@@ -962,6 +963,7 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 		strings.Join([]string{"bootout", "user/503/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootstrap", "gui/503", plistPath}, "\x00"),
 		strings.Join([]string{"bootstrap", "user/503", plistPath}, "\x00"),
+		strings.Join([]string{"kickstart", "user/503/" + plistLabel}, "\x00"),
 		strings.Join([]string{"print", "user/503/" + plistLabel}, "\x00"),
 		strings.Join([]string{"print", "user/503/" + plistLabel}, "\x00"),
 	}
@@ -1145,6 +1147,11 @@ func TestInstallForceRecoversHeadlessUpgradeStatesDAndE(t *testing.T) {
 				case "bootstrap":
 					userLoaded = true
 					return nil, nil
+				case "kickstart":
+					if !userLoaded || len(args) != 2 || args[1] != "user/501/"+plistLabel {
+						t.Fatalf("kickstart = %q, want bootstrapped user target without -k", args)
+					}
+					return nil, nil
 				default:
 					t.Fatalf("unexpected launchctl call: %q", args)
 					return nil, nil
@@ -1261,7 +1268,7 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	var launchctlCalls []string
 	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		call := strings.Join(args, "\x00")
-		if len(launchctlCalls) == 5 && call == strings.Join([]string{"print", guiTarget}, "\x00") {
+		if len(launchctlCalls) == 6 && call == strings.Join([]string{"print", guiTarget}, "\x00") {
 			return []byte("state = waiting\npid = 0\n"), nil
 		}
 		launchctlCalls = append(launchctlCalls, call)
@@ -1284,19 +1291,27 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 				t.Fatalf("new-job bootstrap = %q, want gui domain and plist path", call)
 			}
 		case 5:
+			if call != strings.Join([]string{"kickstart", guiTarget}, "\x00") {
+				t.Fatalf("new-job kickstart = %q, want gui target without -k", call)
+			}
+		case 6:
 			if call != strings.Join([]string{"print", guiTarget}, "\x00") {
 				t.Fatalf("new-job verification = %q, want gui target", call)
 			}
 			return []byte("state = waiting\npid = 0\n"), nil
-		case 6:
+		case 7:
 			if call != strings.Join([]string{"bootout", guiTarget}, "\x00") {
 				t.Fatalf("failed-new-job cleanup = %q, want exact loaded target", call)
 			}
-		case 7:
+		case 8:
 			if call != strings.Join([]string{"bootstrap", "gui/501", plistPath}, "\x00") {
 				t.Fatalf("previous-job bootstrap = %q, want captured domain and plist path", call)
 			}
-		case 8, 9:
+		case 9:
+			if call != strings.Join([]string{"kickstart", guiTarget}, "\x00") {
+				t.Fatalf("previous-job kickstart = %q, want captured target without -k", call)
+			}
+		case 10, 11:
 			if call != strings.Join([]string{"print", guiTarget}, "\x00") {
 				t.Fatalf("previous-job verification = %q, want captured target", call)
 			}
@@ -1332,8 +1347,8 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	if strings.Contains(err.Error(), "installation was rolled back") {
 		t.Fatalf("install error falsely uses generic rollback wording: %q", err)
 	}
-	if len(launchctlCalls) != 9 {
-		t.Fatalf("launchctl calls = %q, want nine-step ownership/handoff/restore sequence", launchctlCalls)
+	if len(launchctlCalls) != 11 {
+		t.Fatalf("launchctl calls = %q, want eleven-step ownership/handoff/restore sequence", launchctlCalls)
 	}
 }
 

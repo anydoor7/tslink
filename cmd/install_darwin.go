@@ -576,7 +576,7 @@ func loadLaunchAgent(ctx context.Context, plistPath string, replacingExisting bo
 	output, err := launchctlCombinedOutputChecked(ctx, "bootstrap", guiDomain, plistPath)
 	if err == nil {
 		target := launchctlServiceTargetForDomain(guiDomain)
-		verificationOutput, verifyErr := verifyLaunchAgentRunning(ctx, target)
+		verificationOutput, verifyErr := kickstartAndVerifyLaunchAgent(ctx, target)
 		combinedOutput := strings.TrimSpace(string(output))
 		if verifyErr != nil {
 			combinedOutput = combineLaunchctlOutput(output, verificationOutput)
@@ -611,7 +611,7 @@ func loadLaunchAgent(ctx context.Context, plistPath string, replacingExisting bo
 		}
 	}
 	target := launchctlServiceTargetForDomain(userDomain)
-	verificationOutput, verifyErr := verifyLaunchAgentRunning(ctx, target)
+	verificationOutput, verifyErr := kickstartAndVerifyLaunchAgent(ctx, target)
 	if verifyErr != nil {
 		combinedOutput = combineLaunchctlOutput([]byte(combinedOutput), verificationOutput)
 	}
@@ -623,6 +623,18 @@ func loadLaunchAgent(ctx context.Context, plistPath string, replacingExisting bo
 		Warning:      warning,
 		Bootstrapped: true,
 	}
+}
+
+// RunAtLoad can leave a newly bootstrapped job pending on macOS. Request a
+// start without -k so an already running process is not killed. The existing
+// running-state check decides success even if kickstart reports an error.
+func kickstartAndVerifyLaunchAgent(ctx context.Context, target string) ([]byte, error) {
+	kickstartOutput, kickstartErr := launchctlCombinedOutputChecked(ctx, "kickstart", target)
+	verificationOutput, verifyErr := verifyLaunchAgentRunning(ctx, target)
+	if verifyErr != nil && kickstartErr != nil {
+		return []byte(combineLaunchctlOutput(kickstartOutput, verificationOutput)), fmt.Errorf("%w; %s", verifyErr, launchctlWarning("launchctl kickstart "+target, kickstartErr, kickstartOutput))
+	}
+	return verificationOutput, verifyErr
 }
 
 func verifyLaunchAgentRunning(ctx context.Context, target string) ([]byte, error) {
@@ -818,7 +830,7 @@ func restorePreviousLaunchAgent(ctx context.Context, previous launchAgentPreviou
 	if err != nil {
 		return result, errors.New(launchctlWarning("restore previous LaunchAgent with bootstrap "+previous.Domain, err, bootstrapOutput))
 	}
-	verificationOutput, err := verifyLaunchAgentRunning(ctx, previous.Target)
+	verificationOutput, err := kickstartAndVerifyLaunchAgent(ctx, previous.Target)
 	if err != nil {
 		detail := strings.TrimSpace(string(verificationOutput))
 		if detail != "" {

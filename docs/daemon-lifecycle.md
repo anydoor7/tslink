@@ -61,6 +61,10 @@ Setup errors report whether a supervisor definition remains: Linux can leave an
 enabled unit retrying after a readiness failure; macOS new-install verification
 rolls back its job/plist when cleanup succeeds. Inspect `tslink logs` and
 `tslink doctor` before retrying (Linux also: `journalctl --user -u tslink.service`).
+On macOS, installation and restoration of a previous LaunchAgent request
+`launchctl kickstart` without `-k` after each successful bootstrap, then verify
+a stable running process; a kickstart error is reported only if that verification
+also fails.
 Newly installed or reinstalled Linux and Windows service definitions write the
 log file read by `tslink logs`; after upgrading either platform, run
 `tslink install` again to update an existing definition. The installer checks

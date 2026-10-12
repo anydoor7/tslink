@@ -135,3 +135,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `human_output.go`: Windows ASCII status markers and help rendering without changing JSON metadata.
 - `human_output_test.go`: platform decisions, unchanged format arguments and help metadata/writer controls.
+
+# macOS LaunchAgent startup
+
+- `install_kickstart_darwin_test.go`: pending-job startup, GUI/user-domain ordering, previous-job restoration and kickstart failure diagnostics with fake launchctl calls.
