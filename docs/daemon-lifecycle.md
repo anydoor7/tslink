@@ -65,6 +65,9 @@ On macOS, installation and restoration of a previous LaunchAgent request
 `launchctl kickstart` without `-k` after each successful bootstrap, then verify
 a stable running process; a kickstart error is reported only if that verification
 also fails.
+The start request and running-state checks share a ten-second window, including
+restoration after a canceled install. Kickstart gets at most two seconds and
+one fifth of the remaining window, leaving time to check the final job state.
 Newly installed or reinstalled Linux and Windows service definitions write the
 log file read by `tslink logs`; after upgrading either platform, run
 `tslink install` again to update an existing definition. The installer checks

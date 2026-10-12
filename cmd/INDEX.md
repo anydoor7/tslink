@@ -1,5 +1,7 @@
 # People sharing files
 
+- `install_startup_budget_darwin_test.go`: shared post-bootstrap deadline regressions for GUI installation, user fallback and canceled-call restoration with slow or blocked kickstart.
+
 - `command_context_test.go`: direct Cobra handler context initialization and exact cleanup isolation controls.
 
 This index records the people sharing lifecycle implementation and regression tests in this directory. Other package files are described by the repository architecture guide.

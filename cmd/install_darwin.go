@@ -75,6 +75,7 @@ var (
 const plistLabel = "com.tslink.daemon"
 const launchdThrottleInterval = 30
 const launchAgentStartupTimeout = 10 * time.Second
+const launchAgentKickstartTimeout = 2 * time.Second
 const launchAgentStartupPollInterval = 50 * time.Millisecond
 const launchAgentShutdownTimeout = 3 * time.Minute
 
@@ -629,7 +630,17 @@ func loadLaunchAgent(ctx context.Context, plistPath string, replacingExisting bo
 // start without -k so an already running process is not killed. The existing
 // running-state check decides success even if kickstart reports an error.
 func kickstartAndVerifyLaunchAgent(ctx context.Context, target string) ([]byte, error) {
-	kickstartOutput, kickstartErr := launchctlCombinedOutputChecked(ctx, "kickstart", target)
+	// Share the post-bootstrap window, including during compensation where the
+	// caller's deadline has been removed. Bound queries by this same deadline.
+	ctx, cancel := context.WithTimeout(ctx, launchAgentVerifyTimeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	// Reserve at least four fifths of the remaining window for running-state
+	// verification, even when the caller has a shorter deadline.
+	kickstartBudget := min(launchAgentKickstartTimeout, time.Until(deadline)/5)
+	kickstartCtx, cancelKickstart := context.WithTimeout(ctx, kickstartBudget)
+	kickstartOutput, kickstartErr := launchctlCombinedOutputChecked(kickstartCtx, "kickstart", target)
+	cancelKickstart()
 	verificationOutput, verifyErr := verifyLaunchAgentRunning(ctx, target)
 	if verifyErr != nil && kickstartErr != nil {
 		return []byte(combineLaunchctlOutput(kickstartOutput, verificationOutput)), fmt.Errorf("%w; %s", verifyErr, launchctlWarning("launchctl kickstart "+target, kickstartErr, kickstartOutput))

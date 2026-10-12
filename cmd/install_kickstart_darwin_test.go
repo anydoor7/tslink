@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // This fake models a bootstrapped job that stays pending until explicitly
@@ -19,7 +20,8 @@ func stubPendingLaunchAgent(t *testing.T, domain, plistPath string, kickstartFai
 	t.Helper()
 	stubDarwinLaunchAgentVerificationNoWait(t)
 	if staysPending {
-		launchAgentVerifyTimeout = 0
+		launchAgentVerifyTimeout = 20 * time.Millisecond
+		launchAgentVerifyPollInterval = 5 * time.Millisecond
 	}
 	oldLaunchctl := launchctlCombinedOutput
 	oldUID := userUIDFn
@@ -99,7 +101,10 @@ func assertKickstartVerification(t *testing.T, err error, domain string, staysPe
 	wantCalls := append(append([][]string(nil), prefix...), []string{"bootstrap", domain, plistPath}, []string{"kickstart", target})
 	prints := 2 // Initial running evidence, then a stable PID observation.
 	if staysPending {
-		prints = 1
+		prints = len(calls) - len(wantCalls)
+		if prints < 1 {
+			t.Fatal("pending job was not checked after kickstart failed")
+		}
 	} else if kickstartFails {
 		prints++ // A failed start still polls through transient pending state.
 	}
