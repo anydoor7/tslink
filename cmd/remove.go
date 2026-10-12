@@ -249,7 +249,7 @@ func removeServiceWithContext(ctx context.Context, regPath, ownershipPath, name 
 		return output.ErrNotFound(fmt.Sprintf("service not found: %s", name))
 	}
 	if result.DeviceWarning != "" && !isJSON {
-		fmt.Fprintf(errOut, "→ warning: %s\n", result.DeviceWarning)
+		fmt.Fprintf(errOut, humanText("→ warning: %s\n"), result.DeviceWarning)
 	}
 
 	if isJSON {
@@ -258,15 +258,15 @@ func removeServiceWithContext(ctx context.Context, regPath, ownershipPath, name 
 	}
 
 	if result.Removed {
-		fmt.Fprintf(out, "→ ✓ removed: %s\n", name)
+		fmt.Fprintf(out, humanText("→ ✓ removed: %s\n"), name)
 		if result.DeviceCleanupSkipped {
-			fmt.Fprintf(out, "→ remote tailnet node cleanup skipped: %s\n", result.DeviceSkipReason)
+			fmt.Fprintf(out, humanText("→ remote tailnet node cleanup skipped: %s\n"), result.DeviceSkipReason)
 		}
 		if result.NodeStateKeptReason != "" {
-			fmt.Fprintf(out, "→ local node state kept: %s\n", result.NodeStateKeptReason)
+			fmt.Fprintf(out, humanText("→ local node state kept: %s\n"), result.NodeStateKeptReason)
 		}
 	} else {
-		fmt.Fprintf(out, "→ %s not registered, nothing to remove\n", name)
+		fmt.Fprintf(out, humanText("→ %s not registered, nothing to remove\n"), name)
 	}
 	return nil
 }

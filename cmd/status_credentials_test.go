@@ -164,13 +164,13 @@ func TestStatusCredentialExpiryMatrix(t *testing.T) {
 			var human bytes.Buffer
 			formatStatus(status, &human)
 			if tc.wantHumanLine == "" {
-				if strings.Contains(human.String(), "→ credentials:") {
+				if strings.Contains(human.String(), humanText("→ credentials:")) {
 					t.Fatalf("human status printed credentials without any slot:\n%s", human.String())
 				}
-			} else if !strings.Contains(human.String(), "→ credentials: "+tc.wantHumanLine) {
+			} else if !strings.Contains(human.String(), humanText("→ credentials: ")+tc.wantHumanLine) {
 				t.Fatalf("human status = %q, want line %q", human.String(), tc.wantHumanLine)
 			}
-			if tc.wantNext && !strings.Contains(human.String(), "→ next: "+credentials.NextAPIKeyBootstrap()[0]) {
+			if tc.wantNext && !strings.Contains(human.String(), humanText("→ next: ")+credentials.NextAPIKeyBootstrap()[0]) {
 				t.Fatalf("human status lacks renewal steps:\n%s", human.String())
 			}
 			if strings.Contains(human.String(), "FAKE-status") {
@@ -187,7 +187,7 @@ func TestStatusCredentialExpiryMatrix(t *testing.T) {
 			}
 			var humanURLs bytes.Buffer
 			formatStatusURLs(urls, &humanURLs)
-			if tc.wantHumanLine != "" && !strings.Contains(humanURLs.String(), "→ credentials: "+tc.wantHumanLine) {
+			if tc.wantHumanLine != "" && !strings.Contains(humanURLs.String(), humanText("→ credentials: ")+tc.wantHumanLine) {
 				t.Fatalf("human status --urls = %q, want line %q", humanURLs.String(), tc.wantHumanLine)
 			}
 		})
@@ -218,7 +218,7 @@ func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 		}
 		var human bytes.Buffer
 		formatStatus(status, &human)
-		if !strings.Contains(human.String(), "→ credentials: api-key expiry unknown") {
+		if !strings.Contains(human.String(), humanText("→ credentials: api-key expiry unknown")) {
 			t.Fatalf("human status = %q", human.String())
 		}
 	})

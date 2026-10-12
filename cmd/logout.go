@@ -94,7 +94,7 @@ func logoutUserWithOptions(opts logoutOptions, isJSON bool, out io.Writer) error
 			output.Success("logout", LogoutResult{WasLoggedIn: false, DeletedCredentials: []string{}})
 			return nil
 		}
-		fmt.Fprintln(out, "→ Not logged in")
+		fmt.Fprintln(out, humanText("→ Not logged in"))
 		return nil
 	}
 	deleted := presentCredentialKinds(credentialStatus)
@@ -142,9 +142,9 @@ func logoutUserWithOptions(opts logoutOptions, isJSON bool, out io.Writer) error
 		return nil
 	}
 	if len(deleted) > 0 {
-		fmt.Fprintf(out, "→ ✓ Logged out (deleted: %s)\n", strings.Join(deleted, ", "))
+		fmt.Fprintf(out, humanText("→ ✓ Logged out (deleted: %s)\n"), strings.Join(deleted, ", "))
 	} else {
-		fmt.Fprintln(out, "→ ✓ Logged out")
+		fmt.Fprintln(out, humanText("→ ✓ Logged out"))
 	}
 	return nil
 }
@@ -166,7 +166,7 @@ func logoutCredentialKind(kind string, isJSON bool, out io.Writer) error {
 			output.Success("logout", LogoutResult{WasLoggedIn: false, Kind: kind, DeletedCredentials: []string{}})
 			return nil
 		}
-		fmt.Fprintf(out, "→ No %s credential is stored\n", kind)
+		fmt.Fprintf(out, humanText("→ No %s credential is stored\n"), kind)
 		return nil
 	}
 
@@ -203,9 +203,9 @@ func logoutCredentialKind(kind string, isJSON bool, out io.Writer) error {
 		return nil
 	}
 	if len(kept) > 0 {
-		fmt.Fprintf(out, "→ ✓ Removed %s credential (kept: %s)\n", kind, strings.Join(kept, ", "))
+		fmt.Fprintf(out, humanText("→ ✓ Removed %s credential (kept: %s)\n"), kind, strings.Join(kept, ", "))
 	} else {
-		fmt.Fprintf(out, "→ ✓ Removed %s credential\n", kind)
+		fmt.Fprintf(out, humanText("→ ✓ Removed %s credential\n"), kind)
 	}
 	return nil
 }

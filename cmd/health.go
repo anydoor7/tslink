@@ -31,7 +31,7 @@ func formatAppHealth(out io.Writer, name string, h health.State, e health.Expiry
 	if h.LastChecked != nil {
 		checked = h.LastChecked.UTC().Format(time.RFC3339)
 	}
-	fmt.Fprintf(out, "→ %s app: %s (checked %s; consecutive failures %d)", name, state, checked, h.ConsecutiveFailures)
+	fmt.Fprintf(out, humanText("→ %s app: %s (checked %s; consecutive failures %d)"), name, state, checked, h.ConsecutiveFailures)
 	if h.LastError != "" {
 		fmt.Fprintf(out, " error=%s", h.LastError)
 	}
@@ -51,7 +51,7 @@ func formatEarlyWarnings(out io.Writer, c StatusCredentials) {
 		if slot.EarlyWarning.Warning == "" {
 			continue
 		}
-		fmt.Fprintf(out, "→ credential early warning: %s (%s)\n", slot.EarlyWarning.Warning, slot.EarlyWarning.Source)
+		fmt.Fprintf(out, humanText("→ credential early warning: %s (%s)\n"), slot.EarlyWarning.Warning, slot.EarlyWarning.Source)
 		for _, step := range slot.EarlyWarning.Next {
 			fmt.Fprintf(out, "  Next: %s\n", step)
 		}
@@ -74,7 +74,7 @@ func formatAlerts(out io.Writer, a health.AlertsView) {
 	if a.Notifier == "" {
 		a.Notifier = "none"
 	}
-	fmt.Fprintf(out, "→ alerts: notifier=%s events=%d", a.Notifier, len(a.Events))
+	fmt.Fprintf(out, humanText("→ alerts: notifier=%s events=%d"), a.Notifier, len(a.Events))
 	if a.Destination != "" {
 		fmt.Fprint(out, " destination=[redacted]")
 	}

@@ -189,7 +189,7 @@ func TestCompiledRemoveDefaultMissingRemainsIdempotent(t *testing.T) {
 	}
 
 	humanOut, humanErr, humanCode := runCompiledTSLink(t, t.TempDir(), "", "remove", "missing")
-	if humanCode != output.ExitSuccess || humanErr != "" || humanOut != "→ missing not registered, nothing to remove\n" {
+	if humanCode != output.ExitSuccess || humanErr != "" || humanOut != humanText("→ missing not registered, nothing to remove\n") {
 		t.Fatalf("human default remove exit=%d stdout=%q stderr=%q", humanCode, humanOut, humanErr)
 	}
 }

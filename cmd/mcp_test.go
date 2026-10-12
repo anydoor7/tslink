@@ -1130,7 +1130,7 @@ func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
 	if cliErr != nil {
 		t.Fatalf("CLI default remove returned error for missing service: %v", cliErr)
 	}
-	if got := cliOut.String(); got != "→ missing not registered, nothing to remove\n" {
+	if got := cliOut.String(); got != humanText("→ missing not registered, nothing to remove\n") {
 		t.Fatalf("CLI default remove output = %q", got)
 	}
 	if cliErrOut.Len() != 0 {

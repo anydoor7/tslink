@@ -157,7 +157,7 @@ func writeInviteCreate(out io.Writer, command string, invite tailapi.Invite, isJ
 		return nil
 	}
 	if invite.Emailed {
-		fmt.Fprintf(out, "→ Created %s invite %s and asked Tailscale to email %s\n", invite.Kind, invite.ID, invite.Recipient)
+		fmt.Fprintf(out, humanText("→ Created %s invite %s and asked Tailscale to email %s\n"), invite.Kind, invite.ID, invite.Recipient)
 		return nil
 	}
 	fmt.Fprintln(out, invite.InviteURL)
@@ -390,7 +390,7 @@ func inviteRevokeRun(ctx context.Context, out io.Writer, kind, id string, isJSON
 		output.WriteJSON(out, output.NewSuccess("invite revoke", data))
 		return nil
 	}
-	fmt.Fprintf(out, "→ Revoked %s invite %s\n", data.Kind, data.ID)
+	fmt.Fprintf(out, humanText("→ Revoked %s invite %s\n"), data.Kind, data.ID)
 	return nil
 }
 
@@ -415,7 +415,7 @@ func inviteResendRun(ctx context.Context, out io.Writer, kind, id string, isJSON
 		output.WriteJSON(out, output.NewSuccess("invite resend", data))
 		return nil
 	}
-	fmt.Fprintf(out, "→ Resent %s invite %s to %s\n", data.Kind, data.ID, data.Email)
+	fmt.Fprintf(out, humanText("→ Resent %s invite %s to %s\n"), data.Kind, data.ID, data.Email)
 	return nil
 }
 

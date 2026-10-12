@@ -247,14 +247,14 @@ func tagsAddRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 			output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: true})
 			return nil
 		}
-		fmt.Fprintf(out, "→ %s already on %s\n", tag, serviceName)
+		fmt.Fprintf(out, humanText("→ %s already on %s\n"), tag, serviceName)
 		return nil
 	}
 	if isJSON {
 		output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: false})
 		return nil
 	}
-	fmt.Fprintf(out, "→ Added %s to %s\n", tag, serviceName)
+	fmt.Fprintf(out, humanText("→ Added %s to %s\n"), tag, serviceName)
 	return nil
 }
 
@@ -281,7 +281,7 @@ func tagsSetRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 		output.Success("tags set", result)
 		return nil
 	}
-	fmt.Fprintf(out, "→ Set %s tags to [%s]\n", result.Service, tag)
+	fmt.Fprintf(out, humanText("→ Set %s tags to [%s]\n"), result.Service, tag)
 	return nil
 }
 
@@ -300,7 +300,7 @@ func tagsSetDefaultRun(out io.Writer, tag string, isJSON bool) error {
 		output.Success("tags set-default", TagsSetDefaultResult{Tag: tag})
 		return nil
 	}
-	fmt.Fprintf(out, "→ Default tag set to %s\n", tag)
+	fmt.Fprintf(out, humanText("→ Default tag set to %s\n"), tag)
 	return nil
 }
 
@@ -375,7 +375,7 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force, 
 		})
 		return nil
 	}
-	fmt.Fprintf(out, "→ Deleted %s from tailnet ACL; ACL tag owner rule removed globally\n", tag)
+	fmt.Fprintf(out, humanText("→ Deleted %s from tailnet ACL; ACL tag owner rule removed globally\n"), tag)
 	return nil
 }
 

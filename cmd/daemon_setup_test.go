@@ -500,7 +500,7 @@ func TestBootstrapOfflineAddNoGreenCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "✓") || !strings.Contains(out, "not running or reachable") || !strings.Contains(out, "Next: tslink install") {
+	if strings.Contains(out, humanText("→ ✓")) || !strings.Contains(out, "not running or reachable") || !strings.Contains(out, "Next: tslink install") {
 		t.Fatalf("offline output=%q", out)
 	}
 	reg, err := registry.Load(filepath.Join(dir, "registry.json"))

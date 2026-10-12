@@ -57,9 +57,9 @@ func main() {
 // bootstrap commands instead of only "Error: ...".
 func formatHumanError(err error) string {
 	var b strings.Builder
-	b.WriteString("Error: " + err.Error() + "\n")
+	b.WriteString(cmd.HumanText("Error: " + err.Error() + "\n"))
 	for _, next := range output.NextCommandsForError(err) {
-		b.WriteString("Next: " + next + "\n")
+		b.WriteString(cmd.HumanText("Next: " + next + "\n"))
 	}
 	return b.String()
 }

@@ -160,6 +160,10 @@ homebrew_casks:
     license: "Apache-2.0"
     skip_upload: auto
     commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
+    commit_author:
+      name: "anydoor7-tslink-release[bot]"
+      email: "338893393+anydoor7-tslink-release[bot]@users.noreply.github.com"
+      use_github_app_token: true
     # The darwin binaries are Developer ID signed and notarized by Apple (see
     # `notarize` below), so Gatekeeper runs them straight from the quarantined
     # cask download: measured 2026-09-22 on a clean Mac mini, first run of the
@@ -205,6 +209,10 @@ scoops:
     license: "Apache-2.0"
     skip_upload: auto
     commit_msg_template: "Scoop update for {{ .ProjectName }} version {{ .Tag }}"
+    commit_author:
+      name: "anydoor7-tslink-release[bot]"
+      email: "338893393+anydoor7-tslink-release[bot]@users.noreply.github.com"
+      use_github_app_token: true
 
 changelog:
   sort: asc

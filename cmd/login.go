@@ -353,7 +353,7 @@ func loginOpenBootstrapPage(cmd *cobra.Command, page string) error {
 	opened := false
 	if loginBrowserAllowed(cmd) {
 		if err := loginOpenBrowserFn(pageURL); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ Could not open a browser automatically: %v\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), humanText("→ Could not open a browser automatically: %v\n"), err)
 		} else {
 			opened = true
 		}
@@ -364,9 +364,9 @@ func loginOpenBootstrapPage(cmd *cobra.Command, page string) error {
 	}
 	out := cmd.OutOrStdout()
 	if opened {
-		fmt.Fprintf(out, "→ Opened browser: %s\n", pageURL)
+		fmt.Fprintf(out, humanText("→ Opened browser: %s\n"), pageURL)
 	} else {
-		fmt.Fprintf(out, "→ Open: %s\n", pageURL)
+		fmt.Fprintf(out, humanText("→ Open: %s\n"), pageURL)
 	}
 	for i, step := range next {
 		fmt.Fprintf(out, "  %d. %s\n", i+1, step)
@@ -929,7 +929,7 @@ func loginMaybeEnsureDefaultACLTag(cmd *cobra.Command, operation, defaultTag str
 	if !loginManageACL(cmd) {
 		sideEffectPlan := security.ACLMutationPlan(operation, resources, false)
 		if !jsonOutput(cmd) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ Skipped remote ACL mutation by default; use --manage-acl to apply plan %s for %s\n", sideEffectPlan.ID, strings.Join(resources, ","))
+			fmt.Fprintf(cmd.ErrOrStderr(), humanText("→ Skipped remote ACL mutation by default; use --manage-acl to apply plan %s for %s\n"), sideEffectPlan.ID, strings.Join(resources, ","))
 		}
 		return "", false, "", true, &sideEffectPlan
 	}
@@ -940,10 +940,10 @@ func loginMaybeEnsureDefaultACLTag(cmd *cobra.Command, operation, defaultTag str
 		tagEnsureError = err.Error()
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if !jsonOutput(cmd) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "→ Degraded login: skipped ACL tag management: %v. Services using tags may require manual ACL policy setup.\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), humanText("→ Degraded login: skipped ACL tag management: %v. Services using tags may require manual ACL policy setup.\n"), err)
 			}
 		} else if !jsonOutput(cmd) {
-			fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Degraded login: could not ensure default ACL tag: %v. Verify API token permissions before relying on --manage-acl.\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), humanText("⚠ Degraded login: could not ensure default ACL tag: %v. Verify API token permissions before relying on --manage-acl.\n"), err)
 		}
 		return "", degraded, tagEnsureError, false, &sideEffectPlan
 	}
@@ -1014,9 +1014,9 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 		output.Success("login", result)
 	} else {
 		printCredentialCommit("API key", commit)
-		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
+		fmt.Println(humanText("→ Auth keys will be derived automatically on 'tslink serve'"))
 		if tagCreated != "" {
-			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", tagCreated)
+			fmt.Printf(humanText("→ Ensured %s exists in tailnet ACL\n"), tagCreated)
 		}
 	}
 	return nil
@@ -1052,11 +1052,11 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 		output.Success("login", result)
 	} else {
 		printCredentialCommit("Client secret", commit)
-		fmt.Println("→ Long-lived node auth saved")
-		fmt.Println("→ Remote ACL writes require --manage-acl; remote device cleanup requires exact recorded NodeID ownership")
-		fmt.Println("→ Validate OAuth scopes and service tags before unattended use")
+		fmt.Println(humanText("→ Long-lived node auth saved"))
+		fmt.Println(humanText("→ Remote ACL writes require --manage-acl; remote device cleanup requires exact recorded NodeID ownership"))
+		fmt.Println(humanText("→ Validate OAuth scopes and service tags before unattended use"))
 		if tagCreated != "" {
-			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", tagCreated)
+			fmt.Printf(humanText("→ Ensured %s exists in tailnet ACL\n"), tagCreated)
 		}
 	}
 	return nil
@@ -1088,7 +1088,7 @@ func expirySourceLabel(source string) string {
 // expiry (with its provenance), rotation, and any retired slot.
 func loginCommitSummary(label string, result loginCommitResult) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "→ %s saved (%s)", label, credentialBackendLabel(result.Backend))
+	fmt.Fprintf(&b, humanText("→ %s saved (%s)"), label, credentialBackendLabel(result.Backend))
 	if result.Metadata.ExpiresAt != nil {
 		fmt.Fprintf(&b, ", expires %s (%s)", result.Metadata.ExpiresAt.UTC().Format("2006-01-02"), expirySourceLabel(result.Metadata.ExpiresAtSource))
 	} else if result.Metadata.Kind == credentials.KindOAuthClientSecret {
@@ -1106,17 +1106,17 @@ func loginCommitSummary(label string, result loginCommitResult) string {
 func printCredentialCommit(label string, result loginCommitResult) {
 	fmt.Println(loginCommitSummary(label, result))
 	if result.Retired != "" {
-		fmt.Printf("→ retired: %s\n", result.Retired)
+		fmt.Printf(humanText("→ retired: %s\n"), result.Retired)
 	}
 }
 
 func printCredentialBackend(label string, backend credentials.CredentialBackend) {
-	fmt.Printf("→ %s saved (%s)\n", label, credentialBackendLabel(backend))
+	fmt.Printf(humanText("→ %s saved (%s)\n"), label, credentialBackendLabel(backend))
 }
 
 func warnCredentialBackendDowngrade(cmd *cobra.Command, label string, backend credentials.CredentialBackend) {
 	if backend == credentials.CredentialBackendFile {
-		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Credential storage downgrade: system keyring unavailable; %s saved to a restricted local file (0600).\n", label)
+		fmt.Fprintf(cmd.ErrOrStderr(), humanText("⚠ Credential storage downgrade: system keyring unavailable; %s saved to a restricted local file (0600).\n"), label)
 	}
 }
 
@@ -1124,8 +1124,8 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 	reader := loginStdinReaderFn()
 
 	fmt.Print("\n  Choose a credential type:\n\n")
-	fmt.Print("    [1] API access token   — user-owned, expires within 90 days; required for invites, derives auth keys\n")
-	fmt.Print("    [2] OAuth client secret — tailnet-owned, does not expire; durable daemon node auth (remote writes require --manage-acl)\n")
+	fmt.Print(humanText("    [1] API access token   — user-owned, expires within 90 days; required for invites, derives auth keys\n"))
+	fmt.Print(humanText("    [2] OAuth client secret — tailnet-owned, does not expire; durable daemon node auth (remote writes require --manage-acl)\n"))
 	fmt.Print("    Both slots can coexist; logging in fills one and keeps the other.\n\n")
 	fmt.Print("  Enter 1 or 2: ")
 
@@ -1134,7 +1134,7 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 
 	switch choiceStr {
 	case "1":
-		fmt.Print("\n  ─── API Access Token ───\n")
+		fmt.Print(humanText("\n  ─── API Access Token ───\n"))
 		fmt.Print("  Use this for invites and API-backed TSLink automation: API verification,\n")
 		fmt.Print("  auth-key derivation, and read-only remote evidence. ACL writes require --manage-acl.\n\n")
 		fmt.Printf("  1. Open: %s   (or: tslink login --open-keys-page)\n", credentials.KeysPageURL)
@@ -1148,18 +1148,18 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 			return output.ErrUsage("no token provided")
 		}
 
-		fmt.Println("→ Verifying API key...")
+		fmt.Println(humanText("→ Verifying API key..."))
 		return loginWithAPIKey(cmd, inputKey)
 
 	case "2":
-		fmt.Print("\n  ─── OAuth Client Secret ───\n")
+		fmt.Print(humanText("\n  ─── OAuth Client Secret ───\n"))
 		fmt.Printf("  1. Open: %s   (or: tslink login --open-oauth-page)\n", credentials.OAuthPageURL)
-		fmt.Print("  2. Click \"+ credential\" → choose \"OAuth client\"\n")
+		fmt.Print(humanText("  2. Click \"+ credential\" → choose \"OAuth client\"\n"))
 		fmt.Print("  3. Validate OAuth scopes and tags for each service before unattended use\n")
-		fmt.Print("  4. Click \"Create\" — you will see two values:\n")
+		fmt.Print(humanText("  4. Click \"Create\" — you will see two values:\n"))
 		fmt.Print("       Client ID:     kABC123...  (short, NOT this one)\n")
-		fmt.Print("       Client secret: tskey-client-...  ← copy THIS one\n")
-		fmt.Print("     ⚠ The secret is shown only once.\n\n")
+		fmt.Print(humanText("       Client secret: tskey-client-...  ← copy THIS one\n"))
+		fmt.Print(humanText("     ⚠ The secret is shown only once.\n\n"))
 		fmt.Print("  Paste client secret: ")
 
 		inputKey, _ := reader.ReadString('\n')
@@ -1168,7 +1168,7 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 			return output.ErrUsage("no secret provided")
 		}
 
-		fmt.Println("→ Saving client secret...")
+		fmt.Println(humanText("→ Saving client secret..."))
 		return loginWithClientSecret(cmd, inputKey)
 
 	default:

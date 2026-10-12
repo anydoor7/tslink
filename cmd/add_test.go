@@ -134,7 +134,7 @@ func TestAddCommandRearmsExpiredFunnelAndReportsPersistedDeadline(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "→ re-armed expired Funnel (24h)\n") {
+	if !strings.Contains(out, humanText("→ re-armed expired Funnel (24h)\n")) {
 		t.Fatalf("stdout = %q, want explicit re-arm line", out)
 	}
 	reg, err := registry.Load(regPath)

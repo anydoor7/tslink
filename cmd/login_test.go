@@ -169,6 +169,30 @@ func TestLoginCredentialFlow_EmptyChoice(t *testing.T) {
 	}
 }
 
+func TestLoginCredentialMenuHumanText(t *testing.T) {
+	for _, tc := range []struct {
+		name, choice, want string
+	}{
+		{"invalid", "3", "Choose a credential type:"},
+		{"api-token", "1", "\u2500\u2500\u2500 API Access Token \u2500\u2500\u2500"},
+		{"oauth-secret", "2", "Client secret: tskey-client-...  \u2190 copy THIS one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := setupLoginTest(t)
+			mockStdin(t, tc.choice, "")
+			got := captureStdout(t, func() {
+				_ = loginCredentialFlow(loginCmd, dir)
+			})
+			if !strings.Contains(got, humanText(tc.want)) {
+				t.Fatalf("credential menu missing %q:\n%s", humanText(tc.want), got)
+			}
+			if converted := humanText(got); converted != got {
+				t.Fatalf("credential menu contains unconverted human glyphs:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestLoginCredentialFlow_APIToken_EmptyKey(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "1", "")
