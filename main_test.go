@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"reflect"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -152,5 +153,25 @@ func TestFormatHumanErrorPrintsNextLinesFromEnvelopeMetadata(t *testing.T) {
 	}
 	if plain := formatHumanError(errors.New("boom")); plain != "Error: boom\n" {
 		t.Fatalf("plain error output = %q, want only the Error line", plain)
+	}
+}
+
+func TestFormatHumanErrorPreservesStructuredText(t *testing.T) {
+	err := registry.CodedError{
+		Code:        registry.CodeInviteAPIUnauthorized,
+		Message:     "saved \u2014 retry \u2190 here \u2500",
+		Next:        []string{"\u2192 \u2713 retry \u26a0"},
+		MessageOnly: true,
+	}
+	want := "Error: saved \u2014 retry \u2190 here \u2500\nNext: \u2192 \u2713 retry \u26a0\n"
+	if runtime.GOOS == "windows" {
+		want = "Error: saved - retry <- here -\nNext: -> OK retry WARNING:\n"
+	}
+	if got := formatHumanError(err); got != want {
+		t.Fatalf("human error = %q, want %q", got, want)
+	}
+	envelope := output.NewFailureForError("login", err)
+	if envelope.Error.Message != err.Message || !reflect.DeepEqual(envelope.Error.Next, err.Next) {
+		t.Fatalf("structured error text changed: %+v", envelope.Error)
 	}
 }

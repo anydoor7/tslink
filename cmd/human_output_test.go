@@ -5,18 +5,22 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
+	"unicode"
 
 	"github.com/spf13/cobra"
 )
 
 func TestHumanTextForOS(t *testing.T) {
-	const decorated = "\u2192 \u2713 removed\n\u26a0 retry\n"
+	const decorated = "\u2192 \u2713 removed\n\u26a0 retry \u2014 \u2190 \u2500\n"
 	for _, tc := range []struct {
 		name, goos, input, want string
 	}{
 		{"windows-arrow", "windows", "\u2192 pending", "-> pending"},
 		{"windows-check", "windows", "\u2713 removed", "OK removed"},
 		{"windows-warning", "windows", "\u26a0 retry", "WARNING: retry"},
+		{"windows-em-dash", "windows", "saved \u2014 retry", "saved - retry"},
+		{"windows-left-arrow", "windows", "secret \u2190 copy", "secret <- copy"},
+		{"windows-rule", "windows", "\u2500\u2500\u2500 menu", "--- menu"},
 		{"windows-ascii", "windows", "Already absent\n", "Already absent\n"},
 		{"darwin", "darwin", decorated, decorated},
 		{"linux", "linux", decorated, decorated},
@@ -84,4 +88,32 @@ func TestCodepageSafeHelpPreservesInheritedWriter(t *testing.T) {
 	if child.OutOrStdout() != &second {
 		t.Fatal("help rendering pinned an inherited writer")
 	}
+}
+
+func TestAllCommandWindowsHelpASCII(t *testing.T) {
+	defaultHelp := (&cobra.Command{}).HelpFunc()
+	count := 0
+	var walk func(*cobra.Command)
+	walk = func(command *cobra.Command) {
+		count++
+		t.Run(command.CommandPath(), func(t *testing.T) {
+			var out bytes.Buffer
+			renderCommand := *command
+			renderCommand.SetOut(&out)
+			codepageSafeHelp("windows", defaultHelp)(&renderCommand, nil)
+			if out.Len() == 0 {
+				t.Fatal("Windows help is empty")
+			}
+			for _, r := range out.String() {
+				if r > unicode.MaxASCII {
+					t.Fatalf("Windows help contains non-ASCII rune %U:\n%s", r, out.String())
+				}
+			}
+		})
+		for _, child := range command.Commands() {
+			walk(child)
+		}
+	}
+	walk(rootCmd)
+	t.Logf("checked Windows help for %d commands", count)
 }

@@ -73,15 +73,19 @@ func TestPackagePublisherCommitAuthors(t *testing.T) {
 		if !ok || len(items) != 1 {
 			t.Fatalf("%s must declare exactly one publisher", publisher)
 		}
-		item := items[0].(map[interface{}]interface{})
+		item, ok := items[0].(map[interface{}]interface{})
+		if !ok {
+			t.Fatalf("%s[0] is not a mapping", publisher)
+		}
 		author, _ := item["commit_author"].(map[interface{}]interface{})
-		for key, want := range map[string]string{
-			"name":  "anydoor7-tslink-release[bot]",
-			"email": "338893393+anydoor7-tslink-release[bot]@users.noreply.github.com",
+		for key, want := range map[string]interface{}{
+			"name":                 "anydoor7-tslink-release[bot]",
+			"email":                "338893393+anydoor7-tslink-release[bot]@users.noreply.github.com",
+			"use_github_app_token": true,
 		} {
 			t.Run(publisher+"/"+key, func(t *testing.T) {
 				if got := author[key]; got != want {
-					t.Errorf("%s.commit_author.%s = %q, want %q", publisher, key, got, want)
+					t.Errorf("%s.commit_author.%s = %v, want %v", publisher, key, got, want)
 				}
 			})
 		}

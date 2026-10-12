@@ -1124,8 +1124,8 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 	reader := loginStdinReaderFn()
 
 	fmt.Print("\n  Choose a credential type:\n\n")
-	fmt.Print("    [1] API access token   — user-owned, expires within 90 days; required for invites, derives auth keys\n")
-	fmt.Print("    [2] OAuth client secret — tailnet-owned, does not expire; durable daemon node auth (remote writes require --manage-acl)\n")
+	fmt.Print(humanText("    [1] API access token   — user-owned, expires within 90 days; required for invites, derives auth keys\n"))
+	fmt.Print(humanText("    [2] OAuth client secret — tailnet-owned, does not expire; durable daemon node auth (remote writes require --manage-acl)\n"))
 	fmt.Print("    Both slots can coexist; logging in fills one and keeps the other.\n\n")
 	fmt.Print("  Enter 1 or 2: ")
 
@@ -1134,7 +1134,7 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 
 	switch choiceStr {
 	case "1":
-		fmt.Print("\n  ─── API Access Token ───\n")
+		fmt.Print(humanText("\n  ─── API Access Token ───\n"))
 		fmt.Print("  Use this for invites and API-backed TSLink automation: API verification,\n")
 		fmt.Print("  auth-key derivation, and read-only remote evidence. ACL writes require --manage-acl.\n\n")
 		fmt.Printf("  1. Open: %s   (or: tslink login --open-keys-page)\n", credentials.KeysPageURL)
@@ -1152,13 +1152,13 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 		return loginWithAPIKey(cmd, inputKey)
 
 	case "2":
-		fmt.Print("\n  ─── OAuth Client Secret ───\n")
+		fmt.Print(humanText("\n  ─── OAuth Client Secret ───\n"))
 		fmt.Printf("  1. Open: %s   (or: tslink login --open-oauth-page)\n", credentials.OAuthPageURL)
 		fmt.Print(humanText("  2. Click \"+ credential\" → choose \"OAuth client\"\n"))
 		fmt.Print("  3. Validate OAuth scopes and tags for each service before unattended use\n")
-		fmt.Print("  4. Click \"Create\" — you will see two values:\n")
+		fmt.Print(humanText("  4. Click \"Create\" — you will see two values:\n"))
 		fmt.Print("       Client ID:     kABC123...  (short, NOT this one)\n")
-		fmt.Print("       Client secret: tskey-client-...  ← copy THIS one\n")
+		fmt.Print(humanText("       Client secret: tskey-client-...  ← copy THIS one\n"))
 		fmt.Print(humanText("     ⚠ The secret is shown only once.\n\n"))
 		fmt.Print("  Paste client secret: ")
 

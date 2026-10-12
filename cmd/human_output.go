@@ -13,7 +13,16 @@ var windowsHumanGlyphs = strings.NewReplacer(
 	"\u2192", "->",
 	"\u2713", "OK",
 	"\u26a0", "WARNING:",
+	"\u2014", "-",
+	"\u2190", "<-",
+	"\u2500", "-",
 )
+
+// HumanText adapts human-only output from the program entry point. It must not
+// be applied to JSON payloads or command metadata.
+func HumanText(text string) string {
+	return humanText(text)
+}
 
 // humanText adapts decorative text before formatting. Arguments and JSON
 // payloads retain their original contents. Windows always uses ASCII markers
