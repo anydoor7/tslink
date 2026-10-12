@@ -59,6 +59,35 @@ func TestWindowsPublisherConfiguration(t *testing.T) {
 	}
 }
 
+func TestPackagePublisherCommitAuthors(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[interface{}]interface{}
+	if err := yaml.Unmarshal(body, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, publisher := range []string{"homebrew_casks", "scoops"} {
+		items, ok := config[publisher].([]interface{})
+		if !ok || len(items) != 1 {
+			t.Fatalf("%s must declare exactly one publisher", publisher)
+		}
+		item := items[0].(map[interface{}]interface{})
+		author, _ := item["commit_author"].(map[interface{}]interface{})
+		for key, want := range map[string]string{
+			"name":  "anydoor7-tslink-release[bot]",
+			"email": "338893393+anydoor7-tslink-release[bot]@users.noreply.github.com",
+		} {
+			t.Run(publisher+"/"+key, func(t *testing.T) {
+				if got := author[key]; got != want {
+					t.Errorf("%s.commit_author.%s = %q, want %q", publisher, key, got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestWindowsPublisherWorkflow(t *testing.T) {
 	steps := publishSteps(t)
 	gate, mint, release := credentialGateIndex(t, steps), mintIndex(t, steps), goreleaserIndex(t, steps)

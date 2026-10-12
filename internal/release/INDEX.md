@@ -8,3 +8,5 @@
 - `release_notes_test.go`: curated release notes extraction.
 - `release_verify_script_test.go`: artifact verification script behavior.
 - `testmain_test.go`: test environment isolation.
+
+- `windows_publish_test.go`: package-manager commit author identity for both Homebrew and Scoop.

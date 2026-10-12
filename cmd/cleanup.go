@@ -148,18 +148,18 @@ tags delete-remote command with --force and --manage-acl.`,
 			}
 			if result.Adoption != nil {
 				if result.Adoption.Written {
-					fmt.Fprintf(cmd.OutOrStdout(), "→ adopted exact TSLink-tagged hostname match into ownership ledger: %s (matches=%d)\n", result.Adoption.ServiceName, result.Adoption.Matches)
+					fmt.Fprintf(cmd.OutOrStdout(), humanText("→ adopted exact TSLink-tagged hostname match into ownership ledger: %s (matches=%d)\n"), result.Adoption.ServiceName, result.Adoption.Matches)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "→ adoption preview (not written): service=%s matches=%d\n", result.Adoption.ServiceName, result.Adoption.Matches)
+					fmt.Fprintf(cmd.OutOrStdout(), humanText("→ adoption preview (not written): service=%s matches=%d\n"), result.Adoption.ServiceName, result.Adoption.Matches)
 				}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "→ cleanup %s: expired_funnels=%d devices_deleted=%d devices_protected=%d acl=%s\n",
+			fmt.Fprintf(cmd.OutOrStdout(), humanText("→ cleanup %s: expired_funnels=%d devices_deleted=%d devices_protected=%d acl=%s\n"),
 				mode, len(result.ExpiredFunnels), len(result.DevicesDeleted), len(result.DevicesProtected), result.ACLAction)
 			if len(result.DevicesWouldDelete) > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ would delete owned devices: %s\n", strings.Join(result.DevicesWouldDelete, ", "))
+				fmt.Fprintf(cmd.OutOrStdout(), humanText("→ would delete owned devices: %s\n"), strings.Join(result.DevicesWouldDelete, ", "))
 			}
 			for _, warning := range result.Warnings {
-				fmt.Fprintf(cmd.ErrOrStderr(), "→ warning: %s\n", warning)
+				fmt.Fprintf(cmd.ErrOrStderr(), humanText("→ warning: %s\n"), warning)
 			}
 			return nil
 		},

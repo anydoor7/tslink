@@ -130,3 +130,8 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - Auth handoff readers preserve regular-file/size checks while using shared Windows reads and common replacement settling.
 
 - `windows_scheduler_native_test.go`: migration/install readiness uses synctest so filesystem latency cannot consume the fixture's 20 ms settle budget.
+
+# Human console output
+
+- `human_output.go`: Windows ASCII status markers and help rendering without changing JSON metadata.
+- `human_output_test.go`: platform decisions, unchanged format arguments and help metadata/writer controls.

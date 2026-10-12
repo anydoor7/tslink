@@ -286,7 +286,7 @@ Examples:
 			// fact belongs in the result data; stdout must remain one envelope.
 			credentialMigrated := serveMigrateFn()
 			if credentialMigrated && !jsonOutput(cmd) {
-				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
+				fmt.Fprintln(cmd.OutOrStdout(), humanText("→ migrated API key to system keychain"))
 			}
 			// Credentials stored before expiry tracking existed get value-free
 			// metadata on the next daemon start, like the legacy file migration.
@@ -662,12 +662,12 @@ func presentAuthHandoff(cmd *cobra.Command, record authHandoffRecord) {
 	allowBrowser := !noBrowser && !serveCIEnvironmentSetFn() && serveIsTerminalFn()
 	if allowBrowser {
 		if err := serveOpenBrowserFn(record.AuthURL); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ Could not open a browser automatically: %v\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), humanText("→ Could not open a browser automatically: %v\n"), err)
 		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "→ Opened browser for Tailscale login")
+			fmt.Fprintln(cmd.OutOrStdout(), humanText("→ Opened browser for Tailscale login"))
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "→ Complete Tailscale login: %s\n", record.AuthURL)
+	fmt.Fprintf(cmd.OutOrStdout(), humanText("→ Complete Tailscale login: %s\n"), record.AuthURL)
 }
 
 type foregroundOptions struct {

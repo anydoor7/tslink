@@ -75,9 +75,9 @@ func configSet(key, value string, out io.Writer, isJSON bool) error {
 	}
 
 	if value == "" {
-		fmt.Fprintf(out, "→ %s cleared\n", key)
+		fmt.Fprintf(out, humanText("→ %s cleared\n"), key)
 	} else {
-		fmt.Fprintf(out, "→ %s = %s\n", key, value)
+		fmt.Fprintf(out, humanText("→ %s = %s\n"), key, value)
 	}
 	return nil
 }

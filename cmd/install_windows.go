@@ -141,7 +141,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Startup script installed: %s\n", startupPath)
+	fmt.Fprintf(cmd.OutOrStdout(), humanText("→ ✓ Startup script installed: %s\n"), startupPath)
 	return nil
 }
 
@@ -328,7 +328,7 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		output.Success("install", InstallResult{Path: path, Installed: true, Started: true, ServiceManager: "windows-task-scheduler"})
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Task Scheduler task installed and start requested: %s\nDefinition: %s\n", name, path)
+	fmt.Fprintf(cmd.OutOrStdout(), humanText("→ ✓ Task Scheduler task installed and start requested: %s\nDefinition: %s\n"), name, path)
 	return nil
 }
 

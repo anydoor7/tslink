@@ -636,7 +636,7 @@ func formatStatus(r StatusResult, out io.Writer) {
 	formatAccessHealth(r.AccessLog, out)
 	formatPortal(out, r.Portal)
 	for _, b := range r.MCPBindings {
-		fmt.Fprintf(out, "→ MCP scope: %s role=%s apps=%v inventory=%t expired=%t legacy=%t\n", b.Principal, b.Role, b.Apps, b.Inventory, b.Expired, b.Legacy)
+		fmt.Fprintf(out, humanText("→ MCP scope: %s role=%s apps=%v inventory=%t expired=%t legacy=%t\n"), b.Principal, b.Role, b.Apps, b.Inventory, b.Expired, b.Legacy)
 	}
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
@@ -645,9 +645,9 @@ func formatStatus(r StatusResult, out io.Writer) {
 		noNodes = err == nil && (cfg.MCP == nil || !cfg.MCP.Enabled)
 	}
 	if r.DaemonRunning {
-		fmt.Fprintf(out, "→ tslink: running (pid %d)\n", r.DaemonPID)
+		fmt.Fprintf(out, humanText("→ tslink: running (pid %d)\n"), r.DaemonPID)
 	} else {
-		fmt.Fprintln(out, "→ tslink: not running")
+		fmt.Fprintln(out, humanText("→ tslink: not running"))
 		if !noNodes && !userManagerUnavailable {
 			fmt.Fprintln(out, "Next: tslink install")
 		}
@@ -655,47 +655,47 @@ func formatStatus(r StatusResult, out io.Writer) {
 	formatSupervision(r.Supervision, out)
 	if r.Authenticated || r.CredentialStored && r.AuthStatus != authStatusNeedsLogin {
 		if r.Authenticated {
-			fmt.Fprintln(out, "→ tailnet: authenticated")
+			fmt.Fprintln(out, humanText("→ tailnet: authenticated"))
 		} else {
 			// A stored credential is not an authorized node; say which.
-			fmt.Fprintln(out, "→ tailnet: no authorized node yet (credential stored)")
+			fmt.Fprintln(out, humanText("→ tailnet: no authorized node yet (credential stored)"))
 		}
 		if summary := formatCredentialSummary(r.Credentials); summary != "" {
-			fmt.Fprintf(out, "→ credentials: %s\n", summary)
+			fmt.Fprintf(out, humanText("→ credentials: %s\n"), summary)
 		}
 		switch r.CredentialExpiryState {
 		case credentials.ExpiryStateExpiring, credentials.ExpiryStateExpired:
 			for _, step := range r.Next {
-				fmt.Fprintf(out, "→ next: %s\n", step)
+				fmt.Fprintf(out, humanText("→ next: %s\n"), step)
 			}
 		}
 		// Authenticated services can coexist with a pending enrollment for a
 		// newly added node; keep that node's login URL visible instead of
 		// hiding it behind the global authenticated state.
 		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" && len(r.PendingLogins) == 0 {
-			fmt.Fprintf(out, "→ pending login URL: %s\n", r.AuthURL)
+			fmt.Fprintf(out, humanText("→ pending login URL: %s\n"), r.AuthURL)
 		}
 	} else if r.AuthStatus == authStatusNeedsLogin {
-		fmt.Fprintln(out, "→ tailnet: needs login")
+		fmt.Fprintln(out, humanText("→ tailnet: needs login"))
 		if r.AuthURL != "" && len(r.PendingLogins) == 0 {
-			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
+			fmt.Fprintf(out, humanText("→ login URL: %s\n"), r.AuthURL)
 		}
 	} else if noNodes {
-		fmt.Fprintln(out, "→ tailnet: not authenticated; no service nodes configured; register one with tslink add or tslink share")
+		fmt.Fprintln(out, humanText("→ tailnet: not authenticated; no service nodes configured; register one with tslink add or tslink share"))
 	} else if userManagerUnavailable {
-		fmt.Fprintln(out, "→ tailnet: not authenticated; restore the login session described above, or run tslink serve manually to enroll")
+		fmt.Fprintln(out, humanText("→ tailnet: not authenticated; restore the login session described above, or run tslink serve manually to enroll"))
 	} else {
-		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
+		fmt.Fprintln(out, humanText("→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)"))
 	}
 	for _, pending := range r.PendingLogins {
-		fmt.Fprintf(out, "→ pending login for %s: %s\n", pending.Node, pending.AuthURL)
+		fmt.Fprintf(out, humanText("→ pending login for %s: %s\n"), pending.Node, pending.AuthURL)
 	}
-	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
+	fmt.Fprintf(out, humanText("→ services: %d registered\n"), r.ServiceCount)
 	for _, svc := range r.Services {
 		formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
 		for _, warning := range svc.Warnings {
 			if warning.Code == inspect.WarningCodeGuestCounters {
-				fmt.Fprintf(out, "→ %s: %s (%s)\n", svc.Name, warning.Message, warning.Code)
+				fmt.Fprintf(out, humanText("→ %s: %s (%s)\n"), svc.Name, warning.Message, warning.Code)
 			}
 		}
 	}
@@ -1048,14 +1048,14 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		Next:                    r.Next,
 		ServiceCount:            r.ServiceCount,
 	}, out)
-	fmt.Fprintf(out, "→ runtime snapshot: %s", r.RuntimeSnapshot.Status)
+	fmt.Fprintf(out, humanText("→ runtime snapshot: %s"), r.RuntimeSnapshot.Status)
 	if r.RuntimeSnapshot.Code != "" {
 		fmt.Fprintf(out, " (%s)", r.RuntimeSnapshot.Code)
 	}
 	fmt.Fprintln(out)
 
 	if len(r.Services) == 0 {
-		fmt.Fprintln(out, "→ service urls: none")
+		fmt.Fprintln(out, humanText("→ service urls: none"))
 		return
 	}
 

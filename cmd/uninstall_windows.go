@@ -128,7 +128,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 			output.Success("uninstall", UninstallResult{Path: taskPath, Removed: true, ServiceManager: "windows-task-scheduler"})
 			return nil
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Task Scheduler task and Startup entry removed")
+		fmt.Fprintln(cmd.OutOrStdout(), humanText("→ ✓ Task Scheduler task and Startup entry removed"))
 		return nil
 	}
 	// Confirmed absent task, or explicit Startup-only fallback on an unavailable
@@ -161,7 +161,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 			output.Success("uninstall", UninstallResult{Path: startupPath, Removed: false, ServiceManager: "windows-startup"})
 			return nil
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "→ Startup script not installed")
+		fmt.Fprintln(cmd.OutOrStdout(), humanText("→ Startup script not installed"))
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("stat Startup script: %w", err)
@@ -176,7 +176,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Startup script removed")
+	fmt.Fprintln(cmd.OutOrStdout(), humanText("→ ✓ Startup script removed"))
 	return nil
 }
 

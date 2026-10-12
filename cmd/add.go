@@ -829,7 +829,7 @@ Examples:
 			}
 			if !result.DaemonRunning {
 				if result.FunnelRearmed {
-					fmt.Fprintln(cmd.OutOrStdout(), "→ re-armed expired Funnel (24h)")
+					fmt.Fprintln(cmd.OutOrStdout(), humanText("→ re-armed expired Funnel (24h)"))
 				}
 				if svc.Funnel {
 					fmt.Fprintln(cmd.OutOrStdout(), "Configured exposure: PUBLIC via Tailscale Funnel (inactive until started).")
@@ -846,12 +846,12 @@ Examples:
 			}
 
 			if svc.Type == registry.TypeTCP {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ TCP service %q registered (target %s, port %d)\n", svc.Name, svc.Target, svc.Port)
+				fmt.Fprintf(cmd.OutOrStdout(), humanText("→ ✓ TCP service %q registered (target %s, port %d)\n"), svc.Name, svc.Target, svc.Port)
 				fmt.Fprintln(cmd.OutOrStdout(), "TSLink HTTP allow and identity headers do not apply to raw TCP; protection is Tailscale policy plus backend auth.")
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", svc.Name)
+				fmt.Fprintf(cmd.OutOrStdout(), humanText("→ ✓ Service %q registered\n"), svc.Name)
 				if result.FunnelRearmed {
-					fmt.Fprintln(cmd.OutOrStdout(), "→ re-armed expired Funnel (24h)")
+					fmt.Fprintln(cmd.OutOrStdout(), humanText("→ re-armed expired Funnel (24h)"))
 				}
 				if result.URLPending {
 					if svc.Funnel {

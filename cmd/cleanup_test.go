@@ -471,7 +471,7 @@ func TestCleanupAdoptDryRunPreviewsWithoutChangingLedgerBytes(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatalf("ledger bytes changed during dry-run:\nbefore=%s\nafter=%s", before, after)
 	}
-	wantPreview := "→ adoption preview (not written): service=legacy matches=1\n"
+	wantPreview := humanText("→ adoption preview (not written): service=legacy matches=1\n")
 	if !strings.Contains(out.String(), wantPreview) || !strings.Contains(out.String(), "would delete owned devices: legacy") || strings.Index(out.String(), "adoption preview") > strings.Index(out.String(), "cleanup dry-run") {
 		t.Fatalf("stdout = %q, want explicit not-written preview and apply-equivalent deletion list", out.String())
 	}
