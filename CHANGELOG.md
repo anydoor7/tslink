@@ -3,6 +3,20 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [0.1.2] - 2026-10-12
+
+macOS background-service startup fix. Commands, flags and stored data are unchanged from 0.1.1.
+
+### Upgrade
+
+- Homebrew: `brew upgrade --cask anydoor7/tap/tslink`. Other installs: download the new archive or package from this release.
+- If TSLink runs as a background service, run `tslink install` again after upgrading so the service starts the new binary.
+
+### Fixed
+
+- On macOS, including macOS 27, a successful LaunchAgent bootstrap can leave the job pending despite `RunAtLoad`. This caused `tslink install` to time out and could leave the previous daemon stopped after rollback. Installation and restoration now request `launchctl kickstart` for the bootstrapped job before checking for a stable running process. The request does not kill an already running process; if it reports an error, the running-state check still decides success and includes the kickstart error and output when verification fails.
+- The kickstart request and running-state verification share the existing ten-second startup window, including rollback restoration. A slow start request gets at most two seconds and leaves time for the final state check.
+
 ## [0.1.1] - 2026-10-09
 
 Security update. Commands, flags and stored data are unchanged from 0.1.0.

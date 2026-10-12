@@ -1,5 +1,7 @@
 # People sharing files
 
+- `install_startup_budget_darwin_test.go`: shared post-bootstrap deadline regressions for GUI installation, user fallback and canceled-call restoration with slow or blocked kickstart.
+
 - `command_context_test.go`: direct Cobra handler context initialization and exact cleanup isolation controls.
 
 This index records the people sharing lifecycle implementation and regression tests in this directory. Other package files are described by the repository architecture guide.
@@ -135,3 +137,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `human_output.go`: Windows ASCII status markers and help rendering without changing JSON metadata.
 - `human_output_test.go`: platform decisions, unchanged format arguments and help metadata/writer controls.
+
+# macOS LaunchAgent startup
+
+- `install_kickstart_darwin_test.go`: pending-job startup, GUI/user-domain ordering, previous-job restoration and kickstart failure diagnostics with fake launchctl calls.
