@@ -41,10 +41,19 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 	}
 	s.mu.Lock()
 	old := s.portalRun
-	if cfg != nil && cfg.Enabled && old != nil && reflect.DeepEqual(old.config, *cfg) && s.portalState.State != "failed" {
+	if cfg != nil && cfg.Enabled && old != nil && samePortalNodeConfig(old.config, *cfg) && s.portalState.State != "failed" {
 		s.mu.Unlock()
 		select {
 		case <-old.done:
+			old.config = *cfg
+			old.config.Admins = append([]string(nil), cfg.Admins...)
+			s.mu.Lock()
+			if s.portalState.Gateway != nil && cfg.Gateway != nil {
+				copy := *s.portalState.Gateway
+				copy.Ports = cfg.Gateway.Ports
+				s.portalState.Gateway = &copy
+			}
+			s.mu.Unlock()
 			s.syncGatewayRoutes(old)
 		default:
 		}
@@ -95,6 +104,13 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 		s.portalState = state
 		s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
 	}()
+}
+
+func samePortalNodeConfig(a, b registry.PortalConfig) bool {
+	if a.Gateway != nil && b.Gateway != nil && a.Gateway.Enabled && b.Gateway.Enabled {
+		return a.Hostname == b.Hostname && a.Gateway.Tag == b.Gateway.Tag
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory func(registry.Service, string, string, string) tsnetServer, now func() time.Time, timeout time.Duration) (tsRuntime.PortalState, error) {

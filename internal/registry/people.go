@@ -451,7 +451,7 @@ func removeAppGrants(reg *Registry, app string) {
 
 // ExpirePeople is shared by startup, ticks and requests. Persist only changes.
 func ExpirePeople(path string, now time.Time) (changed bool, err error) {
-	return expirePeople(path, now, withLock)
+	return expirePeople(path, now, withLock, false)
 }
 
 // TryExpirePeople fails closed instead of queueing a request behind a writer.
@@ -462,13 +462,28 @@ func TryExpirePeople(path string, now time.Time) (bool, error) {
 			return CodedError{Code: "registry_unavailable", Message: "registry writer busy"}
 		}
 		return err
-	})
+	}, true)
 }
 
-func expirePeople(path string, now time.Time, lock func(string, func() error) error) (changed bool, err error) {
+func expirePeople(path string, now time.Time, lock func(string, func() error) error, bounded bool) (changed bool, err error) {
 	// Do not take a writer lock when there is no expired grant. Startup and
 	// shutdown must not block behind an unrelated registry writer.
-	observed, _, err := Preflight(path)
+	read := func() (*Registry, error) {
+		if !bounded {
+			return loadForMutation(path)
+		}
+		reg, issues, err := PortalPreflight(path)
+		if err == nil && len(issues) > 0 {
+			err = issues[0]
+		}
+		return reg, err
+	}
+	var observed *Registry
+	if bounded {
+		observed, err = read()
+	} else {
+		observed, _, err = Preflight(path)
+	}
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -480,7 +495,7 @@ func expirePeople(path string, now time.Time, lock func(string, func() error) er
 	}
 	var expired []mcpaudit.Change
 	err = lock(path, func() error {
-		reg, err := loadForMutation(path)
+		reg, err := read()
 		if err != nil {
 			return err
 		}

@@ -252,6 +252,9 @@ func (f *gatewayFixture) client(t *testing.T) *http.Client {
 func gatewayGet(t *testing.T, c *http.Client, port, path string, headers map[string]string) (int, string, http.Header) {
 	t.Helper()
 	r, _ := http.NewRequest("GET", "https://home.tailnet.ts.net:"+port+path, nil)
+	if port == "443" {
+		r.Host = "home.tailnet.ts.net"
+	}
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
@@ -425,6 +428,9 @@ func TestGatewayPersistentNodeHotReloadAndWebSocket(t *testing.T) {
 	sort.Strings(ports)
 	if strings.Join(ports, ",") != ":443,:8443,:8444" {
 		t.Fatalf("unexpected listeners: %v", ports)
+	}
+	if f.node.listenCalled != 0 || f.node.listenFunnelCalled != 0 {
+		t.Fatal("gateway opened a non-TLS route listener")
 	}
 	client := f.client(t)
 	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))

@@ -6,9 +6,11 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -27,6 +29,8 @@ type accessExplainJSONData struct {
 func (d accessExplainJSONData) MarshalJSON() ([]byte, error) { return json.Marshal(d.AccessExplain) }
 
 type AccessExplainResult struct {
+	Reasons                []accesslog.Count                  `json:"reasons,omitempty"`
+	ReasonsUnavailable     bool                               `json:"reasons_unavailable,omitempty"`
 	SchemaVersion          int                                `json:"schema_version"`
 	Service                string                             `json:"service"`
 	Summary                string                             `json:"summary"`
@@ -112,7 +116,15 @@ func accessExplainResultForPath(regPath, serviceName string) (AccessExplainResul
 		if svc.Name != serviceName {
 			continue
 		}
-		return buildAccessExplainResult(svc, reg.People...), nil
+		result := buildAccessExplainResult(svc, reg.People...)
+		if svc.PortalRoute != nil {
+			logs, err := accesslog.Query(filepath.Dir(regPath), accesslog.Filter{App: svc.Name, Limit: 1})
+			result.ReasonsUnavailable = err != nil
+			if err == nil {
+				result.Reasons = logs.Summary.Reasons
+			}
+		}
+		return result, nil
 	}
 	return AccessExplainResult{}, output.ErrNotFound(fmt.Sprintf("service not found: %s", serviceName))
 }
