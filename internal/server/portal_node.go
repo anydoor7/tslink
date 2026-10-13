@@ -19,7 +19,10 @@ import (
 )
 
 type portalRun struct {
+	routeSlots  map[int]chan struct{}
 	dropped     atomic.Uint64
+	startMu     sync.Mutex
+	pending     bool
 	routesMu    sync.Mutex
 	routes      map[string]*gatewayRouteRun
 	routesWG    sync.WaitGroup
@@ -45,6 +48,8 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 	old := s.portalRun
 	if cfg != nil && cfg.Enabled && old != nil && samePortalNodeConfig(old.config, *cfg) && s.portalState.State != "failed" {
 		s.mu.Unlock()
+		old.startMu.Lock()
+		defer old.startMu.Unlock()
 		select {
 		case <-old.done:
 			old.config = *cfg
@@ -58,6 +63,7 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 			s.mu.Unlock()
 			s.syncGatewayRoutes(old)
 		default:
+			old.pending = true
 		}
 		return
 	}
@@ -92,7 +98,7 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 	// is joined on disable, replacement and daemon shutdown.
 	factory, now, timeout := newTSNetServerFn, serverNowFn, nodeStartupTimeout
 	go func() {
-		defer close(run.done)
+		defer s.finishPortalStart(nodeCtx, run)
 		state, err := s.startPortalNode(nodeCtx, run, factory, now, timeout)
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -100,7 +106,10 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 			return
 		}
 		if err != nil {
-			state = tsRuntime.PortalState{Enabled: true, Hostname: cfg.Hostname, State: "failed", Error: "portal_start_failed"}
+			state.Enabled, state.Hostname, state.State, state.Error = true, cfg.Hostname, "failed", "portal_start_failed"
+			if code, ok := registry.ErrorCode(err); ok {
+				state.Error = code
+			}
 			s.portalRetryPending.Store(true)
 		}
 		s.portalState = state
@@ -151,6 +160,17 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 	if err != nil {
 		return state, err
 	}
+	var marker, identity gatewayEnrollment
+	if gateway {
+		if key == "" && run.config.Gateway.Tag != "" {
+			return state, registry.CodedError{Code: "gateway_tag_requires_credentials", Message: "gateway tags require a credentialed enrollment"}
+		}
+		identity = gatewayEnrollmentIdentity(key != "", svc.Tags, s.controlURL)
+		marker, err = prepareGatewayEnrollment(s.cfgDir, svc.Name, identity)
+		if err != nil {
+			return state, err
+		}
+	}
 	svc.Ephemeral = key != "" && !gateway
 	node := &mcpControlPlaneNode{name: svc.Name, tsnetSrv: factory(svc, dir, key, s.controlURL)}
 	run.node = node
@@ -185,9 +205,26 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 		return state, fmt.Errorf("portal WhoIs client unavailable: %v", err)
 	}
 	if gateway {
+		if marker.NodeID == "" {
+			identity.NodeID = runtimeNodeIDFromStatus(nodeStatus)
+			if identity.NodeID == "" {
+				return state, fmt.Errorf("persistent enrollment has no node ID")
+			}
+			if err := writeGatewayEnrollment(dir, identity); err != nil {
+				return state, err
+			}
+		}
 		state.Gateway, err = recordGatewayIdentity(dir, run.config.Gateway, nodeStatus, now())
 		if err != nil {
 			return state, err
+		}
+		proof, err := readGatewayEnrollment(dir)
+		if err != nil {
+			return state, err
+		}
+		state.Gateway.Persistent = proof.NodeID == state.Gateway.NodeID && sameGatewayEnrollment(proof, identity)
+		if !state.Gateway.Persistent {
+			return state, registry.CodedError{Code: "gateway_ephemeral_refused", Message: "gateway persistent enrollment is not proven"}
 		}
 	}
 	ln, _, err := activateListener(technical, ctx, node.close, func() (net.Listener, error) {
@@ -284,4 +321,16 @@ func (s *Server) refreshPortalURLLocked() {
 			s.portalState.Gateway = &copy
 		}
 	}
+}
+
+// startMu makes the final route refresh and done publication atomic with the
+// default branch of syncPortal. No registry event can fall between them.
+func (s *Server) finishPortalStart(ctx context.Context, run *portalRun) {
+	run.startMu.Lock()
+	defer run.startMu.Unlock()
+	if run.pending && ctx.Err() == nil {
+		s.syncGatewayRoutes(run)
+	}
+	run.pending = false
+	close(run.done)
 }

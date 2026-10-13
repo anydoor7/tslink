@@ -56,6 +56,8 @@ type Code struct {
 }
 
 var table = []Code{
+	{"gateway_tag_requires_credentials", ExitUsage, Command, "gateway tags require a credentialed enrollment"},
+	{"gateway_ephemeral_refused", ExitConflict, Command, "gateway persistent enrollment is not proven"},
 	{"gateway_ports_invalid", ExitUsage, Command, "gateway port range must be within 1-65535"},
 	{"gateway_required", ExitUsage, Command, "enable portal gateway mode before assigning routes"},
 	{"portal_only_required", ExitUsage, Command, "portal port requires a portal-only app"},

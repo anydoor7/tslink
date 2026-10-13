@@ -20,6 +20,10 @@ import (
 )
 
 type gatewayRouteRun struct {
+	done     chan struct{}
+	slot     chan struct{}
+	failures uint
+	retryAt  time.Time
 	svc      registry.Service
 	state    tsRuntime.GatewayRouteState // guarded by portalRun.routesMu
 	ctx      context.Context
@@ -68,7 +72,7 @@ func (run *portalRun) routeStates() []tsRuntime.GatewayRouteState {
 // A separate ledger keeps gateway ownership out of app-node cleanup. Historical
 // IDs remain as evidence: once changed, the finding survives daemon restarts.
 func recordGatewayIdentity(dir string, cfg *registry.GatewayConfig, status *ipnstate.Status, now time.Time) (*tsRuntime.GatewayState, error) {
-	view := &tsRuntime.GatewayState{Enabled: true, Persistent: true, Ports: cfg.Ports, Routes: []tsRuntime.GatewayRouteState{}}
+	view := &tsRuntime.GatewayState{Enabled: true, Ports: cfg.Ports, Routes: []tsRuntime.GatewayRouteState{}}
 	view.NodeID = runtimeNodeIDFromStatus(status)
 	if status != nil && status.Self != nil {
 		view.Tagged = status.Self.Tags != nil && status.Self.Tags.Len() > 0
@@ -114,6 +118,7 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 	if run.config.Gateway == nil || !run.config.Gateway.Enabled || run.node == nil {
 		return
 	}
+	s.portalRetryPending.Store(false)
 	reg, issues, err := registry.PortalPreflight(filepath.Join(s.cfgDir, "registry.json"))
 	if err != nil {
 		run.closeRoutes()
@@ -134,21 +139,43 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 	if run.routes == nil {
 		run.routes = map[string]*gatewayRouteRun{}
 	}
+	if run.routeSlots == nil {
+		run.routeSlots = map[int]chan struct{}{}
+	}
+	failures := map[string]uint{}
 	for name, route := range run.routes {
 		svc, ok := wanted[name]
 		if ok && reflect.DeepEqual(route.svc, svc) {
-			delete(wanted, name)
-			continue
+			retry := false
+			if route.state.State == "failed" {
+				s.portalRetryPending.Store(true)
+				select {
+				case <-route.done:
+					retry = !run.now().Before(route.retryAt)
+				default:
+				}
+			}
+			if !retry {
+				delete(wanted, name)
+				continue
+			}
+			failures[name] = route.failures
 		}
 		route.close()
 		delete(run.routes, name)
 	}
 	for name, svc := range wanted {
 		ctx, cancel := context.WithCancel(context.Background())
-		route := &gatewayRouteRun{svc: svc, ctx: ctx, cancel: cancel, state: tsRuntime.GatewayRouteState{App: name, Port: svc.PortalRoute.Port, State: "starting", HostLabel: "this host"}}
+		port := svc.PortalRoute.Port
+		slot := run.routeSlots[port]
+		if slot == nil {
+			slot = make(chan struct{}, 1)
+			run.routeSlots[port] = slot
+		}
+		route := &gatewayRouteRun{done: make(chan struct{}), slot: slot, failures: failures[name], svc: svc, ctx: ctx, cancel: cancel, state: tsRuntime.GatewayRouteState{App: name, Port: svc.PortalRoute.Port, State: "starting", HostLabel: "this host"}}
 		run.routes[name] = route
 		run.routesWG.Add(1)
-		go func() { defer run.routesWG.Done(); s.startGatewayRoute(run, route) }()
+		go func() { defer run.routesWG.Done(); defer close(route.done); s.startGatewayRoute(run, route) }()
 	}
 }
 
@@ -156,6 +183,12 @@ func (s *Server) setGatewayRouteState(run *portalRun, r *gatewayRouteRun, state,
 	run.routesMu.Lock()
 	if run.routes[r.svc.Name] == r && r.ctx.Err() == nil {
 		r.state.State, r.state.Reason, r.state.URL = state, reason, routeURL
+		if state == "failed" {
+			r.failures++
+			backoff := time.Second << min(r.failures-1, 5)
+			r.retryAt = run.now().Add(backoff)
+			s.portalRetryPending.Store(true)
+		}
 	}
 	run.routesMu.Unlock()
 	s.mu.Lock()
@@ -168,6 +201,23 @@ func (s *Server) setGatewayRouteState(run *portalRun, r *gatewayRouteRun, state,
 func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 	svc := r.svc
 	fail := func(reason string) { s.setGatewayRouteState(run, r, "failed", reason, "") }
+	// A cancelled activation can still be inside tsnet.ListenTLS. Serialize
+	// lifetimes per port so a replacement cannot collide with its late listener.
+	wait := run.timeout
+	if wait <= 0 {
+		wait = 30 * time.Second
+	}
+	timerSlot := time.NewTimer(wait)
+	defer timerSlot.Stop()
+	select {
+	case r.slot <- struct{}{}:
+		defer func() { <-r.slot }()
+	case <-r.ctx.Done():
+		return
+	case <-timerSlot.C:
+		fail("route_listener_failed")
+		return
+	}
 	// R2 installs the tagged tsnet dialer; never fall back to host networking.
 	if svc.Upstream == "tailnet" {
 		fail("remote_upstream_unavailable")
