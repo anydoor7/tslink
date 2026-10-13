@@ -55,12 +55,23 @@ type portalGroup struct {
 }
 
 type portalPage struct {
-	Groups       []portalGroup            `json:"-"`
 	Apps         []PortalApp              `json:"apps"`
 	Requestable  []string                 `json:"requestable,omitempty"`
 	Requests     []registry.AccessRequest `json:"requests,omitempty"`
 	RequestError string                   `json:"request_error,omitempty"`
 	CSRF         string                   `json:"-"`
+}
+
+func (p portalPage) AppGroups() []portalGroup {
+	var groups []portalGroup
+	for _, app := range p.Apps {
+		if len(groups) == 0 || groups[len(groups)-1].HostLabel != app.HostLabel {
+			groups = append(groups, portalGroup{HostLabel: app.HostLabel})
+		}
+		i := len(groups) - 1
+		groups[i].Apps = append(groups[i].Apps, app)
+	}
+	return groups
 }
 
 // PortalHandler uses live, uncached WhoIs and the same decision as app nodes.
@@ -79,7 +90,7 @@ const portalCSS = `:root{color-scheme:light dark;--bg:#f6f7fb;--card:#fff;--text
 var portalTemplate = template.Must(template.New("portal").Funcs(template.FuncMap{"requestStatus": requestStatusText, "requestDurations": portalRequestDurations}).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your apps · TSLink</title><style>` + portalCSS + `</style></head>
 <body><main><header><div class="eyebrow">HOME · PRIVATE APPS</div><h1>Your apps, in one place.</h1><p>Bookmark this page. Keep Tailscale connected, then choose an app below.</p></header>
-{{if .Apps}}{{range .Groups}}<section>{{if .HostLabel}}<h2>{{.HostLabel}}</h2>{{end}}<ul class="apps">{{range .Apps}}<li class="app"><h2>{{.Name}}</h2><div class="status">Status: {{.Health}}</div>{{if .OfflineSince}}<p>Offline since {{.OfflineSince}}</p>{{end}}{{if .URL}}{{if .BrowserLink}}<a href="{{.URL}}">Open {{.Name}} <span aria-hidden="true">↗</span></a><p class="address">{{.URL}}</p>{{else}}<p>Connect using your app:</p><p class="address">{{.URL}}</p>{{end}}{{else}}<p>Address not ready. Ask the owner for help.</p>{{end}}{{if .AccessNote}}<p>{{.AccessNote}}</p>{{end}}<p class="expiry">{{.ExpiryText}}</p></li>{{end}}</ul></section>{{end}}{{else}}<section class="empty" aria-labelledby="empty-title"><h2 id="empty-title">No apps available yet</h2><p>Ask the owner to share an app with the account you use in Tailscale. If access ended, the owner can renew it.</p></section>{{end}}
+{{if .Apps}}{{range .AppGroups}}{{if .HostLabel}}<section><h2>{{.HostLabel}}</h2>{{end}}<ul class="apps">{{range .Apps}}<li class="app"><h2>{{.Name}}</h2><div class="status">Status: {{.Health}}</div>{{if .OfflineSince}}<p>Offline since {{.OfflineSince}}</p>{{end}}{{if .URL}}{{if .BrowserLink}}<a href="{{.URL}}">Open {{.Name}} <span aria-hidden="true">↗</span></a><p class="address">{{.URL}}</p>{{else}}<p>Connect using your app:</p><p class="address">{{.URL}}</p>{{end}}{{else}}<p>Address not ready. Ask the owner for help.</p>{{end}}{{if .AccessNote}}<p>{{.AccessNote}}</p>{{end}}<p class="expiry">{{.ExpiryText}}</p></li>{{end}}</ul>{{if .HostLabel}}</section>{{end}}{{end}}{{else}}<section class="empty" aria-labelledby="empty-title"><h2 id="empty-title">No apps available yet</h2><p>Ask the owner to share an app with the account you use in Tailscale. If access ended, the owner can renew it.</p></section>{{end}}
 {{if .RequestError}}<section class="help"><p>{{.RequestError}}</p></section>{{end}}{{if .Requestable}}<section class="help" aria-labelledby="request-title"><h2 id="request-title">Ask for an app or more time</h2><form method="post" action="/access-requests"><input type="hidden" name="csrf" value="{{.CSRF}}"><p><label>App <select name="app" required>{{range .Requestable}}<option value="{{.}}">{{.}}</option>{{end}}</select></label></p><p><label>How long? (optional) / 申请时长（可选） <select name="duration"><option value="">Let the owner choose / 由主人选择</option>{{range requestDurations}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select></label></p><p><label>Note for the owner (optional, 500 characters)<br><textarea name="note" maxlength="500" rows="3"></textarea></label></p><button type="submit">Send request</button></form><p>The owner chooses when access ends. Please keep private information out of your note.</p></section>{{end}}{{if .Requests}}<section class="help" aria-labelledby="requests-title"><h2 id="requests-title">Your requests</h2>{{range .Requests}}<article><h3>{{.App}}</h3><p>{{requestStatus .Status}}</p>{{if .Note}}<p>Your note: {{.Note}}</p>{{end}}{{if .Reason}}<p>Owner's reason: {{.Reason}}</p>{{end}}</article>{{end}}</section>{{end}}<aside class="help" aria-labelledby="help-title"><h2 id="help-title">Need a hand?</h2><p>Open Tailscale on your phone or computer and make sure it says connected. Sign in with the account the owner invited.</p><p>Healthy means the app responded to its last check. Degraded means it had a recent problem. Down means repeated checks failed. Unknown means there is no recent check.</p><p>If an app is missing or will not open, keep Tailscale connected and ask the owner for help.</p></aside><footer>TSLink works with Tailscale, independent project.</footer></main></body></html>
 `))
 
@@ -185,13 +196,7 @@ func (h PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return page.Apps[i].Name < page.Apps[j].Name
 	})
-	for _, app := range page.Apps {
-		if len(page.Groups) == 0 || page.Groups[len(page.Groups)-1].HostLabel != app.HostLabel {
-			page.Groups = append(page.Groups, portalGroup{HostLabel: app.HostLabel})
-		}
-		i := len(page.Groups) - 1
-		page.Groups[i].Apps = append(page.Groups[i].Apps, app)
-	}
+
 	if r.URL.Path == "/api/apps" {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if r.Method != http.MethodHead {

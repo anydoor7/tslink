@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,57 @@ import (
 	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/tailcfg"
 )
+
+func TestGatewayHostCannotSelectUpstream(t *testing.T) {
+	f := newGatewayFixture(t, nil)
+	f.waitRoute(t, "photos", "running")
+	var diverted atomic.Int64
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { diverted.Add(1); _, _ = io.WriteString(w, "diverted") }))
+	defer evil.Close()
+	r, _ := http.NewRequest("GET", "https://home.tailnet.ts.net:8443/", nil)
+	r.Host = strings.TrimPrefix(evil.URL, "http://")
+	resp, err := f.client(t).Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(body) != "photos" || f.backend[0].Load() != 1 || diverted.Load() != 0 {
+		t.Fatalf("Host selected upstream: status=%d body=%s registered=%d diverted=%d", resp.StatusCode, body, f.backend[0].Load(), diverted.Load())
+	}
+}
+
+func TestGatewayIdentityChangeAndConfigHotReload(t *testing.T) {
+	f := newGatewayFixture(t, nil)
+	f.waitRoute(t, "photos", "running")
+	p := *f.config
+	p.Admins = []string{"replacement-admin"}
+	g := *p.Gateway
+	g.Ports.To = 8500
+	p.Gateway = &g
+	if err := registry.SetPortal(f.path, &p); err != nil {
+		t.Fatal(err)
+	}
+	f.s.syncPortal(context.Background(), &p)
+	if f.factories.Load() != 1 || f.node.closeCount.Load() != 0 {
+		t.Fatal("grant metadata restarted gateway")
+	}
+	f.s.closePortal()
+	prior := f.node
+	nextStatus := *prior.status
+	self := *nextStatus.Self
+	self.ID = "gateway-node-2"
+	nextStatus.Self = &self
+	f.node = &gatewayFakeNode{fakeTSNetServer: fakeTSNetServer{localClient: prior.localClient, certDomains: prior.certDomains, status: &nextStatus}, ports: map[string]net.Listener{}, fail: map[string]bool{}, stall: map[string]chan struct{}{}, cert: prior.cert, stop: make(chan struct{})}
+	f.s.syncPortal(context.Background(), &p)
+	testwait.Recv(t, f.s.portalRun.done, "changed identity startup")
+	f.s.mu.Lock()
+	state := f.s.portalState.Gateway
+	f.s.mu.Unlock()
+	if state == nil || !state.IdentityChanged || !state.OwnershipProven || state.NodeID != "gateway-node-2" {
+		t.Fatalf("identity change lost: %+v", state)
+	}
+}
 
 func TestGatewayConcurrentReloadAndPartialInput(t *testing.T) {
 	f := newGatewayFixture(t, nil)
