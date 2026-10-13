@@ -1,0 +1,109 @@
+package server
+
+import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+)
+
+// UpstreamDialer is shared by local gateway transports and the future tsnet
+// adapter. Only the registry target is handed to the transport; request data
+// never selects the destination. TLS remains verified by http.Transport.
+type UpstreamDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
+type GatewayProxyOptions struct {
+	Authority func() string
+	App       string
+	HostLabel string
+	Observe   func(bool)
+}
+
+type gatewayProxy struct {
+	proxy     *httputil.ReverseProxy
+	transport *http.Transport
+}
+
+func (p *gatewayProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) { p.proxy.ServeHTTP(w, r) }
+func (p *gatewayProxy) Close() error                                     { p.transport.CloseIdleConnections(); return nil }
+
+// Reserved for gateway credentials. App cookies otherwise retain their names;
+// ports separate browser origins but do not provide cookie isolation.
+const gatewayCookiePrefix = "__tslink_gateway_"
+
+func stripGatewayCookies(h http.Header) {
+	values := h.Values("Cookie")
+	h.Del("Cookie")
+	for _, value := range values {
+		var keep []string
+		for _, part := range strings.Split(value, ";") {
+			name, _, _ := strings.Cut(strings.TrimSpace(part), "=")
+			if !strings.HasPrefix(strings.ToLower(name), gatewayCookiePrefix) {
+				keep = append(keep, strings.TrimSpace(part))
+			}
+		}
+		if len(keep) > 0 {
+			h.Add("Cookie", strings.Join(keep, "; "))
+		}
+	}
+}
+
+func urlPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	if u.Scheme == "http" {
+		return "80"
+	}
+	return ""
+}
+
+func rewriteGatewayURL(value string, target *url.URL, authority string) string {
+	u, err := url.Parse(value)
+	if err != nil || !u.IsAbs() || u.User != nil || !strings.EqualFold(u.Scheme, target.Scheme) || !strings.EqualFold(u.Hostname(), target.Hostname()) || urlPort(u) != urlPort(target) {
+		return value
+	}
+	u.Scheme, u.Host = "https", authority
+	return u.String()
+}
+
+func rewriteGatewayResponse(r *http.Response, target *url.URL, authority string) {
+	for _, key := range []string{"Location", "Content-Location"} {
+		values := r.Header.Values(key)
+		r.Header.Del(key)
+		for _, v := range values {
+			r.Header.Add(key, rewriteGatewayURL(v, target, authority))
+		}
+	}
+	values := r.Header.Values("Refresh")
+	r.Header.Del("Refresh")
+	for _, value := range values {
+		delay, rest, ok := strings.Cut(value, ";")
+		key, dest, eq := strings.Cut(strings.TrimSpace(rest), "=")
+		if ok && eq && strings.EqualFold(strings.TrimSpace(key), "url") {
+			dest = strings.TrimSpace(dest)
+			quote := ""
+			if len(dest) >= 2 && (dest[0] == '\'' || dest[0] == '"') && dest[len(dest)-1] == dest[0] {
+				quote = dest[:1]
+				dest = dest[1 : len(dest)-1]
+			}
+			value = delay + "; url=" + quote + rewriteGatewayURL(dest, target, authority) + quote
+		}
+		r.Header.Add("Refresh", value)
+	}
+	values = r.Header.Values("Set-Cookie")
+	r.Header.Del("Set-Cookie")
+	for _, v := range values {
+		name, _, _ := strings.Cut(strings.TrimSpace(v), "=")
+		if !strings.HasPrefix(strings.ToLower(name), gatewayCookiePrefix) {
+			r.Header.Add("Set-Cookie", v)
+		}
+	}
+}

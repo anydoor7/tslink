@@ -68,6 +68,7 @@ type GuestDecision struct {
 	Reason   string `json:"reason"`
 }
 type Event struct {
+	Via           string            `json:"via,omitempty"`
 	Surface       string            `json:"surface,omitempty"`
 	Changes       []mcpaudit.Change `json:"changes,omitempty"`
 	SchemaVersion int               `json:"schema_version"`

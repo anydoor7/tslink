@@ -899,6 +899,9 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		// Re-read the wall clock for every reconciliation. Missing timestamps
 		// remain legacy-never; expired services are never allowed into Funnel
 		// policy or listener construction even if persisting the downgrade failed.
+		if svc.PortalOnly {
+			continue
+		}
 		svc = registry.EffectiveServiceAt(svc, serverNowFn())
 		err := ValidateServiceForStartup(svc)
 		if err == nil {
