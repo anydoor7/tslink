@@ -325,6 +325,9 @@ func buildDoctorResult(ctx context.Context, opts doctorOptions) DoctorResult {
 		loaded, issues, err := registry.LoadForDiagnostics(result.Paths.Registry)
 		if err != nil {
 			result.addFinding(inspect.WarningCodeRegistryLoadFailed, "", "registry", "Registry could not be loaded.", evidenceError(err))
+			if code, ok := registry.ErrorCode(err); ok && (code == "portal_route_port_conflict" || code == "portal_route_bad_port" || code == "gateway_ports_invalid" || code == "portal_route_port_range") {
+				result.addFinding(code, "", "portal", "Gateway port configuration is invalid.", nil)
+			}
 		} else {
 			reg = loaded
 			registryIssues = issues
@@ -349,6 +352,7 @@ func buildDoctorResult(ctx context.Context, opts doctorOptions) DoctorResult {
 	diagnoseDaemon(ctx, &result, serviceCount)
 	result.Supervision = detectSupervisionFn(ctx, result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
 	result.Portal = readPortalView(reg, result.Paths.Registry, result.Daemon.Running, result.Daemon.PID)
+	diagnoseGateway(&result)
 	if result.Supervision.RuntimeState == "circuit_open" || result.Supervision.RuntimeState == "failed" {
 		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Built-in supervisor stopped crash recovery: "+result.Supervision.FailureReason+". Inspect logs, then run 'tslink install'.", nil)
 	}
@@ -1011,6 +1015,9 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 	ctx, cancel := context.WithTimeout(context.Background(), doctorProbeTimeout)
 	defer cancel()
 	if err := doctorProbeTargetFn(ctx, target.ProbeAddress, doctorProbeTimeout); err != nil {
+		if svc.PortalRoute != nil {
+			result.addFinding("upstream_unreachable", svc.Name, "portal", "App upstream is not reachable.", nil)
+		}
 		code := classifyProbeError(err)
 		result.addFinding(code, svc.Name, "target_probe", inspect.WarningCodeRegistry[code].Description, nil)
 		return

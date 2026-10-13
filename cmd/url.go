@@ -27,9 +27,10 @@ var (
 
 // URLResult is the minimal exact endpoint payload for agent consumers.
 type URLResult struct {
-	Name  string `json:"name"`
-	URL   string `json:"url"`
-	State string `json:"state"`
+	PortalURL string `json:"portal_url,omitempty"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	State     string `json:"state"`
 }
 
 type serviceURLResolution struct {
@@ -47,7 +48,7 @@ func exactServiceURL(result StatusURLsResult, name string) (serviceURLResolution
 			!strings.Contains(svc.Endpoint.Display, "<tailnet>")
 		if ready {
 			return serviceURLResolution{
-				Result:   URLResult{Name: name, URL: svc.Endpoint.Display, State: inspect.EndpointStateExact},
+				Result:   URLResult{Name: name, URL: svc.Endpoint.Display, State: inspect.EndpointStateExact, PortalURL: svc.PortalURL},
 				Endpoint: svc.Endpoint,
 			}, true, true
 		}

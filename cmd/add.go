@@ -100,6 +100,8 @@ func invalidAllowEntries(allowedUsers []string) []string {
 
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
+	PortalOnly      bool
+	PortalPort      int
 	Health          *registry.HealthConfig
 	RequestLimits   *registry.RequestLimits
 	Name            string
@@ -486,6 +488,12 @@ func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, nam
 // so neither can reach registry.AddWithOutcome on a service the other would
 // have rejected.
 func resolveAddService(svc registry.Service, p AddParams) (registry.Service, error) {
+	if p.PortalPort != 0 && !p.PortalOnly {
+		return registry.Service{}, registry.CodedError{Code: "portal_only_required", Message: "--portal-port requires --portal-only"}
+	}
+	if p.PortalOnly {
+		svc.PortalOnly, svc.PeopleScoped, svc.PortalRoute = true, true, &registry.PortalRoute{Port: p.PortalPort}
+	}
 	if svc.Type == registry.TypeFile {
 		if !filepath.IsAbs(p.Dir) {
 			return registry.Service{}, registry.PathMustBeAbsoluteError(p.Dir)
@@ -703,6 +711,8 @@ Examples:
 				return output.ErrUsage("--yes and --force-unsafe-public require --recipe")
 			}
 			preserveHost, _ := cmd.Flags().GetBool("preserve-host")
+			portalOnly, _ := cmd.Flags().GetBool("portal-only")
+			portalPort, _ := cmd.Flags().GetInt("portal-port")
 			requestable, _ := cmd.Flags().GetBool("requestable")
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
 			dirPath, _ := cmd.Flags().GetString("dir")
@@ -719,6 +729,7 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			params := AddParams{
+				PortalOnly: portalOnly, PortalPort: portalPort,
 				Now:             durationNowFn(),
 				RequestLimits:   requestLimitsFromFlags(cmd),
 				Name:            args[0],
@@ -870,6 +881,8 @@ Examples:
 	}
 
 	addCmd.Flags().Bool("requestable", false, "Let human tailnet members ask for this app from the portal; discloses its name; default off")
+	addCmd.Flags().Bool("portal-only", false, "Serve only through the portal gateway; do not create an app node")
+	addCmd.Flags().Int("portal-port", 0, "Gateway TLS port for --portal-only (default: lowest available)")
 	addCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addRequestLimitFlags(addCmd)

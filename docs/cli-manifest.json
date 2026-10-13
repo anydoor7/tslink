@@ -9,7 +9,7 @@
     "linux",
     "windows"
   ],
-  "registry_schema_version": 2,
+  "registry_schema_version": 3,
   "toolchain": {
     "minimum_go_version": "1.27.1"
   },
@@ -24,7 +24,7 @@
     "warning": 64
   },
   "registry_schema": {
-    "version": 2,
+    "version": 3,
     "service_types": [
       "proxy",
       "file",
@@ -680,6 +680,20 @@
           "default": "false",
           "scope": "local",
           "usage": "Save configuration only; do not install or start the background service"
+        },
+        {
+          "name": "portal-only",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Serve only through the portal gateway; do not create an app node"
+        },
+        {
+          "name": "portal-port",
+          "type": "int",
+          "default": "0",
+          "scope": "local",
+          "usage": "Gateway TLS port for --portal-only (default: lowest available)"
         },
         {
           "name": "preserve-host",
@@ -2004,6 +2018,10 @@
           "type": "array",
           "description": "Active guest grants without bearer secrets."
         },
+        "portal": {
+          "type": "object",
+          "description": "Portal and gateway configuration with exact runtime URLs when available."
+        },
         "registered_count": {
           "type": "integer",
           "description": "--tailnet only: devices whose hostname exactly matches a service in this machine's registry."
@@ -2735,6 +2753,10 @@
           "type": "string",
           "description": "Stable portal startup failure code, if any."
         },
+        "gateway": {
+          "type": "object",
+          "description": "Gateway enablement, persistence, tags, proven NodeID, port range and route state; omitted in directory-only mode."
+        },
         "hostname": {
           "type": "string",
           "description": "Reserved independent portal node hostname."
@@ -2768,6 +2790,25 @@
           "usage": "Refused: the portal must stay Tailnet-only"
         },
         {
+          "name": "gateway",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Use one persistent portal node for routed apps"
+        },
+        {
+          "name": "gateway-ports",
+          "type": "string",
+          "scope": "local",
+          "usage": "Gateway TLS port range (default 8443-8499; requires --gateway)"
+        },
+        {
+          "name": "gateway-tag",
+          "type": "string",
+          "scope": "local",
+          "usage": "Gateway tag on the credentialed path (requires --gateway)"
+        },
+        {
           "name": "hostname",
           "type": "string",
           "default": "home",
@@ -2797,6 +2838,10 @@
           "type": "string",
           "description": "Stable portal startup failure code, if any."
         },
+        "gateway": {
+          "type": "object",
+          "description": "Gateway enablement, persistence, tags, proven NodeID, port range and route state; omitted in directory-only mode."
+        },
         "hostname": {
           "type": "string",
           "description": "Reserved independent portal node hostname."
@@ -2808,6 +2853,102 @@
         "url": {
           "type": "string",
           "description": "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."
+        }
+      }
+    },
+    {
+      "path": "tslink portal route",
+      "short": "Manage app ports on the portal gateway",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink portal route add",
+      "short": "Route a private HTTP or file app through the gateway",
+      "flags": [
+        {
+          "name": "allow-cross-origin",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Allow browser requests from other origins to this app"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "port",
+          "type": "int",
+          "default": "0",
+          "scope": "local",
+          "usage": "Stable TLS port; default is the lowest available port"
+        }
+      ],
+      "json_result_fields": {
+        "portal": {
+          "type": "object",
+          "description": "Portal configuration and verified gateway runtime evidence."
+        },
+        "routes": {
+          "type": "array",
+          "description": "App, stable TLS port, state, reason and exact URL when observed."
+        }
+      }
+    },
+    {
+      "path": "tslink portal route list",
+      "short": "List gateway routes and observed URLs",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "portal": {
+          "type": "object",
+          "description": "Portal configuration and verified gateway runtime evidence."
+        },
+        "routes": {
+          "type": "array",
+          "description": "App, stable TLS port, state, reason and exact URL when observed."
+        }
+      }
+    },
+    {
+      "path": "tslink portal route remove",
+      "short": "Remove a route while keeping the app's own node",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "portal": {
+          "type": "object",
+          "description": "Portal configuration and verified gateway runtime evidence."
+        },
+        "routes": {
+          "type": "array",
+          "description": "App, stable TLS port, state, reason and exact URL when observed."
         }
       }
     },

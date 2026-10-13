@@ -15,10 +15,13 @@ import (
 )
 
 type portalArguments struct {
-	Hostname string   `json:"hostname,omitempty"`
-	Owner    string   `json:"owner"`
-	Admins   []string `json:"admins,omitempty"`
-	Funnel   bool     `json:"funnel,omitempty"`
+	Gateway      bool     `json:"-"`
+	GatewayPorts string   `json:"-"`
+	GatewayTag   string   `json:"-"`
+	Hostname     string   `json:"hostname,omitempty"`
+	Owner        string   `json:"owner"`
+	Admins       []string `json:"admins,omitempty"`
+	Funnel       bool     `json:"funnel,omitempty"`
 }
 
 // portalView never promotes old, stopped or registry-mismatched runtime URLs.
@@ -28,6 +31,7 @@ func portalView(reg *registry.Registry, snapshot *tsRuntime.Snapshot, exact bool
 		return view
 	}
 	view.Enabled, view.Hostname = reg.Portal.Enabled, reg.Portal.Hostname
+	view.Gateway = configuredGatewayView(reg)
 	if !view.Enabled {
 		return view
 	}
@@ -36,6 +40,14 @@ func portalView(reg *registry.Registry, snapshot *tsRuntime.Snapshot, exact bool
 		view = snapshot.Portal
 		if view.State != "running" {
 			view.URL = ""
+			if view.Gateway != nil {
+				copy := *view.Gateway
+				copy.Routes = append([]tsRuntime.GatewayRouteState(nil), copy.Routes...)
+				for i := range copy.Routes {
+					copy.Routes[i].URL = ""
+				}
+				view.Gateway = &copy
+			}
 		}
 	}
 	return view
@@ -95,7 +107,11 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 				return tsRuntime.PortalState{}, output.ErrConflict("portal hostname is already used by the MCP node")
 			}
 		}
-		if err := registry.SetPortalAuthorized(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: args.Hostname, Owner: args.Owner, Admins: args.Admins}, func(reg *registry.Registry) error {
+		gateway, err := parseGatewayArguments(args)
+		if err != nil {
+			return tsRuntime.PortalState{}, err
+		}
+		if err := registry.SetPortalAuthorized(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: args.Hostname, Owner: args.Owner, Admins: args.Admins, Gateway: gateway}, func(reg *registry.Registry) error {
 			return requireRequestOwnerInRegistry(ctx, reg)
 		}, ctx); err != nil {
 			return tsRuntime.PortalState{}, err
@@ -143,6 +159,9 @@ func newPortalCmd() *cobra.Command {
 	enable.Flags().StringVar(&args.Owner, "owner", "", "Owner's verified Tailscale login (required)")
 	enable.Flags().StringSliceVar(&args.Admins, "admins", nil, "Additional administrator logins; these identities can open every private app")
 	enable.Flags().BoolVar(&args.Funnel, "funnel", false, "Refused: the portal must stay Tailnet-only")
+	enable.Flags().BoolVar(&args.Gateway, "gateway", false, "Use one persistent portal node for routed apps")
+	enable.Flags().StringVar(&args.GatewayPorts, "gateway-ports", "", "Gateway TLS port range (default 8443-8499; requires --gateway)")
+	enable.Flags().StringVar(&args.GatewayTag, "gateway-tag", "", "Gateway tag on the credentialed path (requires --gateway)")
 	disable := &cobra.Command{Use: "disable", Short: "Stop the portal without changing app services", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		paths, err := resolveSharePaths()
 		if err != nil {
@@ -159,7 +178,7 @@ func newPortalCmd() *cobra.Command {
 		}
 		return nil
 	}}
-	group.AddCommand(enable, disable)
+	group.AddCommand(enable, disable, newPortalRouteCmd())
 	return group
 }
 
