@@ -62,7 +62,12 @@ func (n *gatewayFakeNode) ListenTLS(_ string, addr string) (net.Listener, error)
 	if err != nil {
 		return nil, err
 	}
-	ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{n.cert}, MinVersion: tls.VersionTLS12})
+	ln = tls.NewListener(ln, &tls.Config{GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if hello.ServerName != "home.tailnet.ts.net" {
+			return nil, errors.New("unknown SNI")
+		}
+		return &n.cert, nil
+	}, MinVersion: tls.VersionTLS12})
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	select {
@@ -71,6 +76,11 @@ func (n *gatewayFakeNode) ListenTLS(_ string, addr string) (net.Listener, error)
 		return nil, net.ErrClosed
 	default:
 	}
+	if n.ports[addr] != nil {
+		_ = ln.Close()
+		return nil, errors.New("tsnet: listener already open")
+	}
+	ln = &gatewayFakeListener{Listener: ln, node: n, port: addr}
 	n.ports[addr] = ln
 	return ln, nil
 }
@@ -79,8 +89,12 @@ func (n *gatewayFakeNode) Close() error {
 		close(n.stop)
 		n.closeCount.Add(1)
 		n.mu.Lock()
-		defer n.mu.Unlock()
+		listeners := make([]net.Listener, 0, len(n.ports))
 		for _, ln := range n.ports {
+			listeners = append(listeners, ln)
+		}
+		n.mu.Unlock()
+		for _, ln := range listeners {
 			_ = ln.Close()
 		}
 	})
@@ -113,20 +127,21 @@ func (w *gatewayEvents) all() []accesslog.Event {
 }
 
 type gatewayFixture struct {
-	s         *Server
-	node      *gatewayFakeNode
-	path      string
-	config    *registry.PortalConfig
-	pool      *x509.CertPool
-	who       atomic.Pointer[apitype.WhoIsResponse]
-	calls     atomic.Int64
-	now       atomic.Int64
-	backend   [2]atomic.Int64
-	seen      chan *http.Request
-	events    gatewayEvents
-	factories atomic.Int64
-	stallWho  atomic.Bool
-	keys      []registry.Service
+	s           *Server
+	node        *gatewayFakeNode
+	path        string
+	config      *registry.PortalConfig
+	pool        *x509.CertPool
+	who         atomic.Pointer[apitype.WhoIsResponse]
+	calls       atomic.Int64
+	whoByRemote sync.Map
+	now         atomic.Int64
+	backend     [2]atomic.Int64
+	seen        chan *http.Request
+	events      gatewayEvents
+	factories   atomic.Int64
+	stallWho    atomic.Bool
+	keys        []registry.Service
 }
 
 func newGatewayFixture(t *testing.T, setup func(*gatewayFixture)) *gatewayFixture {
@@ -179,7 +194,7 @@ func newGatewayFixture(t *testing.T, setup func(*gatewayFixture)) *gatewayFixtur
 	if _, err := registry.ChangePerson(f.path, "alice", []string{"photos"}, nil, true, false); err != nil {
 		t.Fatal(err)
 	}
-	cert, pool := authorityTLS(t)
+	cert, pool := gatewayTLSCertificate(t)
 	f.pool = pool
 	lc := &LocalClient{OmitAuth: true, Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		f.calls.Add(1)
@@ -187,7 +202,11 @@ func newGatewayFixture(t *testing.T, setup func(*gatewayFixture)) *gatewayFixtur
 			<-r.Context().Done()
 			return nil, r.Context().Err()
 		}
-		body, _ := json.Marshal(f.who.Load())
+		who := f.who.Load()
+		if peer, ok := f.whoByRemote.Load(r.URL.Query().Get("addr")); ok {
+			who = peer.(*apitype.WhoIsResponse)
+		}
+		body, _ := json.Marshal(who)
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body)))}, nil
 	})}
 	f.node = &gatewayFakeNode{fakeTSNetServer: fakeTSNetServer{localClient: lc, certDomains: []string{"home.tailnet.ts.net"}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{ID: "gateway-node-1", DNSName: "home.tailnet.ts.net."}}}, ports: map[string]net.Listener{}, fail: map[string]bool{}, stall: map[string]chan struct{}{}, cert: cert, stop: make(chan struct{})}
@@ -238,7 +257,7 @@ func (f *gatewayFixture) waitRoute(t *testing.T, app, state string) tsRuntime.Ga
 }
 func (f *gatewayFixture) client(t *testing.T) *http.Client {
 	t.Helper()
-	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.pool, ServerName: "home.tailnet.ts.net", MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		_, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
@@ -281,9 +300,9 @@ func TestGatewayTLSGateAndPerRequestRevocation(t *testing.T) {
 	}
 	_ = c.SetDeadline(time.Now().Add(7 * time.Second))
 	// A TLS ClientHello makes bypassing the gate observable as server TLS bytes.
-	tlsC := tls.Client(c, &tls.Config{RootCAs: f.pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12})
-	if err := tlsC.Handshake(); err == nil {
-		t.Fatal("stranger completed TLS")
+	tlsC := tls.Client(c, &tls.Config{RootCAs: f.pool, ServerName: "home.tailnet.ts.net", MinVersion: tls.VersionTLS12})
+	if err := tlsC.Handshake(); !errors.Is(err, io.EOF) {
+		t.Fatalf("stranger handshake must end with EOF, got %v", err)
 	}
 	_ = c.Close()
 	if f.backend[0].Load() != 0 {
@@ -292,7 +311,7 @@ func TestGatewayTLSGateAndPerRequestRevocation(t *testing.T) {
 	f.who.Store(whoIsUser("alice", "laptop"))
 	client := f.client(t)
 	code, body, _ := gatewayGet(t, client, "8444", "/", map[string]string{"Accept": "text/html"})
-	if code != 403 || !strings.Contains(body, "You do not have access to payroll") || !strings.Contains(body, "https://home.tailnet.ts.net") {
+	if code != 403 || (!strings.Contains(body, "You do not have access to this app") || strings.Contains(body, "payroll")) || !strings.Contains(body, "https://home.tailnet.ts.net") {
 		t.Fatalf("known visitor deny: %d %s", code, body)
 	}
 	if f.backend[1].Load() != 0 {
@@ -385,7 +404,7 @@ func TestGatewayOriginHygieneAndFixedTarget(t *testing.T) {
 	}
 	// Absolute-form requests and CONNECT are refused by the real HTTP parser/gate.
 	for _, line := range []string{"GET http://127.0.0.1:1/ HTTP/1.1", "CONNECT 127.0.0.1:1 HTTP/1.1"} {
-		conn, err := tls.Dial("tcp", f.node.addr("8443"), &tls.Config{RootCAs: f.pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12})
+		conn, err := tls.Dial("tcp", f.node.addr("8443"), &tls.Config{RootCAs: f.pool, ServerName: "home.tailnet.ts.net", MinVersion: tls.VersionTLS12})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -478,4 +497,20 @@ func TestGatewayListenerFailureIsolation(t *testing.T) {
 	if code != 200 || body != "photos" || f.node.closeCount.Load() != 0 {
 		t.Fatal("one listener failure closed node")
 	}
+}
+
+type gatewayFakeListener struct {
+	net.Listener
+	node *gatewayFakeNode
+	port string
+}
+
+func (ln *gatewayFakeListener) Close() error {
+	err := ln.Listener.Close()
+	ln.node.mu.Lock()
+	if ln.node.ports[ln.port] == ln {
+		delete(ln.node.ports, ln.port)
+	}
+	ln.node.mu.Unlock()
+	return err
 }

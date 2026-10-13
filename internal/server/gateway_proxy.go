@@ -85,17 +85,7 @@ func rewriteGatewayResponse(r *http.Response, target *url.URL, authority string)
 	values := r.Header.Values("Refresh")
 	r.Header.Del("Refresh")
 	for _, value := range values {
-		delay, rest, ok := strings.Cut(value, ";")
-		key, dest, eq := strings.Cut(strings.TrimSpace(rest), "=")
-		if ok && eq && strings.EqualFold(strings.TrimSpace(key), "url") {
-			dest = strings.TrimSpace(dest)
-			quote := ""
-			if len(dest) >= 2 && (dest[0] == '\'' || dest[0] == '"') && dest[len(dest)-1] == dest[0] {
-				quote = dest[:1]
-				dest = dest[1 : len(dest)-1]
-			}
-			value = delay + "; url=" + quote + rewriteGatewayURL(dest, target, authority) + quote
-		}
+		value = rewriteGatewayRefresh(value, target, authority)
 		r.Header.Add("Refresh", value)
 	}
 	values = r.Header.Values("Set-Cookie")
@@ -106,4 +96,62 @@ func rewriteGatewayResponse(r *http.Response, target *url.URL, authority string)
 			r.Header.Add("Set-Cookie", v)
 		}
 	}
+}
+
+// Follows the HTML shared declarative refresh parsing steps (2026-10-13):
+// https://html.spec.whatwg.org/multipage/semantics.html#shared-declarative-refresh-steps
+// Keep the original spelling and suffix, replacing only the parsed URL.
+func rewriteGatewayRefresh(value string, target *url.URL, authority string) string {
+	space := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' }
+	i := 0
+	skip := func() {
+		for i < len(value) && space(value[i]) {
+			i++
+		}
+	}
+	skip()
+	start := i
+	for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+		i++
+	}
+	if i == start && (i == len(value) || value[i] != '.') {
+		return value
+	}
+	for i < len(value) && ((value[i] >= '0' && value[i] <= '9') || value[i] == '.') {
+		i++
+	}
+	if i == len(value) {
+		return value
+	}
+	if value[i] != ';' && value[i] != ',' && !space(value[i]) {
+		return value
+	}
+	skip()
+	if i < len(value) && (value[i] == ';' || value[i] == ',') {
+		i++
+	}
+	skip()
+	start = i
+	if i+3 <= len(value) && strings.EqualFold(value[i:i+3], "url") {
+		i += 3
+		skip()
+		if i < len(value) && value[i] == '=' {
+			i++
+			skip()
+			start = i
+		} else {
+			i = start
+		}
+	}
+	end := len(value)
+	if i < len(value) && (value[i] == '\'' || value[i] == '"') {
+		quote := value[i]
+		i++
+		start = i
+		if j := strings.IndexByte(value[i:], quote); j >= 0 {
+			end = i + j
+		}
+	}
+	dest := value[start:end]
+	return value[:start] + rewriteGatewayURL(dest, target, authority) + value[end:]
 }

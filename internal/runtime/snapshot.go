@@ -94,6 +94,7 @@ type PortalState struct {
 }
 
 type GatewayState struct {
+	Dropped         uint64                `json:"dropped"`
 	Enabled         bool                  `json:"enabled"`
 	Persistent      bool                  `json:"persistent"`
 	Tagged          bool                  `json:"tagged"`

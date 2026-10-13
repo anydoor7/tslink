@@ -126,7 +126,7 @@ func TestGatewayConcurrentReloadAndPartialInput(t *testing.T) {
 	}
 	f.s.syncPortal(context.Background(), f.config)
 	f.waitRoute(t, "photos", "running")
-	conn, err := tls.Dial("tcp", f.node.addr("8443"), &tls.Config{RootCAs: f.pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12})
+	conn, err := tls.Dial("tcp", f.node.addr("8443"), &tls.Config{RootCAs: f.pool, ServerName: "home.tailnet.ts.net", MinVersion: tls.VersionTLS12})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestGatewayConnectionIdentityTable(t *testing.T) {
 			who.Node = &tailcfg.Node{Tags: tc.tags}
 			f.who.Store(who)
 			for _, port := range []string{"443", "8443", "8444"} {
-				c, err := tls.DialWithDialer(&net.Dialer{Timeout: testwait.Budget(t)}, "tcp", f.node.addr(port), &tls.Config{RootCAs: f.pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12})
+				c, err := tls.DialWithDialer(&net.Dialer{Timeout: testwait.Budget(t)}, "tcp", f.node.addr(port), &tls.Config{RootCAs: f.pool, ServerName: "home.tailnet.ts.net", MinVersion: tls.VersionTLS12})
 				if c != nil {
 					c.Close()
 				}

@@ -55,7 +55,6 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 	}
 	if options.Gateway != nil {
 		transport.TLSHandshakeTimeout = 10 * time.Second
-		transport.ResponseHeaderTimeout = 30 * time.Second
 	}
 
 	proxy := &httputil.ReverseProxy{
@@ -141,6 +140,10 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				return
 			}
 			if options.Gateway != nil {
+				if r.Context().Err() != nil {
+					accessDeny(r, "client_cancelled")
+					return
+				}
 				accessDeny(r, "upstream_down")
 				if options.Gateway.Observe != nil {
 					options.Gateway.Observe(false)

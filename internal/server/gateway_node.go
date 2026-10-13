@@ -115,13 +115,17 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 		return
 	}
 	reg, issues, err := registry.PortalPreflight(filepath.Join(s.cfgDir, "registry.json"))
-	if err != nil || len(issues) > 0 {
+	if err != nil {
 		run.closeRoutes()
 		return
 	}
 	wanted := map[string]registry.Service{}
+	invalid := map[string]bool{}
+	for _, issue := range issues {
+		invalid[issue.Name] = true
+	}
 	for _, svc := range reg.Services {
-		if svc.PortalRoute != nil {
+		if svc.PortalRoute != nil && !invalid[svc.Name] {
 			wanted[svc.Name] = svc
 		}
 	}
@@ -175,7 +179,7 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 		return
 	}
 	authority := net.JoinHostPort(host, strconv.Itoa(svc.PortalRoute.Port))
-	gate := &gatewayGate{path: filepath.Join(s.cfgDir, "registry.json"), svc: svc, lc: run.lc, now: run.now, authority: authority, dashboard: "https://" + host, writer: s.accessWriter, expire: registry.TryExpirePeople}
+	gate := &gatewayGate{path: filepath.Join(s.cfgDir, "registry.json"), svc: svc, lc: run.lc, now: run.now, authority: authority, dashboard: "https://" + host, writer: s.accessWriter, expire: registry.TryExpirePeople, totalDropped: &run.dropped}
 	var handler http.Handler
 	var closer io.Closer
 	var err error

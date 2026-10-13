@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -18,6 +19,7 @@ import (
 )
 
 type portalRun struct {
+	dropped     atomic.Uint64
 	routesMu    sync.Mutex
 	routes      map[string]*gatewayRouteRun
 	routesWG    sync.WaitGroup
@@ -195,7 +197,7 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 		return state, err
 	}
 	if gateway {
-		gate := &gatewayGate{path: filepath.Join(s.cfgDir, "registry.json"), svc: svc, lc: lc, now: now, writer: s.accessWriter}
+		gate := &gatewayGate{path: filepath.Join(s.cfgDir, "registry.json"), svc: svc, lc: lc, now: now, writer: s.accessWriter, totalDropped: &run.dropped}
 		ln = newGatewayListener(ctx, ln, gate)
 	}
 	node.listener = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
@@ -278,6 +280,7 @@ func (s *Server) refreshPortalURLLocked() {
 		if s.portalState.Gateway != nil {
 			copy := *s.portalState.Gateway
 			copy.Routes = s.portalRun.routeStates()
+			copy.Dropped = s.portalRun.dropped.Load()
 			s.portalState.Gateway = &copy
 		}
 	}

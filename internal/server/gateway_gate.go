@@ -22,17 +22,18 @@ import (
 type gatewayWhoKey struct{}
 
 type gatewayGate struct {
-	path      string
-	svc       registry.Service // no route denotes the dashboard connection gate
-	lc        *LocalClient
-	now       func() time.Time
-	authority string
-	dashboard string
-	writer    accesslog.Writer
-	expire    func(string, time.Time) (bool, error)
-	dropped   atomic.Uint64
-	mu        sync.Mutex
-	lastDrop  time.Time
+	path         string
+	svc          registry.Service // no route denotes the dashboard connection gate
+	lc           *LocalClient
+	now          func() time.Time
+	authority    string
+	dashboard    string
+	writer       accesslog.Writer
+	expire       func(string, time.Time) (bool, error)
+	dropped      atomic.Uint64
+	totalDropped *atomic.Uint64
+	mu           sync.Mutex
+	lastDrop     time.Time
 }
 
 func (g *gatewayGate) who(ctx context.Context, remote string) *apitype.WhoIsResponse {
@@ -60,7 +61,12 @@ func (g *gatewayGate) registry() (*registry.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(issues) > 0 || reg.Portal == nil || !reg.Portal.Enabled || reg.Portal.Gateway == nil || !reg.Portal.Gateway.Enabled {
+	for _, issue := range issues {
+		if g.svc.PortalRoute != nil && issue.Name == g.svc.Name {
+			return nil, issue.Err
+		}
+	}
+	if reg.Portal == nil || !reg.Portal.Enabled || reg.Portal.Gateway == nil || !reg.Portal.Gateway.Enabled {
 		return nil, registry.CodedError{Code: "registry_unavailable", Message: "gateway registry unavailable"}
 	}
 	return reg, nil
@@ -83,8 +89,15 @@ func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
 	if allowed, _, admin := privateAppAccessAt(reg, role, who.UserProfile.LoginName, tags, g.now()); allowed && admin {
 		return true
 	}
+	dashboard := g.svc.PortalRoute == nil
+	_, canRequest := requestVisitor(reg, who)
 	for _, svc := range reg.Services {
-		if svc.PortalRoute != nil && AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, g.now()).Allowed {
+		decision := AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, g.now())
+		if dashboard {
+			if decision.DirectoryVisible || (canRequest && svc.Requestable) {
+				return true
+			}
+		} else if svc.PortalRoute != nil && decision.Allowed {
 			return true
 		}
 	}
@@ -93,6 +106,9 @@ func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
 
 func (g *gatewayGate) drop(remote string) {
 	g.dropped.Add(1)
+	if g.totalDropped != nil {
+		g.totalDropped.Add(1)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
@@ -101,38 +117,87 @@ func (g *gatewayGate) drop(remote string) {
 	}
 	g.lastDrop = now
 	if g.writer != nil {
-		g.writer.Record(accesslog.Event{Time: now.UTC(), Kind: "tcp_open", App: g.svc.Name, Via: "portal", Decision: "denied", Reason: "conn_gate_drop", Identity: accesslog.Identity{Remote: accesslog.CoarseRemote(remote)}})
+		app := g.svc.Name
+		if g.svc.PortalRoute == nil {
+			app = "@portal"
+		}
+		g.writer.Record(accesslog.Event{Time: now.UTC(), Kind: "tcp_open", App: app, Via: "portal", Decision: "denied", Reason: "conn_gate_drop", Identity: accesslog.Identity{Remote: accesslog.CoarseRemote(remote)}})
 	}
 }
+
+// Admission is bounded independently of HTTP serving. A stalled WhoIs cannot
+// serialize other peers; overload is closed without starting TLS.
+const gatewayAdmissionLimit = 64
 
 type gatewayListener struct {
 	net.Listener
 	gate   *gatewayGate
 	ctx    context.Context
 	cancel context.CancelFunc
+	ready  chan net.Conn
+	done   chan struct{}
+	err    error // published by closing done
 }
 
 func newGatewayListener(ctx context.Context, ln net.Listener, gate *gatewayGate) *gatewayListener {
 	ctx, cancel := context.WithCancel(ctx)
-	return &gatewayListener{Listener: ln, gate: gate, ctx: ctx, cancel: cancel}
+	l := &gatewayListener{Listener: ln, gate: gate, ctx: ctx, cancel: cancel, ready: make(chan net.Conn), done: make(chan struct{})}
+	go l.admissions()
+	return l
 }
-func (l *gatewayListener) Accept() (net.Conn, error) {
+
+func (l *gatewayListener) admissions() {
+	var workers sync.WaitGroup
+	defer close(l.done)
+	defer workers.Wait()
+	defer l.cancel()
+	slots := make(chan struct{}, gatewayAdmissionLimit)
 	for {
 		c, err := l.Listener.Accept()
 		if err != nil {
-			return nil, err
+			l.err = err
+			return
 		}
-		if l.gate.admit(l.ctx, c.RemoteAddr().String()) && l.ctx.Err() == nil {
-			return c, nil
+		select {
+		case slots <- struct{}{}:
+		default:
+			l.gate.drop(c.RemoteAddr().String())
+			_ = c.Close()
+			continue
 		}
-		l.gate.drop(c.RemoteAddr().String())
-		_ = c.Close()
-		if l.ctx.Err() != nil {
-			return nil, net.ErrClosed
-		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			defer func() { <-slots }()
+			if l.gate.admit(l.ctx, c.RemoteAddr().String()) && l.ctx.Err() == nil {
+				select {
+				case l.ready <- c:
+					return
+				case <-l.ctx.Done():
+				}
+			}
+			l.gate.drop(c.RemoteAddr().String())
+			_ = c.Close()
+		}()
 	}
 }
-func (l *gatewayListener) Close() error { l.cancel(); return l.Listener.Close() }
+
+func (l *gatewayListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.ready:
+		return c, nil
+	case <-l.done:
+		return nil, l.err
+	case <-l.ctx.Done():
+		return nil, net.ErrClosed
+	}
+}
+func (l *gatewayListener) Close() error {
+	l.cancel()
+	err := l.Listener.Close()
+	<-l.done
+	return err
+}
 
 func gatewaySameOrigin(r *http.Request, origin string) bool {
 	if len(r.Header.Values("Origin")) > 1 || len(r.Header.Values("Sec-Fetch-Site")) > 1 || len(r.Header.Values("Sec-Fetch-Mode")) > 1 {
@@ -243,9 +308,14 @@ func sameGatewayTarget(a, b registry.Service) bool {
 
 func (g *gatewayGate) handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		visible := false
 		deny := func(reason string, requestable bool) {
 			accessDeny(r, reason)
-			gatewayErrorPage(w, r, 403, reason, "You do not have access to "+g.svc.Name, g.dashboard, requestable)
+			message := gatewayDenyMessage(reason)
+			if (visible || requestable) && (reason == "no_grant" || reason == "expired" || reason == "revoked") {
+				message += ": " + g.svc.Name
+			}
+			gatewayErrorPage(w, r, 403, reason, message, g.dashboard, requestable)
 		}
 		who := g.who(r.Context(), r.RemoteAddr)
 		if who == nil {
@@ -286,10 +356,17 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 			}
 		}
 		if current == nil || current.PortalRoute == nil || !current.PeopleScoped || !sameGatewayTarget(g.svc, *current) {
-			deny("no_grant", false)
+			deny("route_changed", false)
 			return
 		}
-		allowed := AppAccessDecisionAt(reg, *current, who.UserProfile.LoginName, gatewayTags(who), now).Allowed
+		decision := AppAccessDecisionAt(reg, *current, who.UserProfile.LoginName, gatewayTags(who), now)
+		allowed := decision.Allowed
+		visible = decision.DirectoryVisible
+		grant, _ := personDecision(reg, *current, who.UserProfile.LoginName, gatewayTags(who), now)
+		if _, authoritative := registry.PeopleAccessAt(reg, *current, who.UserProfile.LoginName, gatewayTags(who), now); !authoritative {
+			grant = matchedLegacy(who.UserProfile.LoginName, gatewayTags(who), current.AllowedUsers)
+		}
+		accessAttest(r, who, grant)
 		reason := gatewayDecisionReason(reg, *current, who, now, allowed)
 		if !allowed {
 			deny(reason, current.Requestable)
@@ -310,4 +387,23 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), gatewayWhoKey{}, who)))
 	})
+}
+
+func gatewayDenyMessage(reason string) string {
+	switch reason {
+	case "whois_failed":
+		return "Unable to identify this connection"
+	case "registry_unavailable":
+		return "Access policy is temporarily unavailable"
+	case "cross_origin_blocked":
+		return "Cross-origin request blocked"
+	case "route_changed":
+		return "This route is being reconfigured"
+	case "expired":
+		return "Your access has expired"
+	case "revoked":
+		return "Your access has been revoked"
+	default:
+		return "You do not have access to this app"
+	}
 }
