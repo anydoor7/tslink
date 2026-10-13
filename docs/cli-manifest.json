@@ -3846,10 +3846,6 @@
       "exit_code": 4,
       "description": "a credentialed daemon refuses to send an auth key minted through the Tailscale API to a control server that is not Tailscale's; the service is not started"
     },
-    "cross_origin_blocked": {
-      "exit_code": 3,
-      "description": "gateway browser request is not same-origin"
-    },
     "daemon_not_running": {
       "exit_code": 1,
       "description": "the command needs the TSLink daemon and it is not running; next says how to install and start it"
@@ -3865,10 +3861,6 @@
     "enrollment_required": {
       "exit_code": 3,
       "description": "the node is waiting for interactive Tailscale authorization; next carries the authorization URL to open"
-    },
-    "expired": {
-      "exit_code": 3,
-      "description": "caller app grant expired"
     },
     "funnel_allow_conflict": {
       "exit_code": 4,
@@ -3897,18 +3889,6 @@
     "funnel_type_conflict": {
       "exit_code": 4,
       "description": "Funnel requires a proxy service"
-    },
-    "gateway_ephemeral_refused": {
-      "exit_code": 1,
-      "description": "gateway nodes must be persistent"
-    },
-    "gateway_hostname_unavailable": {
-      "exit_code": 1,
-      "description": "gateway canonical hostname is not known"
-    },
-    "gateway_node_identity_changed": {
-      "exit_code": 1,
-      "description": "gateway NodeID changed since ownership was recorded"
     },
     "gateway_ports_invalid": {
       "exit_code": 2,
@@ -4058,10 +4038,6 @@
       "exit_code": 3,
       "description": "MCP identity scope refuses this app, tool, duration or expired binding"
     },
-    "no_grant": {
-      "exit_code": 3,
-      "description": "caller has no active app grant"
-    },
     "not_found": {
       "exit_code": 5,
       "description": "requested object was not found"
@@ -4162,18 +4138,6 @@
       "exit_code": 1,
       "description": "access denied because current registry state cannot be read or expiry persisted"
     },
-    "remote_upstream_unavailable": {
-      "exit_code": 1,
-      "description": "tailnet upstream routing is not enabled in this release"
-    },
-    "revoked": {
-      "exit_code": 3,
-      "description": "caller access was revoked"
-    },
-    "route_listener_failed": {
-      "exit_code": 1,
-      "description": "gateway route TLS listener failed"
-    },
     "runtime_snapshot_missing": {
       "exit_code": 1,
       "description": "no runtime snapshot (runtime.json) is available, so exact runtime endpoints cannot be proven"
@@ -4198,14 +4162,6 @@
       "exit_code": 2,
       "description": "configuration key is not supported"
     },
-    "upstream_down": {
-      "exit_code": 1,
-      "description": "app upstream could not be reached"
-    },
-    "upstream_unreachable": {
-      "exit_code": 1,
-      "description": "app upstream probe failed"
-    },
     "url_not_ready": {
       "exit_code": 5,
       "description": "runtime has not reported an exact tailnet hostname"
@@ -4213,10 +4169,6 @@
     "usage_error": {
       "exit_code": 2,
       "description": "invalid command syntax or value"
-    },
-    "whois_failed": {
-      "exit_code": 3,
-      "description": "access denied because caller identity could not be verified"
     }
   }
 }

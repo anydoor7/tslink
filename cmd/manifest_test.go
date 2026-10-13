@@ -568,6 +568,20 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"gateway_ports_invalid":                 registry.ValidateGatewayConfig(&registry.GatewayConfig{}),
+		"gateway_required":                      registry.CodedError{Code: "gateway_required", Message: "gateway required"},
+		"portal_only_required":                  registry.CodedError{Code: "portal_only_required", Message: "portal port requires portal-only"},
+		"portal_only_requires_route":            registry.CodedError{Code: "portal_only_requires_route", Message: "portal-only requires route"},
+		"portal_route_type_unsupported":         registry.CodedError{Code: "portal_route_type_unsupported", Message: "unsupported route type"},
+		"portal_route_funnel_refused":           registry.CodedError{Code: "portal_route_funnel_refused", Message: "public app refused"},
+		"portal_route_guest_refused":            registry.CodedError{Code: "portal_route_guest_refused", Message: "guest-gated app refused"},
+		"portal_route_requires_scope":           registry.CodedError{Code: "portal_route_requires_scope", Message: "routed app requires scope"},
+		"portal_route_bad_port":                 registry.CodedError{Code: "portal_route_bad_port", Message: "browser-blocked port"},
+		"portal_route_port_range":               registry.CodedError{Code: "portal_route_port_range", Message: "port outside range"},
+		"portal_route_port_conflict":            registry.CodedError{Code: "portal_route_port_conflict", Message: "port already assigned"},
+		"portal_route_ports_exhausted":          registry.CodedError{Code: "portal_route_ports_exhausted", Message: "no free ports"},
+		"portal_upstream_invalid":               registry.CodedError{Code: "portal_upstream_invalid", Message: "invalid upstream"},
+		"registry_unavailable":                  registry.CodedError{Code: "registry_unavailable", Message: "registry unreadable"},
 		"access_request_busy":                   registry.CodedError{Code: "access_request_busy", Message: "request writer busy"},
 		"access_request_capacity":               registry.CodedError{Code: "access_request_capacity", Message: "bounded inbox full"},
 		"access_request_decided":                registry.CodedError{Code: "access_request_decided", Message: "request already decided"},
@@ -1019,9 +1033,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// Keep a bounded budget for the combined command tree.
 	// QR flags, the request commands and seven request codes bring the complete
 	// compact contract past 5000 bytes with scopes, guests and audit.
-	// Preserve every merged command and error code within a 5500-byte budget.
-	if len(data) >= 5500 {
-		t.Fatalf("compact manifest = %d bytes, want < 5500", len(data))
+	// Gateway routes add three commands, seven flags and fourteen error codes.
+	// Preserve the complete contract within a fixed 6000-byte budget.
+	if len(data) >= 6000 {
+		t.Fatalf("compact manifest = %d bytes, want < 6000", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

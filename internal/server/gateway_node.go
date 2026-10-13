@@ -237,7 +237,7 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 	r.http, r.listener, r.closer = srv, ln, closer
 	r.mu.Unlock()
 	s.setGatewayRouteState(run, r, "running", "", "https://"+authority+"/")
-	err = srv.Serve(ln)
+	_ = srv.Serve(ln)
 	if r.ctx.Err() == nil {
 		fail("route_listener_failed")
 	}
