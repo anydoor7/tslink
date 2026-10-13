@@ -13,11 +13,12 @@ const CodePortalFunnelRefused = "portal_funnel_refused"
 // service listener, cleanup, health probing or service-state directories.
 // Owner and Admins are explicit administrative identities for app access.
 type PortalConfig struct {
-	Enabled  bool     `json:"enabled"`
-	Hostname string   `json:"hostname"`
-	Owner    string   `json:"owner"`
-	Admins   []string `json:"admins,omitempty"`
-	Funnel   bool     `json:"funnel,omitempty"`
+	Enabled  bool           `json:"enabled"`
+	Hostname string         `json:"hostname"`
+	Owner    string         `json:"owner"`
+	Admins   []string       `json:"admins,omitempty"`
+	Funnel   bool           `json:"funnel,omitempty"`
+	Gateway  *GatewayConfig `json:"gateway,omitempty"`
 }
 
 func portalConflict(name string) error {
@@ -30,6 +31,9 @@ func ValidatePortal(p *PortalConfig) error {
 	}
 	if p.Funnel {
 		return CodedError{Code: CodePortalFunnelRefused, Message: "the portal is Tailnet-only and cannot use Funnel"}
+	}
+	if err := ValidateGatewayConfig(p.Gateway); err != nil {
+		return err
 	}
 	if err := ValidateName(p.Hostname); err != nil {
 		return err

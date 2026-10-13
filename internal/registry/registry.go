@@ -35,6 +35,7 @@ const (
 
 	LegacyRegistrySchemaVersion  = 1
 	CurrentRegistrySchemaVersion = 2
+	GatewayRegistrySchemaVersion = 3
 
 	maxTagLength = 63
 
@@ -490,10 +491,13 @@ var (
 )
 
 type Service struct {
-	RestartGeneration uint64 `json:"restart_generation,omitempty"`
-	Name              string `json:"name"`
-	Type              string `json:"type"`
-	Target            string `json:"target,omitempty"`
+	PortalRoute       *PortalRoute `json:"portal_route,omitempty"`
+	PortalOnly        bool         `json:"portal_only,omitempty"`
+	Upstream          string       `json:"upstream,omitempty"`
+	RestartGeneration uint64       `json:"restart_generation,omitempty"`
+	Name              string       `json:"name"`
+	Type              string       `json:"type"`
+	Target            string       `json:"target,omitempty"`
 	// PreserveHost forwards the node's canonical external name as Host instead of the target's host.
 	// Absent or false retains the behaviour of existing services and templates.
 	AccessLogPathMode string        `json:"access_log_path_mode,omitempty"`
@@ -737,6 +741,9 @@ func ValidateControlURL(value string) error {
 }
 
 func ValidateService(svc Service) error {
+	if err := validateGatewayService(svc); err != nil {
+		return err
+	}
 	if svc.Requestable && !PeopleServiceSupported(svc) {
 		return CodedError{Code: "usage_error", Message: "requestable apps must be private HTTP/file services"}
 	}
@@ -1201,6 +1208,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		}
 		reg.Services = append(reg.Services, svc)
 	}
+	if err := ValidateGateway(reg); err != nil {
+		return nil, nil, err
+	}
 	return reg, issues, nil
 }
 
@@ -1387,7 +1397,7 @@ func migrate(reg *Registry) error {
 	}
 
 	switch version {
-	case LegacyRegistrySchemaVersion, CurrentRegistrySchemaVersion:
+	case LegacyRegistrySchemaVersion, CurrentRegistrySchemaVersion, GatewayRegistrySchemaVersion:
 		reg.SchemaVersion = version
 		return nil
 	default:
@@ -1470,6 +1480,9 @@ func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) e
 }
 
 func save(path string, reg *Registry) error {
+	if err := ValidateGateway(reg); err != nil {
+		return err
+	}
 	for _, svc := range reg.Services {
 		if e := guestServiceError(svc, reg.Guests); e != nil {
 			return e
@@ -1489,6 +1502,9 @@ func save(path string, reg *Registry) error {
 	}
 
 	pending := snapshotGuestUsage(path)
+	if hasGatewayFields(reg) {
+		reg.SchemaVersion = GatewayRegistrySchemaVersion
+	}
 	originalGuests := append([]GuestGrant(nil), reg.Guests...)
 	for i := range reg.Guests {
 		applyGuestUsage(&reg.Guests[i], pending[reg.Guests[i].ID])
@@ -1629,6 +1645,25 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		}
 		if reg.Portal != nil && svc.Name == reg.Portal.Hostname {
 			return portalConflict(svc.Name)
+		}
+		for _, existing := range reg.Services {
+			if existing.Name == svc.Name {
+				if svc.PortalRoute == nil {
+					svc.PortalRoute = existing.PortalRoute
+				}
+				svc.PortalOnly = svc.PortalOnly || existing.PortalOnly
+			}
+		}
+		if svc.PortalOnly && svc.PortalRoute == nil {
+			svc.PortalRoute = &PortalRoute{}
+		}
+		if svc.PortalRoute != nil {
+			route := *svc.PortalRoute
+			route.Port, err = AllocateGatewayPort(reg, svc.Name, route.Port)
+			if err != nil {
+				return err
+			}
+			svc.PortalRoute, svc.PeopleScoped = &route, true
 		}
 
 		for i, existing := range reg.Services {
