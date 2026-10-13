@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/tailcfg"
@@ -393,5 +394,132 @@ func TestGatewayPortalOnlyFileAndDashboard(t *testing.T) {
 	}
 	if f.factories.Load() != 1 || len(f.s.nodes) != 0 {
 		t.Fatalf("portal-only created app nodes: factories=%d nodes=%d", f.factories.Load(), len(f.s.nodes))
+	}
+}
+
+func TestGatewayOwnershipFailureAndRecovery(t *testing.T) {
+	for _, failure := range []string{"missing-id", "corrupt-ledger", "writer-busy", "lock-file-unwritable"} {
+		t.Run(failure, func(t *testing.T) {
+			f := newGatewayFixture(t, nil)
+			f.waitRoute(t, "photos", "running")
+			f.s.closePortal()
+			prior := f.node
+			resetNode := func() {
+				status := *prior.status
+				self := *status.Self
+				status.Self = &self
+				f.node = &gatewayFakeNode{fakeTSNetServer: fakeTSNetServer{localClient: prior.localClient, certDomains: prior.certDomains, status: &status}, ports: map[string]net.Listener{}, fail: map[string]bool{}, stall: map[string]chan struct{}{}, cert: prior.cert, stop: make(chan struct{})}
+			}
+			resetNode()
+			path := filepath.Join(filepath.Dir(f.path), "portal-nodes", "home", "ownership.json")
+			repair := func() {}
+			switch failure {
+			case "missing-id":
+				f.node.status.Self.ID = ""
+			case "corrupt-ledger":
+				before, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(`{"nodes":`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				repair = func() {
+					if err := os.WriteFile(path, before, 0600); err != nil {
+						t.Error(err)
+					}
+				}
+			case "writer-busy":
+				lock, err := os.OpenFile(path+".lock", os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ok, err := filelock.TryLock(lock); !ok || err != nil {
+					t.Fatal("lock control", ok, err)
+				}
+				var once sync.Once
+				repair = func() { once.Do(func() { _ = filelock.Unlock(lock); _ = lock.Close() }) }
+			case "lock-file-unwritable":
+				if err := os.Remove(path + ".lock"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path+".lock", 0700); err != nil {
+					t.Fatal(err)
+				}
+				repair = func() { _ = os.Remove(path + ".lock") }
+			}
+			t.Cleanup(repair)
+			f.s.syncPortal(context.Background(), f.config)
+			testwait.Recv(t, f.s.portalRun.done, "ownership refusal must not wait for a writer")
+			f.s.mu.Lock()
+			state := f.s.portalState
+			f.s.mu.Unlock()
+			if state.State != "failed" || len(f.node.ports) != 0 || f.node.closeCount.Load() != 1 || f.backend[0].Load() != 0 {
+				t.Fatalf("unproven gateway served: state=%+v ports=%d closes=%d requests=%d", state, len(f.node.ports), f.node.closeCount.Load(), f.backend[0].Load())
+			}
+			repair()
+			resetNode()
+			f.s.syncPortal(context.Background(), f.config)
+			testwait.Recv(t, f.s.portalRun.done, "repaired gateway startup")
+			f.waitRoute(t, "photos", "running")
+			code, _, _ := gatewayGet(t, f.client(t), "8443", "/", nil)
+			if code != 200 {
+				t.Fatal("repair control", code)
+			}
+		})
+	}
+}
+
+func TestGatewayUnreadableRegistryAndExpiryWriterContention(t *testing.T) {
+	f := newGatewayFixture(t, nil)
+	f.waitRoute(t, "photos", "running")
+	c := f.client(t)
+	deadline := time.Unix(0, f.now.Load()).Add(time.Hour)
+	if _, err := registry.ChangePerson(f.path, "alice", []string{"photos"}, &deadline, true, true); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := gatewayGet(t, c, "8443", "/", nil)
+	if code != 200 {
+		t.Fatal(code)
+	}
+	if err := os.Rename(f.path, f.path+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	code, body, _ := gatewayGet(t, c, "8443", "/", nil)
+	if code != 403 || !strings.Contains(body, "registry_unavailable") || f.backend[0].Load() != 1 {
+		t.Fatalf("unreadable registry: %d %s", code, body)
+	}
+	if err := os.Remove(f.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(f.path+".saved", f.path); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := filelock.TryLock(lock); !ok || err != nil {
+		t.Fatal("lock control", ok, err)
+	}
+	var once sync.Once
+	unlock := func() { once.Do(func() { _ = filelock.Unlock(lock); _ = lock.Close() }) }
+	t.Cleanup(unlock)
+	f.now.Add(int64(time.Hour))
+	code, body, _ = gatewayGet(t, c, "8443", "/", nil)
+	if code != 403 || !strings.Contains(body, "registry_unavailable") || f.backend[0].Load() != 1 {
+		t.Fatalf("busy expiry persistence: %d %s", code, body)
+	}
+	unlock()
+	code, body, _ = gatewayGet(t, c, "8443", "/", nil)
+	if code != 403 || !strings.Contains(body, "expired") || f.backend[0].Load() != 1 {
+		t.Fatalf("expiry recovery: %d %s", code, body)
+	}
+	reg, err := registry.Load(f.path)
+	if err != nil || !reg.People[0].Grants[0].Expired {
+		t.Fatal("expiry not persisted after unlock", err)
 	}
 }

@@ -73,21 +73,34 @@ func recordGatewayIdentity(dir string, cfg *registry.GatewayConfig, status *ipns
 	if status != nil && status.Self != nil {
 		view.Tagged = status.Self.Tags != nil && status.Self.Tags.Len() > 0
 	}
-	if view.NodeID == "" {
+	if view.NodeID == "" || len(view.NodeID) > 256 {
 		return view, fmt.Errorf("gateway node ownership unavailable")
 	}
 	path := filepath.Join(dir, "ownership.json")
-	ledger, err := tsRuntime.LoadOwnership(path)
+	acquired, err := tsRuntime.TryUpdateOwnership(path, func(ledger *tsRuntime.OwnershipLedger) (bool, error) {
+		found := false
+		for i, node := range ledger.Nodes {
+			if node.NodeID != view.NodeID {
+				view.IdentityChanged = true
+				continue
+			}
+			if node.ServiceName != "gateway" {
+				return false, fmt.Errorf("gateway ownership conflicts with another service")
+			}
+			ledger.Nodes[i].RecordedAt = now.UTC()
+			ledger.Nodes[i].RetiredAt = nil
+			found = true
+		}
+		if !found {
+			ledger.Nodes = append(ledger.Nodes, tsRuntime.OwnedNode{ServiceName: "gateway", NodeID: view.NodeID, RecordedAt: now.UTC()})
+		}
+		return true, nil
+	})
 	if err != nil {
 		return view, err
 	}
-	for _, node := range ledger.Nodes {
-		if node.NodeID != view.NodeID {
-			view.IdentityChanged = true
-		}
-	}
-	if err := tsRuntime.RecordOwnedNode(path, "gateway", view.NodeID, now); err != nil {
-		return view, err
+	if !acquired {
+		return view, fmt.Errorf("gateway ownership writer busy")
 	}
 	view.OwnershipProven = true
 	return view, nil
