@@ -66,7 +66,9 @@ func listPeopleDeviceInvites(ctx context.Context, client inviteAPI, target Devic
 		if err := ValidateInviteID(response.ID); err != nil {
 			return nil, err
 		}
-		invites = append(invites, deviceInvite(response, target.Service, response.Email, response.Email != ""))
+		inv := deviceInvite(response, target.Service, response.Email, response.Email != "")
+		inv.TargetKind = target.Kind
+		invites = append(invites, inv)
 	}
 	return invites, nil
 }

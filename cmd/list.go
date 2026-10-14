@@ -90,9 +90,10 @@ type ListServiceSummary struct {
 
 // ListResult holds the result for JSON output.
 type ListResult struct {
-	SchemaVersion int `json:"schema_version"`
-	Services      any `json:"services"`
-	Count         int `json:"count"`
+	Portal        tsruntime.PortalState `json:"portal"`
+	SchemaVersion int                   `json:"schema_version"`
+	Services      any                   `json:"services"`
+	Count         int                   `json:"count"`
 }
 
 // TailnetDeviceView is one row of `tslink list --tailnet`. It carries no node
@@ -277,7 +278,7 @@ func (s statusRead) loadListResultForPaths(ctx context.Context, regPath, pidPath
 	if err != nil {
 		return ListResult{}, err
 	}
-	result := ListResult{SchemaVersion: inspect.SchemaVersion, Count: len(services)}
+	result := ListResult{SchemaVersion: inspect.SchemaVersion, Count: len(services), Portal: status.Portal}
 	if opts.Verbose {
 		result.Services = services
 		return result, nil

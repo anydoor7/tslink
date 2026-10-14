@@ -57,6 +57,7 @@ var codeFallbackFunctions = map[string]int{
 	"github.com/anydoor7/tslink/cmd.peopleInviteCode":           1,
 	"github.com/anydoor7/tslink/cmd.peopleInviteFailure":        2,
 	"github.com/anydoor7/tslink/internal/registry.requestError": 0,
+	"github.com/anydoor7/tslink/internal/registry.gatewayError": 0,
 }
 
 // These Code fields describe table metadata or diagnostics, not emitted error

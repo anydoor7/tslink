@@ -36,7 +36,7 @@ For someone outside your tailnet:
 tslink people add alice@example.com --apps photos,finance --for 7d --invite --print-links
 ```
 
-This saves the grants and creates one single-use device invitation for each app. TSLink requests links, so **Tailscale sends no email**. Send the generated message yourself. The recipient installs Tailscale, signs in using the named account, accepts each app link, keeps Tailscale connected, and opens the app addresses. A device invite can be accepted with a different account than the addressed email, but TSLink denies that other login: the local grant binds the verified WhoIs login, not whoever holds a bearer link.
+This saves the grants and creates one single-use device invitation for each non-routed app, or one gateway invitation for routed apps. TSLink requests links, so **Tailscale sends no email**. Send the generated message yourself. The recipient installs Tailscale, signs in using the named account, accepts the gateway link and any non-routed app links, keeps Tailscale connected, and opens the app addresses. A device invite can be accepted with a different account than the addressed email, but TSLink denies that other login: the local grant binds the verified WhoIs login, not whoever holds a bearer link.
 
 Device invitation creation requires a stored **user-owned API access token**. OAuth client tokens cannot create device invites. Use the existing stdin login path to store a user-owned token; do not put credentials in argv. Without a token, ordinary `people add` remains useful for existing tailnet members. You can also create app-sharing links manually in Tailscale's Machines page and send them with the no-token message.
 
@@ -69,14 +69,69 @@ The value is the **recorded old ID**, not a new ID. TSLink verifies the same own
 
 When a successful complete devices listing confirms both the recorded node and its hostname are absent, removal records terminal `target_gone`. The old app, hostname, node ID, invite ID and attempt remain in the ledger, and re-adding the person to another app works. Absence evidence requires HTTP 200, a nonempty body, and a present non-null array (`devices` for devices, a top-level array for invites). Any other 2xx, including 204 and 206, blank/null responses, malformed collections and ownership mismatches remain incomplete: no attempt is retired, no terminal outcome is recorded and no replacement POST is sent. This applies to replacement, removal and explicit `none` reconciliation. Bodyless mutation responses retain their separate handling. Terminal attempts are immutable history; successors use an increasing `attempt` number per person/app/node (omitted means the original attempt zero). This retains attempt outcomes, not a full event log of every transition.
 
-## Why per-app invitations
+## Gateway or per-app invitations
 
 | Design | Owner and recipient work | App compatibility | Revocation |
 | --- | --- | --- | --- |
-| Per-app nodes, bundled links (implemented) | One owner command/message per person; N API creates and N recipient accepts for N apps | Apps keep their root URL, host, redirects, cookies and existing WebSocket proxy | Local WhoIs grants deny subsequent requests even if device shares remain |
-| One shared home/gateway node | One invite/accept per person | Path prefixes require app base-path configuration or rewriting root-relative assets, redirects, cookies and WebSocket URLs. Per-app hostnames need DNS and certificates reachable in the recipient's tailnet; sharing only the gateway does not share the other app nodes | A gateway would need the same local identity gate, plus prevention of direct-app bypass |
+| Per-app nodes, bundled links | N creates and N accepts for N apps | Independent hostnames, root URLs and cookies | Local WhoIs grants deny subsequent requests |
+| Gateway mode | One gateway create and accept for all routed apps | One hostname, one HTTPS port per app; root paths preserved, cookies shared across ports | The gateway checks each request against local app grants |
 
-The bundled design preserves the existing per-app transport isolation and avoids changing arbitrary applications. It eliminates N×M **owner CLI operations**, not the underlying N×M invites or recipient accepts. A one-accept gateway remains a future design, with explicit routing/hostname requirements; this package does not claim that gateway exists. Tailscale documents that an outsider sees only the machine shared with them, and reaches shared machines by their full tailnet-qualified hostname.
+Enable [gateway mode](portal.md#gateway-mode-one-device-share-for-routed-apps),
+route the selected apps, then use the same `people add --invite` command. For
+routed apps, the ledger records `target_kind: "gateway"`, an empty `app`, and the
+exact portal NodeID with its separate ownership-ledger proof. A lookalike hostname
+is not ownership proof. Non-routed selected apps retain per-app invitations and
+the result warns that they need separate shares. Portal-only apps have no app
+node to invite.
+
+At most one live gateway invitation exists per person. `pending`, `sending`,
+`unknown`, `complete` and `accepted` all block another creation; `revoked`,
+`cancelled`, `target_gone` and `replaced` allow a new recorded attempt. Explicit
+invite-only retry can finish a pending operation or reconcile an unknown one;
+it never blindly repeats an ambiguous POST. Accepted shares remain live for
+deduplication and are terminal for cleanup. Grant changes, renewal, `extend` and
+removal of one app leave gateway invitations alone. `people remove` denies locally
+first and revokes recorded pending gateway invitations; accepted shares remain
+but cannot bypass local denial.
+
+Use `@gateway` instead of an app name with `--reconcile-invite` or
+`--replace-invite`, for example `--reconcile-invite @gateway=12345`. Replacement
+retains the old attempt and requires explicit remote absence proof when the
+NodeID is unchanged. The same
+sending-before-POST, CAS, remote-work lock, finite timeout and no-stored-URL rules
+apply. Missing gateway ownership proof refuses the invite without discarding
+saved grants. After a gateway identity change, a live invitation for the old
+NodeID returns `complete: false` and `gateway_invite_stale`. The old NodeID is
+retired in the gateway ownership ledger and cannot authorize new invitations.
+
+To recover, first check `tslink doctor --json` and `tslink status --json` for the
+new running, persistent gateway with proven ownership. Then inspect
+`tslink people list --json` and explicitly retire the recorded old invitation:
+
+```sh
+tslink people update alice@example.com --invite --replace-invite @gateway=12345
+```
+
+This changes the stale operation (including an accepted share) to `target_gone`
+and creates an invitation for the current gateway. It does not revoke the old
+remote share. History and grants remain; repeating the same recorded-ID action
+reuses the new invitation. If a pending/sending/unknown stale operation has no
+recorded invite ID, explicitly acknowledge its retirement with
+`--reconcile-invite @gateway=none`, then use plain `--invite` for later retries.
+Without current gateway proof, recovery is refused. The recipient must accept
+the new device invitation; an old accepted share cannot transfer to a new node.
+
+Doctor's `gateway_node_identity_changed` warning persists after completed
+recovery because the ownership ledger retains retired NodeIDs. It records a
+past identity change, not proof that current invitations are stale. Check
+`tslink people list --json` for live gateway invitations whose `node_id` differs
+from `portal.gateway.node_id` in `tslink status --json`; recovered `target_gone`
+history does not need another replacement.
+
+The message, phone guide and ordinary QR point to the gateway dashboard. An
+explicit bearer invitation QR uses `--invite --print-links --qr-invite @gateway`
+with `--qr` or `--qr-png`. Remote apps require a tagged gateway and authenticate
+that gateway on the other host; they do not receive verified visitor identity.
 
 ## Enforcement and expiry
 
@@ -100,7 +155,7 @@ All CLI JSON uses the existing `schema_version: 1` result envelope. `data.person
 
 MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because invites are optional; list is read-only, including file modes; remove is destructive and idempotent with optional remote cleanup (open-world). Update accepts an invite-only retry; update/remove accept `reconcile_invites`, an app-to-ID (or `none`) object requiring explicit owner verification. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
 
-People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites` and a sticky optional `guest` boolean saved with the first finite invitation grant before remote work; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
+People-enabled registries without gateway fields write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites` and a sticky optional `guest` boolean saved with the first finite invitation grant before remote work; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
 
 Expected input, missing-person/app and state conflicts use `usage_error`, `not_found` and `conflict` consistently in CLI and MCP.
 

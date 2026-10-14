@@ -110,6 +110,7 @@ func ValidateInviteKind(kind string) error {
 // node ID recorded by the running TSLink node. Hostname matching finds
 // candidates; NodeID is the ownership proof.
 type DeviceTarget struct {
+	Kind     string
 	Service  string
 	Hostname string
 	NodeID   string
@@ -118,6 +119,7 @@ type DeviceTarget struct {
 // Invite is the stable TSLink representation of either first-party invite
 // schema. InviteURL is copied verbatim from the API and is never constructed.
 type Invite struct {
+	TargetKind      string `json:"target_kind,omitempty"`
 	Kind            string `json:"kind"`
 	ID              string `json:"id"`
 	Recipient       string `json:"recipient,omitempty"`
@@ -141,6 +143,7 @@ type InviteTargetError struct {
 }
 
 type InviteTargetStatus struct {
+	TargetKind  string             `json:"target_kind,omitempty"`
 	Service     string             `json:"service"`
 	Checked     bool               `json:"checked"`
 	InviteCount int                `json:"invite_count"`
@@ -381,7 +384,9 @@ func (c *inviteHTTPClient) ListUserInvites(ctx context.Context) ([]userInviteRes
 	var response []userInviteResponse
 	err := c.doList(ctx, []string{"tailnet", "-", "user-invites"}, &response)
 	if err == nil && response == nil {
-		err = invalidInviteListing("user invite listing omitted a non-null array")
+		// doList has already required HTTP 200, a non-empty body, and valid
+		// JSON. Only the user-invites endpoint defines root null as empty.
+		response = []userInviteResponse{}
 	}
 	return response, err
 }
@@ -714,6 +719,7 @@ func CreateDeviceInvite(ctx context.Context, target DeviceTarget, email string, 
 		return Invite{}, &DeviceInviteOutcomeUnknown{Err: err}
 	}
 	result := deviceInvite(responses[0], target.Service, email, !printLink)
+	result.TargetKind = target.Kind
 	return result, nil
 }
 
@@ -736,7 +742,7 @@ func ListInvites(ctx context.Context, targets []DeviceTarget) (InviteList, error
 		if err != nil {
 			mapped := inviteAPIError("list tailnet devices for invite ownership proof", err)
 			for _, target := range targets {
-				result.DeviceTargets = append(result.DeviceTargets, InviteTargetStatus{Service: target.Service, Error: inviteTargetError(mapped)})
+				result.DeviceTargets = append(result.DeviceTargets, InviteTargetStatus{TargetKind: target.Kind, Service: target.Service, Error: inviteTargetError(mapped)})
 			}
 			result.Count = len(result.UserInvites)
 			result.Complete = false
@@ -749,7 +755,7 @@ func ListInvites(ctx context.Context, targets []DeviceTarget) (InviteList, error
 		cache := make(map[string]cachedDeviceInvites)
 		included := make(map[string]struct{})
 		for _, target := range targets {
-			status := InviteTargetStatus{Service: target.Service}
+			status := InviteTargetStatus{TargetKind: target.Kind, Service: target.Service}
 			device, err := resolveOwnedDevice(devices, target)
 			if err != nil {
 				status.Error = inviteTargetError(err)
@@ -778,7 +784,9 @@ func ListInvites(ctx context.Context, targets []DeviceTarget) (InviteList, error
 			}
 			included[device.NodeID] = struct{}{}
 			for _, response := range cached.responses {
-				result.DeviceInvites = append(result.DeviceInvites, deviceInvite(response, target.Service, response.Email, response.Email != ""))
+				inv := deviceInvite(response, target.Service, response.Email, response.Email != "")
+				inv.TargetKind = target.Kind
+				result.DeviceInvites = append(result.DeviceInvites, inv)
 			}
 		}
 	}

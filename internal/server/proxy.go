@@ -20,6 +20,8 @@ import (
 type LocalClient = local.Client
 
 type ProxyOptions struct {
+	Gateway      *GatewayProxyOptions
+	Dialer       UpstreamDialer
 	PreserveHost bool
 	// CanonicalHost reads the receiving node's trusted runtime name. It must
 	// never derive a name from a request, TLS SNI, or registry service name.
@@ -48,14 +50,31 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 		IdleConnTimeout:     90 * time.Second,
 		DisableCompression:  true,
 	}
+	if options.Dialer != nil {
+		transport.DialContext = options.Dialer.DialContext
+	}
+	if options.Gateway != nil {
+		transport.TLSHandshakeTimeout = 10 * time.Second
+	}
 
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(targetURL)
 			r.SetXForwarded()
+			if options.Gateway != nil {
+				r.Out.Header.Set("X-Forwarded-Host", options.Gateway.Authority())
+				r.Out.Header.Set("X-Forwarded-Proto", "https")
+				stripGatewayCookies(r.Out.Header)
+				if options.Gateway.Remote {
+					r.Out.Header.Del("X-Forwarded-For")
+				}
+			}
 			if options.PreserveHost {
-				host := r.In.Context().Value(canonicalProxyHostKey{}).(string)
+				host, _ := r.In.Context().Value(canonicalProxyHostKey{}).(string)
+				if options.Gateway != nil {
+					host = options.Gateway.Authority()
+				}
 				r.Out.Host = host
 				r.Out.Header.Set("X-Forwarded-Host", host)
 			}
@@ -70,7 +89,11 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			public, _ := r.In.Context().Value(accessFunnelKey{}).(bool)
 			var whois *apitype.WhoIsResponse
 			gated, _ := r.In.Context().Value(guestProxyKey{}).(bool)
-			if !public || !gated {
+			if options.Gateway != nil {
+				if !options.Gateway.Remote {
+					whois, _ = r.In.Context().Value(gatewayWhoKey{}).(*apitype.WhoIsResponse)
+				}
+			} else if !public || !gated {
 				whois = identity.whoIs(r.In.Context(), r.In.RemoteAddr)
 			}
 			if whois != nil && whois.UserProfile != nil {
@@ -85,6 +108,12 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			}
 		},
 		ModifyResponse: func(response *http.Response) error {
+			if options.Gateway != nil {
+				if options.Gateway.Observe != nil {
+					options.Gateway.Observe(true)
+				}
+				rewriteGatewayResponse(response, targetURL, options.Gateway.Authority())
+			}
 			gated, _ := response.Request.Context().Value(guestProxyKey{}).(bool)
 			if !gated {
 				return nil
@@ -115,6 +144,18 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			if denyGuestProxyCancellation(w, r, err) {
 				return
 			}
+			if options.Gateway != nil {
+				if r.Context().Err() != nil {
+					accessDeny(r, "client_cancelled")
+					return
+				}
+				accessDeny(r, "upstream_down")
+				if options.Gateway.Observe != nil {
+					options.Gateway.Observe(false)
+				}
+				gatewayErrorPage(w, r, http.StatusBadGateway, "upstream_down", options.Gateway.App+" on "+options.Gateway.HostLabel+" is not reachable right now", "", false)
+				return
+			}
 			slog.Error("proxy error", "code", "backend_request_failed")
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)
@@ -122,6 +163,9 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				http.Error(w, "Service unavailable — backend is offline", http.StatusBadGateway)
 			}
 		},
+	}
+	if options.Gateway != nil {
+		return &gatewayProxy{proxy: proxy, transport: transport}, nil
 	}
 	if !options.PreserveHost {
 		return proxy, nil

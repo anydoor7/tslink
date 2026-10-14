@@ -35,6 +35,7 @@ const (
 
 	LegacyRegistrySchemaVersion  = 1
 	CurrentRegistrySchemaVersion = 2
+	GatewayRegistrySchemaVersion = 3
 
 	maxTagLength = 63
 
@@ -522,6 +523,10 @@ type Service struct {
 
 	RequestLimits *RequestLimits `json:"request_limits,omitempty"`
 
+	PortalRoute *PortalRoute `json:"portal_route,omitempty"`
+	PortalOnly  bool         `json:"portal_only,omitempty"`
+	Upstream    string       `json:"upstream,omitempty"`
+
 	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
 	// whose stored funnel_expires_at is absent or null. In memory a nil
 	// FunnelExpiresAt on a Funnel service means never; this marker is what
@@ -737,6 +742,9 @@ func ValidateControlURL(value string) error {
 }
 
 func ValidateService(svc Service) error {
+	if err := validateGatewayService(svc); err != nil {
+		return err
+	}
 	if svc.Requestable && !PeopleServiceSupported(svc) {
 		return CodedError{Code: "usage_error", Message: "requestable apps must be private HTTP/file services"}
 	}
@@ -1201,6 +1209,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		}
 		reg.Services = append(reg.Services, svc)
 	}
+	if err := ValidateGateway(reg); err != nil {
+		return nil, nil, err
+	}
 	return reg, issues, nil
 }
 
@@ -1387,7 +1398,7 @@ func migrate(reg *Registry) error {
 	}
 
 	switch version {
-	case LegacyRegistrySchemaVersion, CurrentRegistrySchemaVersion:
+	case LegacyRegistrySchemaVersion, CurrentRegistrySchemaVersion, GatewayRegistrySchemaVersion:
 		reg.SchemaVersion = version
 		return nil
 	default:
@@ -1470,6 +1481,9 @@ func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) e
 }
 
 func save(path string, reg *Registry) error {
+	if err := ValidateGateway(reg); err != nil {
+		return err
+	}
 	for _, svc := range reg.Services {
 		if e := guestServiceError(svc, reg.Guests); e != nil {
 			return e
@@ -1489,6 +1503,9 @@ func save(path string, reg *Registry) error {
 	}
 
 	pending := snapshotGuestUsage(path)
+	if hasGatewayFields(reg) {
+		reg.SchemaVersion = GatewayRegistrySchemaVersion
+	}
 	originalGuests := append([]GuestGrant(nil), reg.Guests...)
 	for i := range reg.Guests {
 		applyGuestUsage(&reg.Guests[i], pending[reg.Guests[i].ID])
@@ -1525,6 +1542,8 @@ func Add(path string, svc Service) (created bool, err error) {
 
 type AddOptions struct {
 	Context context.Context
+	// Authorize sees the current registry and the effective service under the writer lock.
+	Authorize func(*Registry, Service) error
 	// PreserveFunnelExpiry keeps a decided public lifetime when the TTL was
 	// omitted. A private service's absent expiry is never a public decision.
 	PreserveFunnelExpiry bool
@@ -1629,6 +1648,30 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		}
 		if reg.Portal != nil && svc.Name == reg.Portal.Hostname {
 			return portalConflict(svc.Name)
+		}
+		for _, existing := range reg.Services {
+			if existing.Name == svc.Name {
+				if svc.PortalRoute == nil {
+					svc.PortalRoute = existing.PortalRoute
+				}
+				svc.PortalOnly = svc.PortalOnly || existing.PortalOnly
+			}
+		}
+		if svc.PortalOnly && svc.PortalRoute == nil {
+			svc.PortalRoute = &PortalRoute{}
+		}
+		if options.Authorize != nil {
+			if err := options.Authorize(reg, svc); err != nil {
+				return err
+			}
+		}
+		if svc.PortalRoute != nil {
+			route := *svc.PortalRoute
+			route.Port, err = AllocateGatewayPort(reg, svc.Name, route.Port)
+			if err != nil {
+				return err
+			}
+			svc.PortalRoute, svc.PeopleScoped = &route, true
 		}
 
 		for i, existing := range reg.Services {
@@ -1767,6 +1810,11 @@ func RemoveAndReturnWithin(path, name string, within func(svc Service, commit fu
 }
 
 func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
+	return RemoveAndReturnWithinAuthorizedContext(ctx, path, name, within, nil)
+}
+
+// Authorization precedes both registry removal and ownership-ledger retirement.
+func RemoveAndReturnWithinAuthorizedContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error, authorize func(*Registry, Service) error) (removedService Service, removed bool, err error) {
 	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
@@ -1778,6 +1826,11 @@ func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within
 				continue
 			}
 
+			if authorize != nil {
+				if err := authorize(reg, svc); err != nil {
+					return err
+				}
+			}
 			remaining := append(append([]Service{}, reg.Services[:i]...), reg.Services[i+1:]...)
 			commit := func() error {
 				if err := mcpscope.CheckEffect(ctx); err != nil {

@@ -18,17 +18,20 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
-	"extend":         `{"service":"web","for":"1h"}`,
-	"access_log":     `{}`,
-	"access_summary": `{}`,
-	"portal_enable":  `{"owner":"owner"}`,
-	"portal_disable": `{}`,
-	"people_grant":   `{"who":"alice","app":"web","for":"1h"}`,
-	"people_revoke":  `{"who":"alice","app":"web"}`,
-	"app_restart":    `{"app":"web"}`,
-	"health":         `{}`,
-	"mcp_audit":      `{}`,
-	"guest_create":   `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
+	"extend":              `{"service":"web","for":"1h"}`,
+	"access_log":          `{}`,
+	"access_summary":      `{}`,
+	"portal_enable":       `{"owner":"owner"}`,
+	"portal_disable":      `{}`,
+	"portal_route_add":    `{"app":"web"}`,
+	"portal_route_remove": `{"app":"web"}`,
+	"portal_route_list":   `{}`,
+	"people_grant":        `{"who":"alice","app":"web","for":"1h"}`,
+	"people_revoke":       `{"who":"alice","app":"web"}`,
+	"app_restart":         `{"app":"web"}`,
+	"health":              `{}`,
+	"mcp_audit":           `{}`,
+	"guest_create":        `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
 	"requests_list": `{}`, "requests_approve": `{"id":"1","for":"8h"}`, "requests_deny": `{"id":"1"}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
@@ -71,6 +74,14 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
+		portalRouteList: func() (any, error) { return nil, mcpRefusal("portal_route_list") },
+		portalRouteChange: func(_ context.Context, _ portalRouteArguments, remove bool) (any, error) {
+			name := "portal_route_add"
+			if remove {
+				name = "portal_route_remove"
+			}
+			return nil, mcpRefusal(name)
+		},
 		guest: func(_ context.Context, name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
 			return accesslog.Result{}, mcpRefusal("access_log")

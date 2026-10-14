@@ -20,6 +20,7 @@ import (
 type accessObservationKey struct{}
 type accessFunnelKey struct{}
 type guestSourceKey struct{}
+type gatewayAccessKey struct{}
 
 // ListenFunnel accepts both tailnet and public connections. Only the trusted
 // transport marker denotes public ingress; request headers cannot attest it.
@@ -158,6 +159,9 @@ func AccessEventMiddleware(svc registry.Service, opts accesslog.Options, writer 
 		defer func() {
 			observation.mu.Lock()
 			e := accesslog.Event{Time: at, Kind: "http", App: svc.Name, Identity: observation.identity, Method: r.Method, Status: rw.status, BytesIn: body.bytes.Load(), BytesOut: rw.bytes, DurationMS: float64(time.Since(start)) / float64(time.Millisecond), Decision: observation.decision, Reason: observation.reason, Grant: observation.grant}
+			if via, _ := r.Context().Value(gatewayAccessKey{}).(bool); via {
+				e.Via = "portal"
+			}
 			if rw.hijacked != nil {
 				e.BytesIn += rw.hijacked.in.Load() + rw.hijackBuffered
 				e.BytesOut += rw.hijacked.out.Load()

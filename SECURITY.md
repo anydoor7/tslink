@@ -10,7 +10,7 @@ TSLink is designed around explicit capability boundaries. The machine-readable p
 - **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
 - **Credential storage with restricted fallback** — API keys and OAuth client secrets use macOS Keychain / Linux secret service / Windows Credential Manager when available. On macOS and Linux, restricted-permission file fallback succeeds only after TSLink proves any stale keychain credential absent or removed. A completely unreachable or uncertain keychain causes an explicit failure to preserve existing credential authority; restore keychain access and retry. Windows has no file fallback, because TSLink cannot prove a user-only DACL locally
 - **Dynamic auth key derivation** — API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated
-- **Per-service isolation** — each service runs as its own tsnet node with an independent identity
+- **Per-service isolation** — ordinary services run as their own tsnet nodes; explicit portal-only apps share the gateway identity
 - **Inbound header stripping** — the proxy strips client-supplied `Tailscale-*` and `X-Tailscale-*` identity headers, including underscore and mixed spellings, before injecting WhoIs identity
 
 Important boundaries:
@@ -29,6 +29,45 @@ Important boundaries:
       https:login.tailscale.com/a/<token>          (zero slashes, url.Opaque)
 
   Nothing in TSLink emits either shape: `internal/logging` routes tsnet's authorization URL through slog as one unbroken token. The exposure is a log line authored elsewhere -- a third-party library, a user pasting into a log, a future formatter that wraps long lines. Widening the token class is not a fix on its own: it trades this leak for over-redacting ordinary prose that mentions the host.
+
+## Gateway boundaries
+
+Gateway mode is private to Tailscale and persistent. Its own checks remain the
+security boundary even when tailnet policy permits every gateway port. Every
+connection is identified before TLS; every request or upgrade repeats WhoIs and
+people policy. Directory visibility does not grant app access. Registry failures
+fail closed, zero people never permits a routed app, and accepted streams may
+finish after a later revocation.
+
+Browser identity is ambient: an unrelated page can cause requests made as the
+visitor. Tailnet pages can be same-site, so routes enforce same-origin checks,
+including the port. Top-level navigations and non-browser requests still need
+identity and grants. `--allow-cross-origin` explicitly weakens this browser
+boundary. Ports are not a cookie sandbox; untrusted apps on one gateway hostname
+can collide on cookie names. Cookie namespacing is planned. Reserved gateway
+cookies are stripped, and request-controlled Host/URLs cannot change a target.
+
+An untagged gateway could be recognized remotely as its enrolling human, including
+that human's owner privilege. Remote routes therefore require an **observed**
+tagged gateway, an HTTPS MagicDNS name in its observed tailnet suffix and normal
+TLS verification. The registered hostname must match a peer DNSName in the
+gateway LocalAPI status at route activation, for each new upstream connection
+and on health probes. Traffic and probes resolve the registered name only
+against that peer list, require its Tailscale IP to pass
+`UseNetstackForIP`, and call `NetstackDialTCP` directly. They do not call tsnet
+`Dial`/`UserDial`, the host resolver, or a host-network dialer. A disappearing
+peer fails in netstack without host fallback. TLS verifies the registered
+hostname. The tag and tailnet suffix are rechecked on every request, including
+requests that reuse an upstream connection. Remote hosts
+must explicitly trust the gateway tag. Visitor Tailscale identity and IP headers
+are stripped and are not replaced with human claims; signed assertions are not
+implemented. Local upstreams continue receiving verified visitor identity.
+
+One shared gateway device enables network reachability to all its route ports;
+it does not authorize all apps. Gateway invitations require exact NodeID and
+local ownership-ledger proof. Revocation is enforced locally even if an accepted
+network share remains. Changed node identity invalidates the assumption that old
+shares reach the current gateway, and is reported for owner recovery.
 
 ## Dependency advisory GO-2026-5932
 

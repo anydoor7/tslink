@@ -42,15 +42,25 @@ func readPerson(path, login string) (registry.Person, error) {
 }
 
 func personInviteTarget(op registry.PersonInvite) tailapi.DeviceTarget {
-	return tailapi.DeviceTarget{Service: op.App, Hostname: op.Hostname, NodeID: op.NodeID}
+	return tailapi.DeviceTarget{Kind: op.TargetKind, Service: op.App, Hostname: op.Hostname, NodeID: op.NodeID}
 }
 
 func resumePeopleInvites(ctx context.Context, path string, p registry.Person, targets map[string]tailapi.DeviceTarget, args peopleArguments, result *PeopleResult) {
 	ctx, cancel := context.WithTimeout(ctx, peopleInviteTimeout)
 	defer cancel()
 	acquired, err := registry.TryPeopleInviteWork(path, func() error {
+		seen := map[string]bool{}
 		for _, g := range p.Grants {
-			v := resumePeopleInvite(ctx, path, p.Login, targets[g.App], args)
+			target := targets[g.App]
+			if target.Hostname == "" {
+				target = tailapi.DeviceTarget{Service: g.App, Hostname: g.App}
+			}
+			key := inviteTargetKey(target)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			v := resumePeopleInvite(ctx, path, p.Login, target, args)
 			result.Invites = append(result.Invites, v)
 			if v.Code != "" {
 				result.Complete = false
@@ -83,9 +93,9 @@ func resumePeopleInvites(ctx context.Context, path string, p registry.Person, ta
 // nextPeopleInvite retains every terminal attempt for this app/node. Zero is
 // the original schema-2 slot; later attempts get increasing local generations.
 func nextPeopleInvite(p registry.Person, target tailapi.DeviceTarget) registry.PersonInvite {
-	op := registry.PersonInvite{App: target.Service, Hostname: target.Hostname, NodeID: target.NodeID, State: registry.PersonInvitePending}
+	op := registry.PersonInvite{TargetKind: target.Kind, App: target.Service, Hostname: target.Hostname, NodeID: target.NodeID, State: registry.PersonInvitePending}
 	for _, old := range p.Invites {
-		if old.App == op.App && old.NodeID == op.NodeID && old.Attempt >= op.Attempt {
+		if registry.SameInviteTarget(old, op) && old.Attempt >= op.Attempt {
 			op.Attempt = old.Attempt + 1
 		}
 	}
@@ -93,17 +103,19 @@ func nextPeopleInvite(p registry.Person, target tailapi.DeviceTarget) registry.P
 }
 
 func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.DeviceTarget, args peopleArguments) PeopleInviteView {
-	v := PeopleInviteView{App: target.Service}
+	v := PeopleInviteView{TargetKind: target.Kind, App: target.Service}
 	p, err := readPerson(path, login)
 	if err != nil {
-		return peopleInviteFailure(registry.PersonInvite{App: target.Service}, err, "invite_state_failed")
+		return peopleInviteFailure(registry.PersonInvite{TargetKind: target.Kind, App: target.Service}, err, "invite_state_failed")
 	}
 	op := nextPeopleInvite(p, target)
-	if p.Revoked || !registry.PersonGrantActiveAt(p, target.Service, peopleNowFn()) {
-		return peopleInviteFailure(op, nil, "person_grant_inactive")
+	reg, _, loadErr := registry.Preflight(path)
+	active := registry.PersonGrantActiveAt(p, target.Service, peopleNowFn())
+	if target.Kind == registry.InviteTargetGateway {
+		active = loadErr == nil && registry.GatewayInviteGrantActive(p, reg, peopleNowFn())
 	}
-	if target.NodeID == "" {
-		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
+	if p.Revoked || !active {
+		return peopleInviteFailure(op, nil, "person_grant_inactive")
 	}
 	var expected *registry.PersonInvite
 	var expectedGrant *registry.PersonGrant
@@ -113,13 +125,50 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			expectedGrant = &previous
 		}
 	}
+	currentTarget := target
+	if target.Kind == registry.InviteTargetGateway && (target.NodeID == "" || gatewayInviteProof(path, target) != nil) {
+		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
+	}
 	for _, existing := range p.Invites {
-		if existing.App == target.Service && existing.NodeID == target.NodeID && !registry.PersonInviteTerminal(existing) {
+		same := registry.SameInviteTarget(existing, op)
+		if target.Kind == registry.InviteTargetGateway && existing.TargetKind == registry.InviteTargetGateway {
+			same = true
+		}
+		if same && registry.PersonInviteLive(existing) {
 			op = existing
+			target = personInviteTarget(existing)
 			previous := existing
 			expected = &previous
 			break
 		}
+	}
+	if expected != nil && target.Kind == registry.InviteTargetGateway && target.NodeID != currentTarget.NodeID {
+		// An old accepted share cannot reach the replacement gateway. Keep the
+		// historical operation until the current owner explicitly retires it.
+		retire := (op.ID != "" && args.Replace[gatewayInviteKey] == op.ID) || (op.ID == "" && args.Reconcile[gatewayInviteKey] == "none")
+		if !retire {
+			return peopleInviteFailure(op, nil, "gateway_invite_stale")
+		}
+		retired := op
+		retired.State = registry.PersonInviteTargetGone
+		err := registry.SavePersonInviteWithOptions(path, login, retired, registry.PersonInviteSaveOptions{
+			Context: peopleMutationContext(ctx), Now: peopleNowFn(), Expected: expected, RetireGatewayTarget: currentTarget.NodeID,
+			Authorize: func(reg *registry.Registry) error {
+				if err := requireRequestOwnerInRegistry(ctx, reg); err != nil {
+					return err
+				}
+				return gatewayInviteProof(path, currentTarget)
+			},
+		})
+		if err != nil {
+			return peopleInviteFailure(op, err, "invite_state_failed")
+		}
+		nextArgs := args
+		nextArgs.Replace, nextArgs.Reconcile = nil, nil
+		return resumePeopleInvite(ctx, path, login, currentTarget, nextArgs)
+	}
+	if target.NodeID == "" || gatewayInviteProof(path, target) != nil {
+		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
 	}
 	save := func(next registry.PersonInvite, reset bool) error {
 		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Context: peopleMutationContext(ctx), Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset, ExpectedGrant: expectedGrant})
@@ -131,12 +180,12 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	}
 	// Replacement is bound to the old ID, so retrying the same owner request
 	// can never replace its newly created successor a second time.
-	replaceID := args.Replace[target.Service]
+	replaceID := args.Replace[inviteTargetKey(target)]
 	replace := replaceID != "" && op.State == registry.PersonInviteComplete && op.ID == replaceID
 	if replaceID != "" && !replace {
 		retired := false
 		for _, old := range p.Invites {
-			if old.App == op.App && old.NodeID == op.NodeID && old.ID == replaceID && old.State == registry.PersonInviteReplaced {
+			if old.ID == replaceID && ((registry.SameInviteTarget(old, op) && old.State == registry.PersonInviteReplaced) || (old.TargetKind == registry.InviteTargetGateway && op.TargetKind == registry.InviteTargetGateway && old.State == registry.PersonInviteTargetGone)) {
 				retired = true
 			}
 		}
@@ -144,7 +193,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			return peopleInviteFailure(op, nil, "conflict")
 		}
 	}
-	reconcileID := args.Reconcile[target.Service]
+	reconcileID := args.Reconcile[inviteTargetKey(target)]
 	// Explicit complete+none is a compatibility spelling of replacement. It
 	// additionally requires the whole device invite list to be empty.
 	replaceAbsent := op.State == registry.PersonInviteComplete && reconcileID == "none"
@@ -196,6 +245,10 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			return peopleInviteFailure(op, err, "invite_reconciliation_failed")
 		}
 	}
+	if op.State == registry.PersonInviteAccepted {
+		v.ID, v.State = op.ID, op.State
+		return v
+	}
 	if op.State == registry.PersonInviteComplete {
 		v.ID, v.State = op.ID, op.State
 		if args.PrintLinks {
@@ -210,6 +263,9 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			}
 		}
 		return v
+	}
+	if err := gatewayInviteProof(path, target); err != nil {
+		return peopleInviteFailure(op, err, registry.CodeInviteOwnershipUnproven)
 	}
 	// Commit BEFORE POST; process death leaves sending, an unknown outcome.
 	op.State = registry.PersonInviteSending
@@ -230,7 +286,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	}
 	op.State, op.ID = registry.PersonInviteComplete, inv.ID
 	if err := save(op, false); err != nil {
-		return PeopleInviteView{App: op.App, ID: op.ID, State: registry.PersonInviteUnknown, Code: "invite_state_failed"}
+		return PeopleInviteView{TargetKind: op.TargetKind, App: op.App, ID: op.ID, State: registry.PersonInviteUnknown, Code: "invite_state_failed"}
 	}
 	v.ID, v.State = inv.ID, op.State
 	plan := invitePlan(inv, "create")
@@ -258,7 +314,7 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 	}
 	if !unfinished {
 		for _, op := range p.Invites {
-			result.Cleanup = append(result.Cleanup, PeopleInviteView{App: op.App, ID: op.ID, State: op.State})
+			result.Cleanup = append(result.Cleanup, PeopleInviteView{TargetKind: op.TargetKind, App: op.App, ID: op.ID, State: op.State})
 		}
 		return
 	}
@@ -270,13 +326,13 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 			return err
 		}
 		for _, op := range current.Invites {
-			v := PeopleInviteView{App: op.App, ID: op.ID, State: op.State}
+			v := PeopleInviteView{TargetKind: op.TargetKind, App: op.App, ID: op.ID, State: op.State}
 			if !registry.PersonInviteTerminal(op) {
 				if op.State == registry.PersonInvitePending {
 					op.State = registry.PersonInviteCancelled
 				} else {
 					if op.ID == "" {
-						resolved, invites, e := reconcilePeopleInvite(ctx, path, result.Login, op, reconcile[op.App])
+						resolved, invites, e := reconcilePeopleInvite(ctx, path, result.Login, op, reconcile[personInviteKey(op)])
 						for _, inv := range invites {
 							v.ReconcileIDs = append(v.ReconcileIDs, inv.ID)
 						}
@@ -299,7 +355,11 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 						}
 					}
 					if v.Code == "" && op.ID != "" && !registry.PersonInviteTerminal(op) {
-						state, e := tailapi.RevokePendingDeviceInvite(ctx, personInviteTarget(op), op.ID)
+						state := ""
+						e := gatewayInviteProof(path, personInviteTarget(op))
+						if e == nil {
+							state, e = tailapi.RevokePendingDeviceInvite(ctx, personInviteTarget(op), op.ID)
+						}
 						if e != nil {
 							v.Code = peopleInviteCode(e, "invite_cleanup_failed")
 						} else {
@@ -329,7 +389,7 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 		}
 		for _, op := range p.Invites {
 			if !registry.PersonInviteTerminal(op) {
-				result.Cleanup = append(result.Cleanup, PeopleInviteView{App: op.App, ID: op.ID, State: op.State, Code: code})
+				result.Cleanup = append(result.Cleanup, PeopleInviteView{TargetKind: op.TargetKind, App: op.App, ID: op.ID, State: op.State, Code: code})
 			}
 		}
 	}
@@ -338,6 +398,9 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 // An explicit owner-selected ID is necessary: listing a bearer invite carries
 // no recipient association. "none" additionally requires an empty remote list.
 func reconcilePeopleInvite(ctx context.Context, path, login string, op registry.PersonInvite, id string) (registry.PersonInvite, []tailapi.Invite, error) {
+	if err := gatewayInviteProof(path, personInviteTarget(op)); err != nil {
+		return op, nil, err
+	}
 	invites, err := tailapi.ListDeviceInvitesForTarget(ctx, personInviteTarget(op))
 	if err != nil {
 		return op, nil, err
@@ -356,19 +419,22 @@ func reconcilePeopleInvite(ctx context.Context, path, login string, op registry.
 		}
 		for _, other := range reg.People {
 			for _, old := range other.Invites {
-				if old.ID == id && (other.Login != login || old.App != op.App || old.NodeID != op.NodeID || old.Attempt != op.Attempt) {
+				if old.ID == id && (other.Login != login || !registry.SameInviteTarget(old, op) || old.Attempt != op.Attempt) {
 					return op, invites, registry.CodedError{Code: "invite_reconciliation_conflict", Message: "Invite ID already belongs to another person/app operation"}
 				}
 			}
 		}
 		op.ID, op.State = id, registry.PersonInviteComplete
+		if op.TargetKind == registry.InviteTargetGateway && inv.Accepted {
+			op.State = registry.PersonInviteAccepted
+		}
 		return op, invites, nil
 	}
 	return op, invites, registry.CodedError{Code: "invite_reconciliation_required", Message: "Verify the device invite outcome and explicitly reconcile app=id or app=none"}
 }
 
 func peopleInviteFailure(op registry.PersonInvite, err error, fallback string) PeopleInviteView {
-	return PeopleInviteView{App: op.App, State: op.State, ID: op.ID, Code: peopleInviteCode(err, fallback)}
+	return PeopleInviteView{TargetKind: op.TargetKind, App: op.App, State: op.State, ID: op.ID, Code: peopleInviteCode(err, fallback)}
 }
 
 // CLI invitation bookkeeping retains late outcomes. MCP writers retain the

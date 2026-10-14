@@ -26,7 +26,7 @@ func peopleViewSchema() map[string]any {
 		"login": map[string]any{"type": "string"}, "revoked": map[string]any{"type": "boolean"},
 		"grants": map[string]any{"type": "array", "items": grant},
 		"invites": map[string]any{"type": "array", "items": objectSchema(map[string]any{
-			"app": map[string]any{"type": "string"}, "hostname": map[string]any{"type": "string"}, "node_id": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"}, "state": map[string]any{"type": "string"}, "attempt": map[string]any{"type": "integer", "minimum": 0},
+			"target_kind": map[string]any{"type": "string", "enum": []string{"app", "gateway"}}, "app": map[string]any{"type": "string"}, "hostname": map[string]any{"type": "string"}, "node_id": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"}, "state": map[string]any{"type": "string"}, "attempt": map[string]any{"type": "integer", "minimum": 0},
 		}, "app", "hostname", "node_id", "state")},
 	}, "login", "revoked", "grants")
 }
@@ -34,7 +34,7 @@ func peopleViewSchema() map[string]any {
 func peopleResultSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"person":     peopleViewSchema(),
-		"qr_payload": map[string]any{"type": "string"}, "qr_warning": map[string]any{"type": "string"}, "guide": stringArraySchema(), "guide_zh": stringArraySchema(),
+		"qr_payload": map[string]any{"type": "string"}, "qr_warning": map[string]any{"type": "string"}, "warnings": stringArraySchema(), "guide": stringArraySchema(), "guide_zh": stringArraySchema(),
 		"portal":             nestedObjectSchema("Independent home portal configuration and exact runtime address when available."),
 		"complete":           map[string]any{"type": "boolean"},
 		"message":            map[string]any{"type": "string"},
@@ -43,7 +43,7 @@ func peopleResultSchema() map[string]any {
 			"app": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"},
 			"invite_url": map[string]any{"type": "string"}, "code": map[string]any{"type": "string"},
 			"remote_side_effect_plan": mcpRemoteSideEffectPlanSchema,
-			"state":                   map[string]any{"type": "string"}, "reconcile_ids": stringArraySchema(),
+			"target_kind":             map[string]any{"type": "string", "enum": []string{"app", "gateway"}}, "state": map[string]any{"type": "string"}, "reconcile_ids": stringArraySchema(),
 		}, "app")},
 	}, "person", "complete", "message", "invite_requirement", "invites")
 }
@@ -53,7 +53,7 @@ func init() {
 		mcpToolHints[name] = mcpHints(false, true, false, true)
 		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
 			Name:        name,
-			Description: "Changes local access to private HTTP and file apps for a person, so confirm the person, apps and expiry with the user before calling. This makes newly scoped apps deny callers without a grant or an explicit legacy allow rule. TCP cannot enforce people; public Funnel is refused. Optional invite creates single-use per-app device invitations bundled in one guide, so confirm before creating them. Requires a user-owned API token only for invite; OAuth cannot create device invites. print_links explicitly reveals bearer links. No elevated exit-node, multi-use or tailnet-role permissions are offered; use the existing invite tools and their owner-configured elevated permission guard for those. An incomplete invitation result retains local grants and reports durable state/errors. Update with invite alone resumes unfinished work; unknown POSTs require explicit owner-verified reconcile_invites after remote listing. Completed operations are reused. There is no exactly-once guarantee. Logins accept all nonempty valid UTF-8 strings without controls or internal whitespace; invalid UTF-8 is a usage_error. Trim outer ASCII whitespace and lowercase ASCII A-Z only; compare exact bytes without Unicode folding or normalization. replace_invites explicitly confirms replacement of a disappeared completed ID, retires its attempt, and preserves all grants/deadlines; requires update with invite and no apps/for changes.",
+			Description: "Changes local access to private HTTP and file apps for a person, so confirm the person, apps and expiry with the user before calling. This makes newly scoped apps deny callers without a grant or an explicit legacy allow rule. TCP cannot enforce people; public Funnel is refused. Optional invite creates one gateway device invitation for routed apps and per-app invitations for non-routed apps, bundled in one guide, so confirm before creating them. Requires a user-owned API token only for invite; OAuth cannot create device invites. print_links explicitly reveals bearer links. No elevated exit-node, multi-use or tailnet-role permissions are offered; use the existing invite tools and their owner-configured elevated permission guard for those. An incomplete invitation result retains local grants and reports durable state/errors. Update with invite alone resumes unfinished work; unknown POSTs require explicit owner-verified reconcile_invites after remote listing. Completed operations are reused. There is no exactly-once guarantee. Logins accept all nonempty valid UTF-8 strings without controls or internal whitespace; invalid UTF-8 is a usage_error. Trim outer ASCII whitespace and lowercase ASCII A-Z only; compare exact bytes without Unicode folding or normalization. replace_invites explicitly confirms replacement of a disappeared completed ID or a stale gateway NodeID, retires its attempt, and preserves all grants/deadlines; requires update with invite and no apps/for changes.",
 			InputSchema: objectSchema(map[string]any{
 				"who":               map[string]any{"type": "string", "minLength": 1},
 				"apps":              map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "App names, or [all] for all current private HTTP/file apps. Required on add; omission on update keeps the app set."},
@@ -63,9 +63,9 @@ func init() {
 				"invite":            map[string]any{"type": "boolean", "default": false},
 				"print_links":       map[string]any{"type": "boolean", "default": false},
 				"qr":                map[string]any{"type": "boolean", "default": false, "description": "Return QR payload text only; never image bytes."},
-				"qr_invite":         map[string]any{"type": "string", "description": "App invitation QR; requires qr and print_links. Treat as a credential."},
-				"replace_invites":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update with invite only, no apps/for: owner-confirmed app to recorded old invite ID. Requires remote absence before replacement; preserves grants and deadlines."},
-				"reconcile_invites": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update --invite only: owner-verified app to invite ID mapping, or none after checking absence. Unknown POSTs cannot be retried blindly."},
+				"qr_invite":         map[string]any{"type": "string", "description": "App invitation QR or @gateway; requires qr and print_links. Treat as a credential."},
+				"replace_invites":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update with invite only, no apps/for: owner-confirmed app or @gateway to recorded old invite ID. Requires remote absence for the same NodeID. A stale gateway invitation can be retired as target_gone when current gateway ownership is proven, including accepted shares; preserves grants and deadlines."},
+				"reconcile_invites": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update --invite only: owner-verified app or @gateway to invite ID mapping, or none after checking absence. Unknown POSTs cannot be retried blindly."},
 			}, "who"), OutputSchema: peopleResultSchema(),
 		})
 		input := mcpToolDefinitions[len(mcpToolDefinitions)-1].InputSchema

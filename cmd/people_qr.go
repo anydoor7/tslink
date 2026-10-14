@@ -26,6 +26,9 @@ func preparePeopleQR(r *PeopleResult, args peopleArguments) error {
 	}
 	r.Guide = []string{"Install Tailscale on your phone.", "Sign in with the account the owner invited.", "Open any invitation the owner sent and accept it.", "Keep Tailscale connected. Open the home address and bookmark it."}
 	r.GuideZH = []string{"在手机上安装 Tailscale。", "用主人邀请的账号登录。", "打开主人发来的邀请并接受。", "保持 Tailscale 已连接，打开入口地址并收藏。"}
+	if r.Portal.Gateway != nil && r.Portal.Gateway.Enabled {
+		r.Guide[2] = "Accept the gateway invitation once. Non-routed apps need separate invitations."
+	}
 	if payload != "" {
 		r.Guide[3] = "Keep Tailscale connected. Open " + payload + " and bookmark it."
 		r.GuideZH[3] = "保持 Tailscale 已连接，打开 " + payload + " 并收藏。"
@@ -39,7 +42,7 @@ func preparePeopleQR(r *PeopleResult, args peopleArguments) error {
 		}
 		payload = ""
 		for _, inv := range r.Invites {
-			if inv.App == args.QRInvite {
+			if (inv.TargetKind == "gateway" && args.QRInvite == gatewayInviteKey) || (inv.TargetKind != "gateway" && inv.App == args.QRInvite) {
 				payload = inv.InviteURL
 				break
 			}

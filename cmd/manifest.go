@@ -163,7 +163,7 @@ func Manifest() CLIManifest {
 		SchemaVersion:         2,
 		Platform:              PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
 		SupportedPlatforms:    SupportedManifestPlatforms(),
-		RegistrySchemaVersion: registry.PeopleRegistrySchemaVersion,
+		RegistrySchemaVersion: registry.GatewayRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
 			MinimumGoVersion: "1.27.1",
 		},
@@ -178,7 +178,7 @@ func Manifest() CLIManifest {
 			"critical":  output.ExitCritical,
 		},
 		RegistrySchema: RegistrySchemaInfo{
-			Version:        registry.PeopleRegistrySchemaVersion,
+			Version:        registry.GatewayRegistrySchemaVersion,
 			ServiceTypes:   serviceTypeValues(),
 			RequiredFields: []string{"schema_version", "services[].name", "services[].type"},
 		},
@@ -291,8 +291,11 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 	case "tslink access path":
 		return map[string]JSONResultFieldInfo{"app": {Type: "string", Description: "App/service name."}, "record_path": {Type: "boolean|null", Description: "Per-service path recording; null inherits global setting."}}
 
+	case "tslink portal route add", "tslink portal route remove", "tslink portal route list":
+		return map[string]JSONResultFieldInfo{"portal": {Type: "object", Description: "Portal configuration and verified gateway runtime evidence."}, "routes": {Type: "array", Description: "App, stable TLS port, state, reason and exact URL when observed."}}
 	case "tslink portal enable", "tslink portal disable":
 		return map[string]JSONResultFieldInfo{
+			"gateway":  {Type: "object", Description: "Gateway enablement, persistence, tags, proven NodeID, port range and route state; omitted in directory-only mode."},
 			"enabled":  {Type: "boolean", Description: "Configured portal enablement; never public Funnel."},
 			"hostname": {Type: "string", Description: "Reserved independent portal node hostname."},
 			"state":    {Type: "string", Description: "disabled, pending, starting, running or failed; running requires exact live runtime evidence."},
@@ -349,6 +352,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return recipeManifestResultFields()
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["portal"] = JSONResultFieldInfo{Type: "object", Description: "Portal and gateway configuration with exact runtime URLs when available."}
 		fields["guest_links"] = JSONResultFieldInfo{Type: "array", Description: "Active guest grants without bearer secrets."}
 		fields["access_log"] = JSONResultFieldInfo{Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."}
 		fields["services[].state"] = JSONResultFieldInfo{

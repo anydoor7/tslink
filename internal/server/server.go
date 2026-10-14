@@ -379,23 +379,24 @@ type Server struct {
 	lastSnapshotComplete    bool
 	// Watcher callbacks compare against the exact state of a successful sync,
 	// including isolated decode errors. A partial or failed sync is not applied.
-	appliedWatchFingerprint string
-	appliedWatchFile        os.FileInfo
-	inFlightWatchTarget     *watchedRegistryTarget
-	registryWatchGate       atomic.Uint32
-	syncResultMu            sync.Mutex
-	latestSyncResult        syncResult
-	syncResultChanged       chan struct{}
-	daemonPID               int
-	daemonStartedAt         time.Time
-	readyFn                 func() error
-	mcpControlPlane         *MCPControlPlane
-	mcpNode                 *mcpControlPlaneNode
-	portalLifecycleMu       sync.Mutex
-	portalRun               *portalRun
-	portalRoot              context.Context
-	portalState             runtimesnapshot.PortalState
-	portalRetryPending      atomic.Bool
+	appliedWatchFingerprint  string
+	appliedWatchFile         os.FileInfo
+	inFlightWatchTarget      *watchedRegistryTarget
+	registryWatchGate        atomic.Uint32
+	syncResultMu             sync.Mutex
+	latestSyncResult         syncResult
+	syncResultChanged        chan struct{}
+	daemonPID                int
+	daemonStartedAt          time.Time
+	readyFn                  func() error
+	mcpControlPlane          *MCPControlPlane
+	mcpNode                  *mcpControlPlaneNode
+	portalLifecycleMu        sync.Mutex
+	portalRun                *portalRun
+	portalRoot               context.Context
+	portalState              runtimesnapshot.PortalState
+	portalRetryPending       atomic.Bool
+	gatewayRouteRetryPending atomic.Bool
 	// events fans runtime-state changes out to open control-plane event
 	// streams. It is always present so publishing is unconditional and cannot
 	// be skipped by a code path that forgot to check whether anyone is
@@ -684,6 +685,8 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 					if syncErr != nil && !errors.Is(syncErr, context.Canceled) && !errors.Is(syncErr, errServerShuttingDown) {
 						slog.Warn("wall-clock lifecycle sync failed", "error", syncErr)
 					}
+				} else if s.gatewayRouteRetryPending.Load() {
+					s.retryGatewayRoutes(ctx)
 				}
 			}
 		}
@@ -899,6 +902,9 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		// Re-read the wall clock for every reconciliation. Missing timestamps
 		// remain legacy-never; expired services are never allowed into Funnel
 		// policy or listener construction even if persisting the downgrade failed.
+		if svc.PortalOnly {
+			continue
+		}
 		svc = registry.EffectiveServiceAt(svc, serverNowFn())
 		err := ValidateServiceForStartup(svc)
 		if err == nil {

@@ -49,6 +49,7 @@ type PeopleView struct {
 }
 
 type PeopleInviteView struct {
+	TargetKind           string                         `json:"target_kind,omitempty"`
 	App                  string                         `json:"app"`
 	ID                   string                         `json:"id,omitempty"`
 	InviteURL            string                         `json:"invite_url,omitempty"`
@@ -68,6 +69,7 @@ type PeopleResult struct {
 	QRPayload         string                `json:"qr_payload,omitempty"`
 	QRTerminal        bool                  `json:"-"`
 	QRWarning         string                `json:"qr_warning,omitempty"`
+	Warnings          []string              `json:"warnings,omitempty"`
 	Guide             []string              `json:"guide"`
 	GuideZH           []string              `json:"guide_zh"`
 }
@@ -179,7 +181,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 		return PeopleResult{}, output.ErrUsage("replace-invite requires people update --invite without --apps or --for; grants and deadlines are preserved")
 	}
 	for app, id := range args.Replace {
-		if err := registry.ValidateName(app); err != nil {
+		if err := registry.ValidateName(app); err != nil && app != gatewayInviteKey {
 			return PeopleResult{}, output.ErrUsage(err.Error())
 		}
 		if err := tailapi.ValidateInviteID(id); err != nil {
@@ -190,7 +192,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 		}
 	}
 	for app, id := range args.Reconcile {
-		if err := registry.ValidateName(app); err != nil {
+		if err := registry.ValidateName(app); err != nil && app != gatewayInviteKey {
 			return PeopleResult{}, output.ErrUsage(err.Error())
 		}
 		if id != "none" {
@@ -248,13 +250,16 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 		for _, target := range known {
 			targets[target.Service] = target
 		}
+		if reg, _, e := registry.Preflight(paths.Registry); e == nil {
+			gatewayPeopleTargets(reg, portal, paths.Registry, targets)
+		}
 	}
 	p, err := registry.ChangePersonWithLifetime(paths.Registry, args.Who, args.Apps, update, registry.PersonLifetimeOptions{Context: peopleMutationContext(ctx), Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: peopleMutationAuthorization(ctx)})
 	if err != nil {
 		return PeopleResult{}, err
 	}
 	for app := range args.Replace {
-		if !registry.PersonGrantActiveAt(p, app, now) {
+		if app != gatewayInviteKey && !registry.PersonGrantActiveAt(p, app, now) {
 			return PeopleResult{}, output.ErrConflict("replace-invite requires an active grant for " + app)
 		}
 	}
@@ -262,8 +267,28 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if args.Invite {
 		resumePeopleInvites(ctx, paths.Registry, p, targets, args, &result)
 	}
+	gateway := portal.Gateway != nil && portal.Gateway.Enabled
+	if gateway {
+		if reg, _, err := registry.Preflight(paths.Registry); err == nil {
+			for _, grant := range p.Grants {
+				for _, svc := range reg.Services {
+					if svc.Name == grant.App && svc.PortalRoute == nil {
+						result.Warnings = append(result.Warnings, svc.Name+" is not routed through the gateway and requires its own app invitation.")
+					}
+				}
+			}
+		}
+	}
 	result.Message = peopleMessage(result.Person, result.Invites, args.Invite, args.PrintLinks)
-	if result.Portal.Enabled {
+	if !result.Person.Revoked {
+		for _, inv := range result.Invites {
+			if inv.TargetKind == registry.InviteTargetGateway {
+				result.Message = gatewayPeopleMessage(result, args.PrintLinks)
+				break
+			}
+		}
+	}
+	if result.Portal.Enabled && !gateway {
 		if result.Portal.URL != "" {
 			result.Message += "\nYour one home address: open and bookmark " + result.Portal.URL + ". It shows the apps available to you, their health and when access ends."
 		} else {
@@ -422,7 +447,7 @@ func newPeopleCmd() *cobra.Command {
 				for _, value := range reconcile {
 					app, id, ok := strings.Cut(value, "=")
 					if !ok || app == "" || id == "" || args.Reconcile[app] != "" {
-						return output.ErrUsage("reconcile-invite must be a unique app=id or app=none")
+						return output.ErrUsage("reconcile-invite must be a unique app=id or app=none (use @gateway for the gateway)")
 					}
 					args.Reconcile[app] = id
 				}
@@ -462,8 +487,8 @@ func newPeopleCmd() *cobra.Command {
 		c.Flags().StringVar(&qrFile, "qr-png", "", "Write a private QR PNG to an existing directory; JSON contains payload text only")
 		c.Flags().StringVar(&qrInvite, "qr-invite", "", "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential")
 		if update {
-			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite")
-			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite")
+			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway; requires --invite")
+			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines; requires --invite")
 		}
 		group.AddCommand(c)
 	}
@@ -489,7 +514,7 @@ func newPeopleCmd() *cobra.Command {
 		for _, value := range removeReconcile {
 			app, id, ok := strings.Cut(value, "=")
 			if !ok || app == "" || id == "" || resolved[app] != "" {
-				return output.ErrUsage("reconcile-invite must be a unique app=id or app=none")
+				return output.ErrUsage("reconcile-invite must be a unique app=id or app=none (use @gateway for the gateway)")
 			}
 			resolved[app] = id
 		}
@@ -500,7 +525,7 @@ func newPeopleCmd() *cobra.Command {
 		writePeopleResult(c.OutOrStdout(), "people remove", result, jsonOutput(c))
 		return nil
 	}}
-	removeCmd.Flags().StringArrayVar(&removeReconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none before cleanup")
+	removeCmd.Flags().StringArrayVar(&removeReconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway before cleanup")
 	group.AddCommand(removeCmd)
 	return group
 }

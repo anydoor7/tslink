@@ -2,7 +2,7 @@
 
 ## People
 
-`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` grants private HTTP/file access and produces a recipient guide. `all` selects current private HTTP/file apps, excluding TCP/Funnel. `--for` uses the [unified duration grammar](durations.md); `--until` sets an absolute deadline. New grants default to 24h. `never` requires `--ack-never` and a tailnet-member login. `--invite` creates single-use per-app device invite links, requiring a user-owned API token. Links are masked unless explicitly requested with `--print-links`.
+`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` grants private HTTP/file access and produces a recipient guide. `all` selects current private HTTP/file apps, excluding TCP/Funnel. `--for` uses the [unified duration grammar](durations.md); `--until` sets an absolute deadline. New grants default to 24h. `never` requires `--ack-never` and a tailnet-member login. `--invite` creates one gateway device invite for routed apps and single-use per-app links for other apps, requiring a user-owned API token. Links are masked unless explicitly requested with `--print-links`.
 
 `tslink people list [--json]` reports people, app grants, absolute expiry, active state and revoked tombstones. `tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` requires apps, expiry or invite; omitted values retain their current setting (new apps default to 24h). `tslink people remove <who>` revokes local HTTP/file access everywhere, including matching legacy allow entries. All use the versioned JSON envelope; add/update return partial invitation failure as `data.complete: false` without discarding grants. See [people](people.md) for enforcement, existing WebSocket connections, clock changes and schema 2 downgrade rules.
 
@@ -189,7 +189,7 @@ Omitting `--funnel-ttl` when making an existing private service public selects t
 `tslink access path <app> <prefix|full|off|inherit|true|false>` controls per-app path mode: prefix by default, full may retain app-specific bearer paths, off omits paths. Global `config set` keys: `access-log-enabled`, `access-log-path` (compatible booleans), `access-log-path-mode` (prefix/full/off); `access-log-retention-days` (default 30), `access-log-max-bytes` (default 67108864), `access-log-queue-size` (default 1024). Empty values reset defaults; restart `serve` for global changes. `status` and `doctor` include `access_log` current-instance health (current, last write, drops, size, missing-history windows; old successful snapshots never replace current failures). See [access-log.md](access-log.md) for strict ranges, privacy, durability and event-count semantics.
 ## Home portal
 
-`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. HTTP MCP `portal_enable` requires the current exact portal owner to change owner/admin settings; other callers receive `access_request_owner_required`. Local CLI/stdio MCP supports first-owner bootstrap and lost-owner recovery. See [portal.md](portal.md) for authorization, network reachability and JSON details.
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. HTTP MCP `portal_enable` requires the current exact portal owner to change owner/admin settings; other callers receive `access_request_owner_required`. With gateway mode on, HTTP MCP `portal_disable` also requires the current portal owner, checked in the registry write transaction; refusals use `access_request_owner_required`. Local CLI/stdio MCP supports first-owner bootstrap and lost-owner recovery. See [portal.md](portal.md) for authorization, network reachability and JSON details.
 
 Daemon readiness preserves pending portal enrollment; completed portal runtime evidence prevents a stale login prompt. Private HTTP/file entries match their enforced access. Raw TCP/public Funnel entries are an owner/admin inventory with a per-person enforcement note; omission does not deny visitor connectivity.
 ## MCP scopes and audit
@@ -229,3 +229,36 @@ Guest counter persistence errors, including lock preparation and acquisition fai
 Access-log queries read both daemon segments and the bounded mutation journal. Approval grants, extensions, expiry latches and guest revocations carry typed `changes`; guest uses carry `guest.link_id`. `surface` identifies CLI, MCP, scoped MCP, guest or lifecycle processing. Reduced-role history filtering runs before summaries and truncation. See [MCP scopes](mcp-scopes.md) and [access history](access-log.md) for the complete boundaries and audit durability limits.
 
 The portal offers access-request entry points only for requestable private HTTP/file apps, excluding both public Funnel and gated guest apps. Guest apps retain people enforcement for private tailnet traffic; guest bearer authorization applies to their public listener.
+
+## Gateway routes and remote apps
+
+- `portal enable --owner <login> --gateway [--gateway-ports 8443-8499] [--gateway-tag tag:gateway]` enables the persistent shared node. Omitted gateway flags preserve settings. Range/tag options require `--gateway`; `--gateway=false` explicitly disables it only when no routes remain.
+- `portal route add <app> [--port N] [--allow-cross-origin]` routes a private HTTP/file app and makes it people-scoped. `portal route remove <app>` refuses portal-only apps; remove those apps instead. `portal route list [--json]` is read-only.
+- `add <name> --proxy localhost:3000 --portal-only [--portal-port N]` or `add <name> --dir <path> --portal-only` creates no app node. `add <name> --remote https://node.example.ts.net[:port] [--portal-port N]` creates a portal-only remote proxy. Remote requires an observed tagged gateway and its own tailnet suffix.
+
+MCP `portal_enable` accepts `gateway`, `gateway_ports` and `gateway_tag`, including
+explicit `gateway: false`. `portal_route_add`, `portal_route_remove` and
+`portal_route_list` have mutation/read-only annotations. HTTP MCP mutations
+require the current unrevoked portal owner inside the write transaction; reduced
+MCP roles do not expose these tools. MCP `add` accepts `portal_only`, `remote` and
+`portal_port`. A proxy `remote` replaces `target`; it cannot be combined with a
+local target or another service type.
+
+Status/list/doctor add `portal.gateway` containing `enabled`, `persistent`,
+`tagged`, `node_id`, `ownership_proven`, `identity_changed`, `ports`, `dropped` and
+`routes`. A route has `app`, `port`, `state`, `host_label`, and optional exact
+`url`, failure `reason`, `health`, `health_checked` and `offline_since`.
+`authorized_service_count` counts each authorized app once: either its running
+app node or, for a portal-only app, its running matching gateway route. It is not
+a count of people, network connections or healthy backends. People-scoped app
+views use nonempty `allow.mode: "people"`; existing legacy allow modes remain.
+Verbose service entries retain `type`, `backend`, `endpoint` and `allow.mode`.
+For portal-only apps, `url` is the route address; other routed apps retain their
+node URL and expose an additional `portal_url`.
+
+People invite records can have `target_kind: "gateway"` with empty `app`; omitted
+kind means a legacy app invite. Use `@gateway=id|none` for explicit reconciliation
+and `@gateway=old-id` for replacement. Mixed selections return `warnings` for
+non-routed apps. Normal QR payloads and guides use the dashboard URL. Only the
+user-invites GET accepts JSON root `null` as an empty list after a valid nonempty
+HTTP 200 response; device/device-invite completeness rules remain strict.

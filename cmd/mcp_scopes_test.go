@@ -37,7 +37,7 @@ var scopeExpected = map[string]string{
 	"template_list": "read", "template_plan": "owner", "template_apply": "owner", "apps_detect": "owner",
 	"recipe_list": "read", "recipe_plan": "owner", "recipe_apply": "owner", "people_add": "owner", "people_update": "owner",
 	"people_list": "read", "people_remove": "owner", "people_grant": "manage-app", "people_revoke": "manage-app",
-	"portal_enable": "owner", "portal_disable": "owner", "extend": "manage-app",
+	"portal_enable": "owner", "portal_disable": "owner", "portal_route_add": "owner", "portal_route_remove": "owner", "portal_route_list": "owner", "extend": "manage-app",
 	"guest_create": "owner", "guest_list": "owner", "guest_show": "owner", "guest_revoke": "owner",
 	"requests_list": "requests", "requests_approve": "requests", "requests_deny": "requests",
 	"access_log": "read", "access_summary": "read",

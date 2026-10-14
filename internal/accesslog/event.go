@@ -68,6 +68,7 @@ type GuestDecision struct {
 	Reason   string `json:"reason"`
 }
 type Event struct {
+	Via           string            `json:"via,omitempty"`
 	Surface       string            `json:"surface,omitempty"`
 	Changes       []mcpaudit.Change `json:"changes,omitempty"`
 	SchemaVersion int               `json:"schema_version"`
@@ -253,6 +254,9 @@ func tokenSegment(s string) bool {
 	return len(s) >= 12 && digit && (lower || upper) || len(s) >= 20 && lower && upper
 }
 func sanitize(e Event) Event {
+	if e.Via != "portal" {
+		e.Via = ""
+	}
 	e.SchemaVersion = SchemaVersion
 	e.Time = e.Time.UTC()
 	switch e.Kind {
@@ -280,10 +284,12 @@ func sanitize(e Event) Event {
 	e.Path = SafePath(e.Path)
 	if e.Decision != "denied" {
 		e.Decision = "allowed"
-		e.Reason = ""
+		if e.Via != "portal" || (e.Reason != "granted" && e.Reason != "owner" && e.Reason != "admin") {
+			e.Reason = ""
+		}
 	}
 	switch e.Reason {
-	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable":
+	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_cancelled", "remote_upstream_requires_tag", "remote_upstream_outside_tailnet", "remote_upstream_unavailable", "remote_upstream_not_peer":
 	default:
 		e.Reason = "unavailable"
 	}

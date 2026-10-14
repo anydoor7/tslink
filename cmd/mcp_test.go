@@ -47,6 +47,10 @@ func fakeMCPActions() mcpActions {
 		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
 			return accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}, nil
 		},
+		portalRouteList: func() (any, error) { return portalRoutesResult{Routes: []tsruntime.GatewayRouteState{}}, nil },
+		portalRouteChange: func(_ context.Context, _ portalRouteArguments, _ bool) (any, error) {
+			return portalRoutesResult{Routes: []tsruntime.GatewayRouteState{}}, nil
+		},
 		portalChange: func(_ context.Context, args portalArguments, enable bool) (any, error) {
 			return map[string]any{"enabled": enable, "state": "pending", "hostname": args.Hostname}, nil
 		},
@@ -537,7 +541,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"template_list", "template_plan", "template_apply",
 		"access_log", "access_summary",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
-		"extend", "guest_create", "guest_list", "guest_show", "guest_revoke",
+		"extend", "portal_route_add", "portal_route_remove", "portal_route_list", "guest_create", "guest_list", "guest_show", "guest_revoke",
 		"people_add", "people_update", "people_list", "people_remove",
 		"portal_enable", "portal_disable",
 		"requests_list", "requests_approve", "requests_deny",

@@ -85,11 +85,36 @@ func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
 
 // PortalState is runtime evidence for the independent Tailnet portal node.
 type PortalState struct {
-	Enabled  bool   `json:"enabled"`
-	Hostname string `json:"hostname,omitempty"`
-	State    string `json:"state"`
-	URL      string `json:"url,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Gateway  *GatewayState `json:"gateway,omitempty"`
+	Enabled  bool          `json:"enabled"`
+	Hostname string        `json:"hostname,omitempty"`
+	State    string        `json:"state"`
+	URL      string        `json:"url,omitempty"`
+	Error    string        `json:"error,omitempty"`
+}
+
+type GatewayState struct {
+	Dropped         uint64                `json:"dropped"`
+	Enabled         bool                  `json:"enabled"`
+	Persistent      bool                  `json:"persistent"`
+	Tagged          bool                  `json:"tagged"`
+	NodeID          string                `json:"node_id,omitempty"`
+	OwnershipProven bool                  `json:"ownership_proven"`
+	IdentityChanged bool                  `json:"identity_changed,omitempty"`
+	Ports           registry.GatewayPorts `json:"ports"`
+	Routes          []GatewayRouteState   `json:"routes"`
+}
+
+type GatewayRouteState struct {
+	HealthChecked *time.Time `json:"health_checked,omitempty"`
+	App           string     `json:"app"`
+	Port          int        `json:"port"`
+	URL           string     `json:"url,omitempty"`
+	State         string     `json:"state"`
+	Reason        string     `json:"reason,omitempty"`
+	HostLabel     string     `json:"host_label"`
+	Health        string     `json:"health,omitempty"`
+	OfflineSince  *time.Time `json:"offline_since,omitempty"`
 }
 
 type Snapshot struct {

@@ -121,6 +121,8 @@ type StatusCredentialSlot struct {
 }
 
 type StatusServiceState struct {
+	PortalOnly      bool                             `json:"portal_only,omitempty"`
+	PortalURL       string                           `json:"portal_url,omitempty"`
 	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
 	Warnings        []inspect.WarningView            `json:"warnings,omitempty"`
 	Health          health.State                     `json:"health"`
@@ -177,6 +179,8 @@ type StatusRuntimeSnapshotResult struct {
 }
 
 type StatusServiceView struct {
+	PortalOnly      bool                             `json:"portal_only,omitempty"`
+	PortalURL       string                           `json:"portal_url,omitempty"`
 	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
 	Health          health.State                     `json:"health"`
 	NodeKey         health.Expiry                    `json:"node_key"`
@@ -239,6 +243,7 @@ func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (Sta
 		now := statusNowFn()
 		effective := registry.EffectiveServiceAt(svc, now)
 		r.Services = append(r.Services, StatusServiceState{
+			PortalOnly:      svc.PortalOnly,
 			Name:            svc.Name,
 			Health:          health.Unchecked(svc.Type),
 			NodeKey:         health.Expiry{State: health.Unknown, Source: "unavailable"},
@@ -256,6 +261,7 @@ func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (Sta
 			r.Services[len(r.Services)-1].Status = tsruntime.ServiceRuntimeFailed
 		}
 	}
+	applyGatewayStatus(&r)
 	setStatusContinuation(&r)
 	return r, nil
 }
@@ -549,6 +555,13 @@ func (s statusRead) getPollableStatus(ctx context.Context, pidPath, regPath, sna
 
 	portalUp := r.DaemonRunning && r.Portal.Enabled && r.Portal.State == "running" && r.Portal.URL != ""
 	if portalUp {
+		for _, svc := range r.Services {
+			current, present := currentByName[svc.Name]
+			if route, ok := gatewayRouteView(r.Portal, svc.Name); present && current.PortalOnly && current.PortalRoute != nil && ok && route.Port == current.PortalRoute.Port && route.State == "running" && route.URL != "" {
+				up[svc.Name] = struct{}{}
+			}
+		}
+		r.AuthorizedServiceCount = len(up)
 		r.NodeAuthorized, r.Authenticated = true, true
 		r.AuthStatus = authStatusAuthenticated
 	}
@@ -783,6 +796,7 @@ func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath,
 		effective := registry.EffectiveServiceAt(svc, now)
 		view := inspect.ServiceViewFor(effective)
 		service := StatusServiceView{
+			PortalOnly:      svc.PortalOnly,
 			Name:            view.Name,
 			Health:          health.Unchecked(svc.Type),
 			NodeKey:         health.Expiry{State: health.Unknown, Source: "unavailable"},
@@ -903,6 +917,7 @@ func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath,
 			service.Endpoint.Host = ""
 		}
 
+		applyGatewayServiceView(&service, result.Portal)
 		result.Services = append(result.Services, service)
 	}
 

@@ -9,7 +9,7 @@
     "linux",
     "windows"
   ],
-  "registry_schema_version": 2,
+  "registry_schema_version": 3,
   "toolchain": {
     "minimum_go_version": "1.27.1"
   },
@@ -24,7 +24,7 @@
     "warning": 64
   },
   "registry_schema": {
-    "version": 2,
+    "version": 3,
     "service_types": [
       "proxy",
       "file",
@@ -682,6 +682,20 @@
           "usage": "Save configuration only; do not install or start the background service"
         },
         {
+          "name": "portal-only",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Serve only through the portal gateway; do not create an app node"
+        },
+        {
+          "name": "portal-port",
+          "type": "int",
+          "default": "0",
+          "scope": "local",
+          "usage": "Gateway TLS port for --portal-only (default: lowest available)"
+        },
+        {
           "name": "preserve-host",
           "type": "bool",
           "default": "false",
@@ -714,6 +728,12 @@
           "type": "string",
           "scope": "local",
           "usage": "Use an app recipe; preview by default, apply with --yes"
+        },
+        {
+          "name": "remote",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTPS MagicDNS upstream in the gateway tailnet; implies --portal-only"
         },
         {
           "name": "request-header-timeout",
@@ -2004,6 +2024,10 @@
           "type": "array",
           "description": "Active guest grants without bearer secrets."
         },
+        "portal": {
+          "type": "object",
+          "description": "Portal and gateway configuration with exact runtime URLs when available."
+        },
         "registered_count": {
           "type": "integer",
           "description": "--tailnet only: devices whose hostname exactly matches a service in this machine's registry."
@@ -2531,7 +2555,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none before cleanup"
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway before cleanup"
         }
       ],
       "json_result_fields": {
@@ -2632,7 +2656,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway; requires --invite",
           "requires": [
             "--invite"
           ]
@@ -2642,7 +2666,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite",
+          "usage": "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines; requires --invite",
           "requires": [
             "--invite"
           ],
@@ -2735,6 +2759,10 @@
           "type": "string",
           "description": "Stable portal startup failure code, if any."
         },
+        "gateway": {
+          "type": "object",
+          "description": "Gateway enablement, persistence, tags, proven NodeID, port range and route state; omitted in directory-only mode."
+        },
         "hostname": {
           "type": "string",
           "description": "Reserved independent portal node hostname."
@@ -2768,6 +2796,25 @@
           "usage": "Refused: the portal must stay Tailnet-only"
         },
         {
+          "name": "gateway",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Use a persistent gateway; --gateway=false removes gateway mode when no routes remain"
+        },
+        {
+          "name": "gateway-ports",
+          "type": "string",
+          "scope": "local",
+          "usage": "Gateway TLS port range (initial default 8443-8499; requires --gateway)"
+        },
+        {
+          "name": "gateway-tag",
+          "type": "string",
+          "scope": "local",
+          "usage": "Gateway tag on the credentialed path (requires --gateway); empty restores the default tag"
+        },
+        {
           "name": "hostname",
           "type": "string",
           "default": "home",
@@ -2797,6 +2844,10 @@
           "type": "string",
           "description": "Stable portal startup failure code, if any."
         },
+        "gateway": {
+          "type": "object",
+          "description": "Gateway enablement, persistence, tags, proven NodeID, port range and route state; omitted in directory-only mode."
+        },
         "hostname": {
           "type": "string",
           "description": "Reserved independent portal node hostname."
@@ -2808,6 +2859,102 @@
         "url": {
           "type": "string",
           "description": "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."
+        }
+      }
+    },
+    {
+      "path": "tslink portal route",
+      "short": "Manage app ports on the portal gateway",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink portal route add",
+      "short": "Route a private HTTP or file app through the gateway",
+      "flags": [
+        {
+          "name": "allow-cross-origin",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Allow browser requests from other origins to this app"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "port",
+          "type": "int",
+          "default": "0",
+          "scope": "local",
+          "usage": "Stable TLS port; default is the lowest available port"
+        }
+      ],
+      "json_result_fields": {
+        "portal": {
+          "type": "object",
+          "description": "Portal configuration and verified gateway runtime evidence."
+        },
+        "routes": {
+          "type": "array",
+          "description": "App, stable TLS port, state, reason and exact URL when observed."
+        }
+      }
+    },
+    {
+      "path": "tslink portal route list",
+      "short": "List gateway routes and observed URLs",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "portal": {
+          "type": "object",
+          "description": "Portal configuration and verified gateway runtime evidence."
+        },
+        "routes": {
+          "type": "array",
+          "description": "App, stable TLS port, state, reason and exact URL when observed."
+        }
+      }
+    },
+    {
+      "path": "tslink portal route remove",
+      "short": "Remove a route while keeping the app's own node",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "portal": {
+          "type": "object",
+          "description": "Portal configuration and verified gateway runtime evidence."
+        },
+        "routes": {
+          "type": "array",
+          "description": "App, stable TLS port, state, reason and exact URL when observed."
         }
       }
     },
@@ -3749,6 +3896,26 @@
       "exit_code": 4,
       "description": "Funnel requires a proxy service"
     },
+    "gateway_ephemeral_refused": {
+      "exit_code": 4,
+      "description": "gateway persistent enrollment is not proven"
+    },
+    "gateway_invite_stale": {
+      "exit_code": 4,
+      "description": "gateway invitation targets a replaced node; explicit owner retirement is required"
+    },
+    "gateway_ports_invalid": {
+      "exit_code": 2,
+      "description": "gateway port range must be within 1-65535"
+    },
+    "gateway_required": {
+      "exit_code": 2,
+      "description": "enable portal gateway mode before assigning routes"
+    },
+    "gateway_tag_requires_credentials": {
+      "exit_code": 2,
+      "description": "gateway tags require a credentialed enrollment"
+    },
     "internal_error": {
       "exit_code": 1,
       "description": "unexpected internal failure"
@@ -3937,9 +4104,73 @@
       "exit_code": 2,
       "description": "portal owner and admins must be canonical Tailscale login identities"
     },
+    "portal_only_required": {
+      "exit_code": 2,
+      "description": "portal port requires a portal-only app"
+    },
+    "portal_only_requires_route": {
+      "exit_code": 4,
+      "description": "portal-only apps require their route; remove the app instead"
+    },
+    "portal_route_bad_port": {
+      "exit_code": 2,
+      "description": "gateway route port is blocked by browsers or reserved"
+    },
+    "portal_route_funnel_refused": {
+      "exit_code": 4,
+      "description": "public Funnel services cannot be routed"
+    },
+    "portal_route_guest_refused": {
+      "exit_code": 4,
+      "description": "guest-gated services cannot be routed"
+    },
+    "portal_route_port_conflict": {
+      "exit_code": 4,
+      "description": "gateway route port is already assigned"
+    },
+    "portal_route_port_range": {
+      "exit_code": 2,
+      "description": "gateway route port is outside the configured range"
+    },
+    "portal_route_ports_exhausted": {
+      "exit_code": 4,
+      "description": "no free gateway route port remains"
+    },
+    "portal_route_requires_scope": {
+      "exit_code": 2,
+      "description": "gateway routes must be people-scoped"
+    },
+    "portal_route_type_unsupported": {
+      "exit_code": 2,
+      "description": "gateway routes support private HTTP proxy and file services only"
+    },
+    "portal_upstream_invalid": {
+      "exit_code": 2,
+      "description": "invalid gateway upstream mode or target"
+    },
     "registry_reload_invalid": {
       "exit_code": 1,
       "description": "a registry.json edit made a running public Funnel service invalid; the daemon closed its public listener"
+    },
+    "registry_unavailable": {
+      "exit_code": 1,
+      "description": "access denied because current registry state cannot be read or expiry persisted"
+    },
+    "remote_upstream_not_peer": {
+      "exit_code": 4,
+      "description": "remote upstream is not a gateway netstack peer"
+    },
+    "remote_upstream_outside_tailnet": {
+      "exit_code": 2,
+      "description": "remote upstream is outside the gateway tailnet suffix"
+    },
+    "remote_upstream_requires_tag": {
+      "exit_code": 4,
+      "description": "remote upstream requires an observed tagged gateway"
+    },
+    "remote_upstream_unavailable": {
+      "exit_code": 1,
+      "description": "gateway remote transport or identity status is unavailable"
     },
     "runtime_snapshot_missing": {
       "exit_code": 1,

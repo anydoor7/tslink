@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -37,6 +39,10 @@ type serviceHealth struct {
 	Stale       bool // Last freshness projection announced to event clients.
 }
 type healthTarget struct {
+	Portal        *portalRun
+	Route         *gatewayRouteRun
+	Dialer        UpstreamDialer
+	Remote        *gatewayRemoteUpstream
 	CanonicalHost string
 	Service       registry.Service
 	Node          *ServiceNode
@@ -51,8 +57,9 @@ func healthIdentity(svc registry.Service) string {
 		Health                   *registry.HealthConfig
 		CreatedAt                time.Time
 		PreserveHost             bool
+		Upstream                 string `json:"Upstream,omitempty"`
 		RequestLimits            *registry.EffectiveRequestLimits
-	}{svc.Type, svc.Target, svc.Path, svc.File, svc.Health, svc.CreatedAt, svc.PreserveHost, svc.EffectiveRequestLimits()})
+	}{svc.Type, svc.Target, svc.Path, svc.File, svc.Health, svc.CreatedAt, svc.PreserveHost, svc.Upstream, svc.EffectiveRequestLimits()})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
@@ -168,6 +175,16 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			targets = append(targets, healthTarget{Service: failure.Service, Failed: true})
 		}
 	}
+	if run := s.portalRun; run != nil && s.portalState.State == "running" {
+		run.routesMu.Lock()
+		for _, route := range run.routes {
+			if !route.svc.PortalOnly || route.state.State != "running" || route.ctx.Err() != nil || !health.TargetSafe(route.svc) {
+				continue
+			}
+			targets = append(targets, healthTarget{Service: route.svc, CanonicalHost: net.JoinHostPort(canonicalHostFor(run.node.tsnetSrv, run.runtimeHost), strconv.Itoa(route.svc.PortalRoute.Port)), Portal: run, Route: route, Dialer: route.dialer, Remote: route.remote})
+		}
+		run.routesMu.Unlock()
+	}
 	s.mu.Unlock()
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Service.Name < targets[j].Service.Name })
 	type result struct {
@@ -197,7 +214,16 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			go func() {
 				// Enrollment/policy failures still get backend observations.
 				code, attempted := boundedHealthRead(ctx, probeSlots, target.Service.Name, timeout, "health_timeout", func(ctx context.Context) string {
-					return probe(health.WithCanonicalHost(ctx, target.CanonicalHost), target.Service)
+					ctx = health.WithCanonicalHost(ctx, target.CanonicalHost)
+					if target.Route != nil {
+						if target.Remote != nil {
+							if code := target.Remote.check(ctx); code != "" {
+								return code
+							}
+						}
+						return health.ProbeWithDialer(ctx, target.Service, target.Dialer)
+					}
+					return probe(ctx, target.Service)
 				})
 				var h *health.State
 				if attempted {
@@ -209,7 +235,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		}
 		// The LocalAPI cadence belongs to the node, not health.interval. A new
 		// pointer denotes a new incarnation and must be read immediately.
-		if !exists || observed.Node != target.Node || observed.NodeChecked.IsZero() || now.Sub(observed.NodeChecked) >= time.Minute {
+		if target.Route == nil && (!exists || observed.Node != target.Node || observed.NodeChecked.IsZero() || now.Sub(observed.NodeChecked) >= time.Minute) {
 			jobs++
 			go func() {
 				e, attempted := boundedHealthRead(ctx, nodeSlots, target.Service.Name, 5*time.Second, nodeKeyExpiry(nil, now), func(ctx context.Context) health.Expiry {
@@ -264,6 +290,32 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			s.mu.Lock()
 			name := result.target.Service.Name
 			current, running := s.nodes[name]
+			if result.target.Route != nil {
+				run := result.target.Portal
+				run.routesMu.Lock()
+				route := run.routes[name]
+				valid := s.portalRun == run && route == result.target.Route && route.ctx.Err() == nil && route.state.State == "running"
+				if valid && result.health != nil {
+					route.health = *result.health
+					route.state.Health = result.health.State
+					route.state.HealthChecked = result.health.LastChecked
+					if result.health.State == health.Down && route.state.OfflineSince == nil {
+						when := now.UTC()
+						route.state.OfflineSince = &when
+					}
+					if result.health.State == health.Healthy {
+						route.state.OfflineSince = nil
+					}
+					if result.target.Remote != nil {
+						route.state.Reason = result.health.LastError
+					}
+				}
+				run.routesMu.Unlock()
+				if !valid {
+					s.mu.Unlock()
+					continue
+				}
+			}
 			if result.target.Node != nil && (!running || current != result.target.Node || healthProbeIdentity(current.service, canonicalHostFor(current.tsnetSrv, current.runtimeHost)) != result.identity) {
 				s.mu.Unlock()
 				continue

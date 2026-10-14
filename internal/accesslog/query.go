@@ -49,6 +49,7 @@ type Count struct {
 	LastSeen *time.Time `json:"last_seen"`
 }
 type Summary struct {
+	Reasons []Count `json:"reasons,omitempty"`
 	Count   int     `json:"count"`
 	Allowed int     `json:"allowed"`
 	Denied  int     `json:"denied"`
@@ -157,6 +158,7 @@ func Query(configDir string, f Filter) (Result, error) {
 	}
 	people := map[string]*Count{}
 	apps := map[string]*Count{}
+	reasons := map[string]*Count{}
 	consume := func(e Event) {
 		if !f.matches(e) {
 			return
@@ -188,6 +190,9 @@ func Query(configDir string, f Filter) (Result, error) {
 			who = "unknown"
 		}
 		addCount(people, who, e)
+		if e.Reason != "" {
+			addCount(reasons, e.Reason, e)
+		}
 		if e.MCP != nil {
 			seen := map[string]bool{}
 			for _, app := range e.MCP.Apps {
@@ -252,6 +257,9 @@ func Query(configDir string, f Filter) (Result, error) {
 	}
 	r.Summary.People = counts(people)
 	r.Summary.Apps = counts(apps)
+	if len(reasons) > 0 {
+		r.Summary.Reasons = counts(reasons)
+	}
 	r.Truncated = r.Summary.Count > len(r.Events)
 	return r, nil
 }

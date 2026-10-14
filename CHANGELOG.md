@@ -3,6 +3,35 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [0.2.0] - 2026-10-14
+
+Portal gateway mode: a person outside your tailnet accepts one device share, of the portal node, and you decide which apps they can use, on this host or on others, without sending more invitations. Gateway mode is opt-in; per-app sharing is unchanged and remains the default.
+
+### Upgrade
+
+- Homebrew: `brew upgrade --cask anydoor7/tap/tslink`. Scoop: `scoop update; scoop update tslink`. Other installs: download the new archive or package from this release.
+- If TSLink runs as a background service, run `tslink install` again after upgrading so the service starts the new binary.
+- Existing registries keep their schema version until gateway mode is configured; read Compatibility below before turning it on.
+
+### Added
+
+- `tslink portal enable --gateway`: a persistent portal node with one stable device identity, the private dashboard on port 443, and one HTTPS port per routed app (`tslink portal route add|remove|list`). Each connection is identified before TLS, each request is checked against people grants, and non-navigation requests from other origins, including other gateway ports, are refused unless a route opts out with `--allow-cross-origin`.
+- Portal-only apps (`tslink add --portal-only`) with no node of their own, and apps on other hosts (`tslink add --remote https://<node>.<tailnet>.ts.net`). Remote apps are reached only through the tagged gateway node's own netstack, using the peer address from the gateway's netmap, never through the host network or the host resolver. The remote host authenticates the gateway's tag; visitor identity is not forwarded.
+- One gateway device invite per person (`tslink people add|update --invite`); later grant changes need no new invite. An invite left behind by a gateway identity change is reported as stale and can be retired explicitly.
+- Periodic health checks for portal-only apps; gateway fields in `status`, `list`, `url` and `doctor`; access-log reason codes and connection-drop counts; MCP tools `portal_route_add`, `portal_route_remove` and `portal_route_list`, and gateway options for `portal_enable` and `add`.
+
+### Changed
+
+- People-scoped apps now report `allow.mode: people` wherever an app's access summary is printed (`list`, `status`, `add`), including when gateway mode is off.
+
+### Fixed
+
+- `tslink invite list` no longer fails when Tailscale returns an empty user-invite list as JSON `null`; device invitations stay visible. Device list completeness checks are unchanged.
+
+### Compatibility
+
+Gateway configuration uses registry schema 3, which older releases refuse. Before downgrading, follow the steps in `docs/portal.md`: stop the daemon, back up the registry and portal state, remove portal-only and remote apps and all routes, and turn gateway mode off with this version. Recorded gateway invites keep the registry at schema 3 even with gateway mode off; if any remain, restore a registry backup taken before gateway mode was enabled (people and invite changes made since then are lost). Replacing only the binary is not a downgrade.
+
 ## [0.1.2] - 2026-10-12
 
 macOS background-service startup fix. Commands, flags and stored data are unchanged from 0.1.1.
