@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,12 +22,20 @@ import (
 
 	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/net/tsdial"
+	"tailscale.com/tsd"
+	"tailscale.com/types/key"
 	"tailscale.com/types/views"
 )
 
 type remoteDialFunc func(context.Context, string, string) (net.Conn, error)
 
 func (f remoteDialFunc) Dial(ctx context.Context, n, a string) (net.Conn, error) { return f(ctx, n, a) }
+func (f remoteDialFunc) Sys() *tsd.System {
+	sys := &tsd.System{}
+	sys.Dialer.Set(&tsdial.Dialer{UseNetstackForIP: func(ip netip.Addr) bool { return ip == netip.MustParseAddr("100.64.0.9") }, NetstackDialTCP: func(ctx context.Context, a netip.AddrPort) (net.Conn, error) { return f(ctx, "tcp", a.String()) }})
+	return sys
+}
 
 func remoteLocalClient(st *atomic.Pointer[ipnstate.Status], fail *atomic.Bool) *LocalClient {
 	return &LocalClient{OmitAuth: true, Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -43,7 +52,11 @@ func taggedGatewayStatus(tagged bool) *ipnstate.Status {
 		tags = append(tags, "tag:gateway")
 	}
 	v := views.SliceOf(tags)
-	return &ipnstate.Status{Self: &ipnstate.PeerStatus{Tags: &v}, CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "tailnet.ts.net"}}
+	peers := map[key.NodePublic]*ipnstate.PeerStatus{}
+	for _, name := range []string{"remote", "home", "wrong"} {
+		peers[key.NewNode().Public()] = &ipnstate.PeerStatus{DNSName: name + ".tailnet.ts.net.", TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.9")}}
+	}
+	return &ipnstate.Status{Peer: peers, Self: &ipnstate.PeerStatus{Tags: &v}, CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "tailnet.ts.net"}}
 }
 
 func TestGatewayRemoteDialBoundary(t *testing.T) {
@@ -53,7 +66,7 @@ func TestGatewayRemoteDialBoundary(t *testing.T) {
 	status.Store(taggedGatewayStatus(true))
 	d := &gatewayRemoteUpstream{lc: remoteLocalClient(&status, &failed), target: "https://remote.tailnet.ts.net", node: remoteDialFunc(func(ctx context.Context, n, a string) (net.Conn, error) {
 		calls.Add(1)
-		if n != "tcp" || a != "remote.tailnet.ts.net:443" {
+		if n != "tcp" || a != "100.64.0.9:443" {
 			t.Errorf("destination=%s/%s", n, a)
 		}
 		aConn, bConn := net.Pipe()
@@ -152,7 +165,7 @@ func TestGatewayRemoteTrafficAndHealth(t *testing.T) {
 		})
 		f.node.dial = func(ctx context.Context, n, a string) (net.Conn, error) {
 			dials.Add(1)
-			if a != "home.tailnet.ts.net:443" && a != "wrong.tailnet.ts.net:443" {
+			if a != "100.64.0.9:443" {
 				t.Errorf("unexpected remote destination %q", a)
 			}
 			if offline.Load() {

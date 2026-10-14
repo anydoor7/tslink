@@ -107,9 +107,12 @@ have no per-app node or app-node ownership entry. Existing routed apps retain
 their own node, where the same people policy still applies.
 
 Local proxy targets use the host network. Remote targets use only this portal
-node's tsnet Dial, restricted to the registered HTTPS hostname/port in the
-observed tailnet suffix and an observed tagged gateway. Upstream TLS verifies the
-remote hostname. The remote app authenticates the gateway tag; no visitor
+node's netstack, restricted to the registered HTTPS hostname/port in the
+observed tailnet suffix and an observed tagged gateway. LocalAPI Status peers
+resolve that hostname to a Tailscale IP; `UseNetstackForIP` must approve the IP
+before `NetstackDialTCP` dials it directly. Missing peers are refused, and no
+remote traffic or health probe uses host DNS or host-network fallback. Upstream
+TLS verifies the registered hostname. The remote app authenticates the gateway tag; no visitor
 identity headers are forwarded. Periodic portal-only health checks use the same
 transport and bounded probe machinery, with stale observations shown as unknown.
 

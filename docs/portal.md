@@ -113,9 +113,15 @@ tslink add media --remote https://mini.example.ts.net:9443 --portal-port 8446
 
 `--remote` creates a portal-only HTTPS proxy. IP literals, HTTP, credentials in
 URLs, fragments and hosts outside the gateway's observed MagicDNS tailnet suffix
-are refused. Port 443 is the default. Traffic and health checks use the gateway
-node's tsnet Dial, with normal TLS hostname verification, and never fall back to
-the host network. The remote app must permit the gateway tag in its own policy
+are refused. Registration requires a `<node>.<tailnet>.ts.net` name; custom
+control-server domains outside `.ts.net` are not supported by `--remote`. Port
+443 is the default. The hostname must match a peer DNSName in this gateway
+node's LocalAPI status (case-insensitive, ignoring a trailing dot). Traffic and
+health checks dial that peer's Tailscale IP directly through the gateway netstack,
+only while `UseNetstackForIP` confirms it is a peer. They never use the host
+resolver or host network; a missing or disappearing peer fails closed with
+`remote_upstream_not_peer` or a netstack dial error. TLS still verifies the
+registered hostname normally. The remote app must permit the gateway tag in its own policy
 (for a TSLink app, its explicit tag allow list). This command does not change
 remote ACLs or registrations.
 

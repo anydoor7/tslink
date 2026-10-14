@@ -4152,6 +4152,10 @@
       "exit_code": 1,
       "description": "access denied because current registry state cannot be read or expiry persisted"
     },
+    "remote_upstream_not_peer": {
+      "exit_code": 4,
+      "description": "remote upstream is not a gateway netstack peer"
+    },
     "remote_upstream_outside_tailnet": {
       "exit_code": 2,
       "description": "remote upstream is outside the gateway tailnet suffix"

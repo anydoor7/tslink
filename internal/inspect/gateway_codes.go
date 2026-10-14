@@ -14,6 +14,7 @@ func init() {
 		"upstream_unreachable":             {Severity: "warning", Source: "portal.gateway", Description: "The app upstream failed its health checks."},
 		"remote_upstream_requires_tag":     {Severity: "error", Source: "portal.gateway", Description: "The observed gateway node identity must be tagged for remote apps."},
 		"remote_upstream_outside_tailnet":  {Severity: "error", Source: "portal.gateway", Description: "The remote hostname is outside the gateway tailnet suffix."},
+		"remote_upstream_not_peer":         {Severity: "error", Source: "portal.gateway", Description: "The remote hostname must identify a peer visible to the gateway node."},
 		"remote_upstream_unavailable":      {Severity: "warning", Source: "portal.gateway", Description: "The gateway cannot prove its remote dial context."},
 		"target_probe_skipped_remote":      {Severity: "info", Source: "target_probe", Description: "Remote upstream probes run only through the gateway node; see portal.gateway route health."},
 	} {

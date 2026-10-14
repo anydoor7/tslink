@@ -29,6 +29,7 @@ import (
 	"github.com/coder/websocket"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tsd"
 )
 
 // One embedded node, with independent TLS listeners keyed by the requested
@@ -45,6 +46,8 @@ type gatewayFakeNode struct {
 	stop  chan struct{}
 	once  sync.Once
 }
+
+func (n *gatewayFakeNode) Sys() *tsd.System { return remoteDialFunc(n.Dial).Sys() }
 
 func (n *gatewayFakeNode) Dial(ctx context.Context, network, address string) (net.Conn, error) {
 	if n.dial == nil {

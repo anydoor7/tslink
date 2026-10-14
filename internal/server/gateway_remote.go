@@ -3,17 +3,20 @@ package server
 import (
 	"context"
 	"net"
+	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"tailscale.com/tsd"
 )
 
 // The only remote transport is the gateway node's userspace Tailscale stack.
 // There is deliberately no host-network fallback when this capability is absent.
 type gatewayNodeDialer interface {
-	Dial(context.Context, string, string) (net.Conn, error)
+	Sys() *tsd.System
 }
 
 type gatewayRemoteUpstream struct {
@@ -24,21 +27,27 @@ type gatewayRemoteUpstream struct {
 }
 
 func (d *gatewayRemoteUpstream) check(ctx context.Context) string {
+	_, code := d.peer(ctx)
+	return code
+}
+
+// peer resolves only from this gateway's netmap, never host DNS.
+func (d *gatewayRemoteUpstream) peer(ctx context.Context) (netip.Addr, string) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if d.node == nil || d.lc == nil {
-		return "remote_upstream_unavailable"
+		return netip.Addr{}, "remote_upstream_unavailable"
 	}
-	status, err := d.lc.StatusWithoutPeers(ctx)
+	status, err := d.lc.Status(ctx)
 	if err != nil || status == nil || status.Self == nil {
-		return "remote_upstream_unavailable"
+		return netip.Addr{}, "remote_upstream_unavailable"
 	}
 	tagged := status.Self.Tags != nil && status.Self.Tags.Len() > 0
 	if d.observe != nil {
 		d.observe(tagged)
 	}
 	if !tagged {
-		return "remote_upstream_requires_tag"
+		return netip.Addr{}, "remote_upstream_requires_tag"
 	}
 	suffix := ""
 	if status.CurrentTailnet != nil {
@@ -46,11 +55,22 @@ func (d *gatewayRemoteUpstream) check(ctx context.Context) string {
 	}
 	if err := registry.ValidateRemoteTailnet(d.target, suffix); err != nil {
 		if code, ok := registry.ErrorCode(err); ok {
-			return code
+			return netip.Addr{}, code
 		}
-		return "remote_upstream_outside_tailnet"
+		return netip.Addr{}, "remote_upstream_outside_tailnet"
 	}
-	return ""
+	u, _ := url.Parse(d.target)
+	for _, peer := range status.Peer {
+		if peer == nil || !strings.EqualFold(strings.TrimSuffix(peer.DNSName, "."), strings.TrimSuffix(u.Hostname(), ".")) {
+			continue
+		}
+		for _, ip := range peer.TailscaleIPs {
+			if ip.IsValid() {
+				return ip, ""
+			}
+		}
+	}
+	return netip.Addr{}, "remote_upstream_not_peer"
 }
 
 func (d *gatewayRemoteUpstream) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -60,8 +80,11 @@ func (d *gatewayRemoteUpstream) DialContext(ctx context.Context, network, addres
 	if err != nil || registry.ValidateRemoteTarget(d.target) != nil || network != "tcp" || !strings.EqualFold(address, net.JoinHostPort(u.Hostname(), urlPort(u))) {
 		return nil, registry.CodedError{Code: "portal_upstream_invalid", Message: "remote transport destination differs from registered target"}
 	}
-	switch d.check(ctx) {
+	ip, code := d.peer(ctx)
+	switch code {
 	case "":
+	case "remote_upstream_not_peer":
+		return nil, registry.CodedError{Code: "remote_upstream_not_peer", Message: "Remote upstream is not a gateway peer"}
 	case "remote_upstream_requires_tag":
 		return nil, registry.CodedError{Code: "remote_upstream_requires_tag", Message: "Remote upstream requires a tagged gateway"}
 	case "remote_upstream_outside_tailnet":
@@ -69,7 +92,21 @@ func (d *gatewayRemoteUpstream) DialContext(ctx context.Context, network, addres
 	default:
 		return nil, registry.CodedError{Code: "remote_upstream_unavailable", Message: "Remote upstream is unavailable"}
 	}
-	return d.node.Dial(ctx, "tcp", address)
+	sys := d.node.Sys()
+	if sys == nil {
+		return nil, registry.CodedError{Code: "remote_upstream_unavailable", Message: "Gateway netstack is unavailable"}
+	}
+	dialer, ok := sys.Dialer.GetOK()
+	if !ok || dialer == nil || dialer.NetstackDialTCP == nil || dialer.UseNetstackForIP == nil {
+		return nil, registry.CodedError{Code: "remote_upstream_unavailable", Message: "Gateway netstack is unavailable"}
+	}
+	if !dialer.UseNetstackForIP(ip) {
+		return nil, registry.CodedError{Code: "remote_upstream_not_peer", Message: "Remote upstream is not a gateway netstack peer"}
+	}
+	port, _ := strconv.ParseUint(urlPort(u), 10, 16)
+	// Do not use Server.Dial/UserDial: both DNS and non-peer IPs can fall back
+	// to the host. A peer disappearing here must fail inside netstack.
+	return dialer.NetstackDialTCP(ctx, netip.AddrPortFrom(ip, uint16(port)))
 }
 
 func (s *Server) remoteGatewayUpstream(run *portalRun, svc registry.Service) *gatewayRemoteUpstream {
