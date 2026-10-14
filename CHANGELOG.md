@@ -19,14 +19,21 @@ Portal gateway mode: a person outside your tailnet accepts one device share, of 
 - Portal-only apps (`tslink add --portal-only`) with no node of their own, and apps on other hosts (`tslink add --remote https://<node>.<tailnet>.ts.net`). Remote apps are reached only through the tagged gateway node's own netstack, using the peer address from the gateway's netmap, never through the host network or the host resolver. The remote host authenticates the gateway's tag; visitor identity is not forwarded.
 - One gateway device invite per person (`tslink people add|update --invite`); later grant changes need no new invite. An invite left behind by a gateway identity change is reported as stale and can be retired explicitly.
 - Periodic health checks for portal-only apps; gateway fields in `status`, `list`, `url` and `doctor`; access-log reason codes and connection-drop counts; MCP tools `portal_route_add`, `portal_route_remove` and `portal_route_list`, and gateway options for `portal_enable` and `add`.
+- `tslink health set <app>` and the owner MCP tool `health_set` change only an app's health check (path, status range, body, timeout, interval, or `--reset`) in one registry transaction, keeping access, tags, people scope, routes and the enrolled node. Use it instead of re-running `add`, which replaces the whole service.
+- App health reports the observed HTTP `status_code`. `doctor` reports a backend that answers outside its health settings as `app_probe_unexpected_response` (warning) with the exact `tslink health set` command to fix the check.
+- Access-log events for real backend failures add `error_class` (`connection_refused`, `connection_reset`, `tls`, `timeout` or `other`).
 
 ### Changed
 
 - People-scoped apps now report `allow.mode: people` wherever an app's access summary is printed (`list`, `status`, `add`), including when gateway mode is off.
+- HTTP health checks without an explicit status range accept 200-399. Redirects are still not followed; a redirect proves the app answers. 401 and 403 need an explicit range. A single explicit bound keeps its previous meaning, and registries are not rewritten.
+- A health check that gets an unexpected status or body is `degraded`, never `down`, and sends no `app_down` alert. Only unreachable backends (refused, timed out, reset) become `down` after three consecutive failures.
 
 ### Fixed
 
 - `tslink invite list` no longer fails when Tailscale returns an empty user-invite list as JSON `null`; device invitations stay visible. Device list completeness checks are unchanged.
+- Apps that redirect their root page, require authentication, or have no root route were reported `down` and triggered false `app_down` alerts, and the portal showed them as Down to visitors.
+- A client that cancels a request while TSLink identifies it is no longer recorded as an access denial or logged as an identification error. A client that cancels during proxying is recorded as allowed with status 499 and `client_canceled`, instead of a 502 backend failure. This applies to app nodes and gateway routes alike.
 
 ### Compatibility
 

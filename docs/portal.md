@@ -181,7 +181,9 @@ response-header deadline preventing long polls.
 
 Portal-only proxy and file apps are probed periodically without visitor traffic.
 Remote probes use the same tagged tsnet transport as requests. The existing health
-configuration and three-failure down threshold apply. Observations older than
+configuration, its classification and the three-failure down threshold apply: a
+route whose backend answers outside its health settings is `degraded`, never
+`down`, and has no “Offline since”. Observations older than
 twice the interval plus timeout become `unknown`; `health_checked` records their
 time. The directory displays “Offline since” when known. A backend observation
 is not proof of a guest's network reachability. `doctor --probe-external` never
@@ -218,7 +220,9 @@ Status and doctor expose `portal.gateway` with observed persistence, tag and nod
 identity, ownership proof, range, route states and a per-run `dropped` connection
 count. Connection-drop logs are rate-limited per gate; the home gate uses the
 fixed app marker `@portal`. Request events retain app names and add `via: portal`
-and a stable reason. The drop counter includes events omitted by the rate limit.
+and a stable reason. A visitor who cancels during identification leaves no event;
+one who cancels during proxying is `allowed` with status 499 and `client_canceled`,
+and does not mark the route down. The drop counter includes events omitted by the rate limit.
 
 Gateway registries use schema 3, which older readers refuse. Before downgrading,
 stop the new daemon, back up the registry and portal state, and intentionally

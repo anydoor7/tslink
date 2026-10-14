@@ -86,7 +86,7 @@ pending startup and is applied before readiness is reported.
 
 ### Add Command Flags
 
-Without `--recipe`, `tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
+Without `--recipe`, `tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed. To change only an existing app's health check, use `tslink health set`.
 
 | Flag | Description |
 |------|-------------|
@@ -105,14 +105,16 @@ Without `--recipe`, `tslink add` with an existing name replaces that service: fl
 | `--no-auto-provision` | Disable Funnel policy provisioning for this service; requires `--funnel` |
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
 | `--health-path /ready` | HTTP business probe path joined to the proxy backend base path (default `/`) |
-| `--health-status-min N`, `--health-status-max N` | Expected HTTP status range; default 200..299, proxy only |
+| `--health-status-min N`, `--health-status-max N` | Accepted HTTP status range; default 200..399 when neither is set (a single bound keeps 200 or 299 for the other), proxy only |
 | `--health-body text` | Expected substring in first 64 KiB; proxy only, omitted by default |
 | `--health-timeout duration` | I/O timeout after worker admission, 100ms..30s; default `5s` |
 | `--health-interval duration` | Probe interval, 10s..1d and at least timeout; default `1m` |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
 
-App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps and consecutive failures appear in status, list JSON, `list --verbose`, MCP and `/events`. Node-key and credential expiry warnings use 14-day and 3-day thresholds with next steps; metadata sources remain explicit. `doctor` adds a fresh HTTP business probe and makes the 3-day expiry warning critical (exit 65). Owner notifications are opt-in through `alerts.json`; events and restart dedup state are persisted by default. See [health and alerts](health-and-alerts.md).
+App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps, consecutive failures and the observed HTTP `status_code` appear in status, list JSON, `list --verbose`, MCP and `/events`. Only unreachable checks become `down`; a backend that answers outside its health settings stays `degraded`, and `doctor` reports it as `app_probe_unexpected_response` with a `tslink health set` suggestion. Node-key and credential expiry warnings use 14-day and 3-day thresholds with next steps; metadata sources remain explicit. `doctor` adds a fresh HTTP business probe and makes the 3-day expiry warning critical (exit 65). Owner notifications are opt-in through `alerts.json`; events and restart dedup state are persisted by default. See [health and alerts](health-and-alerts.md).
+
+`tslink health set <app> [--path P] [--status-min N] [--status-max N] [--body S] [--timeout D] [--interval D] [--reset]` changes only an existing app's health check in one registry transaction and keeps access, tags, people scope, routes and the enrolled node; the MCP tool is `health_set`. Path, status and body are proxy-only (`health_option_unsupported`, exit 2); an unknown app is `not_found` (exit 5).
 
 HTTP/TCP health checks enforce the registry's target-safety rules. Node-key expiry refreshes independently of `--health-interval` and is invalidated when a node is replaced. Each service has one read per pool; queue admission has a separate five-second bound, and unattempted checks preserve failure counts and observation timestamps. Stuck pools report `alerts.monitor_error=health_monitor_saturated` with monitor saturation/recovery events and a doctor warning. Ready results persist in batches; unchanged state does not write. Status and doctor read events and monitor state from the durable journal; snapshots may only supplement write errors. Notification delivery uses a bounded queue; commands have a 10-second deadline plus up to 250 ms of pipe cleanup, and cancellation counts as failure.
 
