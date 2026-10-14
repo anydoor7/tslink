@@ -68,6 +68,7 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 		return
 	}
 	s.portalRetryPending.Store(false)
+	s.gatewayRouteRetryPending.Store(false)
 	s.portalRun = nil
 	s.portalState = tsRuntime.PortalState{State: "disabled"}
 	s.mu.Unlock()
@@ -329,7 +330,10 @@ func (s *Server) refreshPortalURLLocked() {
 func (s *Server) finishPortalStart(ctx context.Context, run *portalRun) {
 	run.startMu.Lock()
 	defer run.startMu.Unlock()
-	if run.pending && ctx.Err() == nil {
+	s.mu.Lock()
+	running := s.portalRun == run && s.portalState.State == "running"
+	s.mu.Unlock()
+	if run.pending && ctx.Err() == nil && running {
 		s.syncGatewayRoutes(run)
 	}
 	run.pending = false

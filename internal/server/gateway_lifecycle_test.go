@@ -157,7 +157,7 @@ func TestGatewayEnrollmentResetValidationAndRecovery(t *testing.T) {
 func TestGatewayFailedRouteRetriesWithBackoff(t *testing.T) {
 	f := newGatewayFixture(t, func(f *gatewayFixture) { f.node.fail[":8444"] = true })
 	failed := f.waitRoute(t, "payroll", "failed")
-	if failed.Reason != "route_listener_failed" || !f.s.portalRetryPending.Load() {
+	if failed.Reason != "route_listener_failed" || !f.s.gatewayRouteRetryPending.Load() {
 		t.Fatal("route failure did not schedule retry")
 	}
 	f.s.portalRun.routesMu.Lock()

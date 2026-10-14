@@ -126,7 +126,7 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 	if run.config.Gateway == nil || !run.config.Gateway.Enabled || run.node == nil {
 		return
 	}
-	s.portalRetryPending.Store(false)
+	s.gatewayRouteRetryPending.Store(false)
 	reg, issues, err := registry.PortalPreflight(filepath.Join(s.cfgDir, "registry.json"))
 	if err != nil {
 		run.closeRoutes()
@@ -164,7 +164,7 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 		if ok && reflect.DeepEqual(route.svc, svc) {
 			retry := false
 			if route.state.State == "failed" {
-				s.portalRetryPending.Store(true)
+				s.gatewayRouteRetryPending.Store(true)
 				select {
 				case <-route.done:
 					retry = !run.now().Before(route.retryAt)
@@ -204,7 +204,7 @@ func (s *Server) setGatewayRouteState(run *portalRun, r *gatewayRouteRun, state,
 			r.failures++
 			backoff := time.Second << min(r.failures-1, 5)
 			r.retryAt = run.now().Add(backoff)
-			s.portalRetryPending.Store(true)
+			s.gatewayRouteRetryPending.Store(true)
 		}
 	}
 	run.routesMu.Unlock()
@@ -369,5 +369,28 @@ func (s *Server) observeGatewayUpstream(run *portalRun, r *gatewayRouteRun, up b
 		if s.portalRun == run {
 			s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
 		}
+	}
+}
+
+// Retry route activations without reloading or restarting unrelated app nodes.
+func (s *Server) retryGatewayRoutes(ctx context.Context) {
+	s.portalLifecycleMu.Lock()
+	defer s.portalLifecycleMu.Unlock()
+	if ctx.Err() != nil || s.shuttingDown.Load() {
+		return
+	}
+	s.mu.Lock()
+	run := s.portalRun
+	running := s.portalState.State == "running"
+	s.mu.Unlock()
+	if run == nil || !running {
+		return
+	}
+	run.startMu.Lock()
+	defer run.startMu.Unlock()
+	select {
+	case <-run.done:
+		s.syncGatewayRoutes(run)
+	default:
 	}
 }
