@@ -410,3 +410,49 @@ func TestUnidentifiedRequestIsNeverServed(t *testing.T) {
 		})
 	}
 }
+
+// Stopping or reloading an app node waits for in-flight requests; when that
+// graceful shutdown runs out of time TSLink cancels them. Those requests are
+// recorded as allowed, 503 and node_closed: not client_canceled, not a
+// backend failure.
+func TestNodeForcedCloseIsNotAClientCancellation(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer backend.Close()
+	oldShutdown := shutdownHTTPServerFn
+	shutdownHTTPServerFn = func(context.Context, *http.Server) error { return context.DeadlineExceeded }
+	t.Cleanup(func() { shutdownHTTPServerFn = oldShutdown })
+	who := &stallingWhoIs{entered: make(chan struct{}, 1)}
+	events := &gatewayEvents{}
+	svc := registry.Service{Name: "app", Type: registry.TypeProxy, Target: backend.URL, AllowedUsers: []string{"alice@example.com"}}
+	s, _, _, url := setupAccessNodeWithClient(t, svc, who.client(), accesslog.Options{}, nil, events)
+	logs := captureServerLog(t)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		if resp, err := http.Get(url + "/slow"); err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}()
+	testwait.Recv(t, entered, "backend entered")
+	s.mu.Lock()
+	s.stopNodeLocked(svc.Name)
+	s.mu.Unlock()
+	testwait.Recv(t, finished, "request ended by the forced close")
+	var got []accesslog.Event
+	testwait.Until(t, "access event", func() bool { got = events.all(); return len(got) > 0 })
+	if len(got) != 1 {
+		t.Fatalf("events %+v", got)
+	}
+	if e := got[0]; e.Decision != "allowed" || e.Status != http.StatusServiceUnavailable || e.Reason != "node_closed" || e.ErrorClass != "" || e.Path != "/slow" {
+		t.Fatalf("forced close event %+v", e)
+	}
+	if strings.Contains(logs.String(), "backend_request_failed") {
+		t.Fatalf("forced close logged as a backend failure:\n%s", logs)
+	}
+}
+

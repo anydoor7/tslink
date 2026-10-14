@@ -285,15 +285,16 @@ func sanitize(e Event) Event {
 	e.Path = SafePath(e.Path)
 	if e.Decision != "denied" {
 		e.Decision = "allowed"
-		// An allowed request keeps only portal grant reasons and the client's
-		// own cancellation, which is never a denial or a backend failure.
-		if e.Reason != "client_canceled" && (e.Via != "portal" || (e.Reason != "granted" && e.Reason != "owner" && e.Reason != "admin")) {
+		// An allowed request keeps only portal grant reasons and cancellations
+		// by the client or by TSLink, which are never denials or backend
+		// failures.
+		if e.Reason != "client_canceled" && e.Reason != "route_closed" && e.Reason != "node_closed" && (e.Via != "portal" || (e.Reason != "granted" && e.Reason != "owner" && e.Reason != "admin")) {
 			e.Reason = ""
 		}
 	}
 	switch e.Reason {
 	// client_cancelled stays readable in logs from earlier gateway builds.
-	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_canceled", "client_cancelled", "remote_upstream_requires_tag", "remote_upstream_outside_tailnet", "remote_upstream_unavailable", "remote_upstream_not_peer":
+	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_canceled", "client_cancelled", "route_closed", "node_closed", "remote_upstream_requires_tag", "remote_upstream_outside_tailnet", "remote_upstream_unavailable", "remote_upstream_not_peer":
 	default:
 		e.Reason = "unavailable"
 	}

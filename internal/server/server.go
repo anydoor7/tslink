@@ -305,7 +305,10 @@ type ServiceNode struct {
 	httpSrv              *http.Server
 	handlerCloser        io.Closer
 	cancel               context.CancelFunc
-	closed               atomic.Bool
+	// cancelRequests ends in-flight HTTP requests with the cause TSLink
+	// closed the node; nil for nodes without an HTTP server.
+	cancelRequests context.CancelCauseFunc
+	closed         atomic.Bool
 }
 
 // EnsureTagsFunc is the signature for ensuring ACL tags exist.
@@ -2499,6 +2502,8 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
 
 	httpSrv := newHTTPServerFn(handler)
+	requestCtx, cancelRequests := context.WithCancelCause(context.Background())
+	httpSrv.BaseContext = func(net.Listener) context.Context { return requestCtx }
 	configureAccessHTTP(httpSrv)
 	ln = configureServiceHTTP(httpSrv, svc, ln, reportLimit)
 
@@ -2513,6 +2518,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		limitWarnings:        limitWarnings,
 		handlerCloser:        handlerCloser,
 		cancel:               cancelAll,
+		cancelRequests:       cancelRequests,
 	}
 
 	// Serve in background
@@ -2808,6 +2814,11 @@ func (s *Server) stopNodeLocked(name string) {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		if err := shutdownHTTPServerFn(shutdownCtx, node.httpSrv); err != nil {
 			slog.Warn("http server graceful shutdown failed; closing", "name", name, "error", err)
+			// Cancel before closing connections, so requests still in flight
+			// are recorded as closed by TSLink rather than by their clients.
+			if node.cancelRequests != nil {
+				node.cancelRequests(errNodeClosed)
+			}
 			if closeErr := closeHTTPServerFn(node.httpSrv); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) && !isClosedListenerError(closeErr) {
 				slog.Warn("http server close failed", "name", name, "error", closeErr)
 			}
@@ -2833,6 +2844,9 @@ func (s *Server) stopNodeLocked(name string) {
 	}
 	if node.handlerCloser != nil {
 		_ = node.handlerCloser.Close()
+	}
+	if node.cancelRequests != nil {
+		node.cancelRequests(errNodeClosed)
 	}
 
 	delete(s.nodes, name)

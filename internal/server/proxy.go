@@ -149,6 +149,17 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			if denyGuestProxyCancellation(w, r, err) {
 				return
 			}
+			// TSLink closing the route or node is not the client going away
+			// and not a backend failure: 503, no route-down observation.
+			if reason, ok := serverCanceled(r, err); ok {
+				accessServerCanceled(r, reason)
+				if options.Gateway != nil {
+					gatewayErrorPage(w, r, http.StatusServiceUnavailable, reason, options.Gateway.App+" is being reconfigured; try again", "", false)
+				} else {
+					http.Error(w, "Service unavailable — app is restarting", http.StatusServiceUnavailable)
+				}
+				return
+			}
 			// A client that went away is neither a backend failure nor a
 			// denial: no 5xx, no route-down or health observation.
 			if clientCanceled(r, err) {

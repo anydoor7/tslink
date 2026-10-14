@@ -99,10 +99,50 @@ func accessGoneBeforeDecision(r *http.Request) bool {
 	return true
 }
 
+// serverCancel is the cause TSLink gives when it cancels in-flight requests
+// itself; reason names it in the access log. The client did not go away and
+// the backend did not fail.
+type serverCancel struct{ reason string }
+
+func (c serverCancel) Error() string { return "request canceled by tslink: " + c.reason }
+
+var (
+	// errRouteClosed cancels the requests of a gateway route being torn down.
+	errRouteClosed error = serverCancel{"route_closed"}
+	// errNodeClosed cancels the requests an app node still serves when its
+	// graceful shutdown runs out of time, on stop or reload.
+	errNodeClosed error = serverCancel{"node_closed"}
+)
+
+// serverCanceled reports whether a proxy error is TSLink's own cancellation
+// of the request, and its reason. The transport reports a canceled request
+// either as context.Canceled or as the context's cause itself.
+func serverCanceled(r *http.Request, err error) (string, bool) {
+	var cause serverCancel
+	if !errors.As(context.Cause(r.Context()), &cause) {
+		return "", false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, cause) {
+		return cause.reason, true
+	}
+	return "", false
+}
+
+// accessServerCanceled records an allowed request that TSLink canceled: the
+// reason only, never a backend failure.
+func accessServerCanceled(r *http.Request, reason string) {
+	if a, ok := r.Context().Value(accessObservationKey{}).(*accessObservation); ok {
+		a.mu.Lock()
+		a.reason = reason
+		a.mu.Unlock()
+	}
+}
+
 // clientCanceled reports whether a proxy error is the cancellation of the
 // request itself, as when the client goes away, rather than a backend
 // failure. Other errors on an ended request, such as a guest grant ending
-// while the backend is offline, keep their backend classification.
+// while the backend is offline, keep their backend classification. Check
+// serverCanceled first: TSLink's own cancellations also end the request.
 func clientCanceled(r *http.Request, err error) bool {
 	return errors.Is(err, context.Canceled) && r.Context().Err() != nil
 }
