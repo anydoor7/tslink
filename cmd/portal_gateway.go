@@ -77,6 +77,9 @@ func applyGatewayServiceView(svc *StatusServiceView, p tsRuntime.PortalState) {
 }
 
 func diagnoseGateway(result *DoctorResult) {
+	if result.Portal.Error == "gateway_tag_requires_credentials" {
+		result.addFinding("gateway_tag_requires_credentials", "", "portal", "Gateway tags require stored credentials; remove the gateway tag or configure credentialed enrollment.", nil)
+	}
 	g := result.Portal.Gateway
 	if g == nil || !g.Enabled {
 		return
