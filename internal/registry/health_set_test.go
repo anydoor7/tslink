@@ -55,6 +55,59 @@ func TestSetHealthContextTransaction(t *testing.T) {
 	}
 }
 
+func TestSetHealthContextRefusals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	for _, svc := range []Service{
+		{Name: "app", Type: TypeProxy, Target: "http://localhost:9"},
+		{Name: "db", Type: TypeTCP, Target: "localhost:5432"},
+		{Name: "files", Type: TypeFile, Path: t.TempDir()},
+	} {
+		if _, err := Add(path, svc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := func(err error) string { c, _ := ErrorCode(err); return c }
+	p, body, min, max, timeout, interval := "/health", "ok", 500, 200, "31s", "2m"
+	for _, tc := range []struct {
+		app  string
+		u    HealthUpdate
+		want string
+	}{
+		{"db", HealthUpdate{Path: &p}, CodeHealthOptionUnsupported},
+		{"files", HealthUpdate{BodyContains: &body}, CodeHealthOptionUnsupported},
+		{"files", HealthUpdate{StatusMin: &min}, CodeHealthOptionUnsupported},
+		{"db", HealthUpdate{StatusMax: &max}, CodeHealthOptionUnsupported},
+		{"app", HealthUpdate{StatusMin: &min, StatusMax: &max}, "usage_error"},
+		{"app", HealthUpdate{Timeout: &timeout}, "usage_error"},
+	} {
+		if _, changed, err := SetHealthContext(context.Background(), path, tc.app, tc.u, nil); code(err) != tc.want || changed {
+			t.Fatalf("%s %+v: %v changed=%v, want %s", tc.app, tc.u, err, changed, tc.want)
+		}
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("refused changes were written")
+	}
+	// Timeout and interval apply to every service type.
+	got, changed, err := SetHealthContext(context.Background(), path, "db", HealthUpdate{Interval: &interval}, nil)
+	if err != nil || !changed || got.Health == nil || got.Health.Interval != "2m" {
+		t.Fatalf("%+v %v %v", got, changed, err)
+	}
+	// A registry that cannot be read is never replaced.
+	if err := os.WriteFile(path, []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := SetHealthContext(context.Background(), path, "db", HealthUpdate{Interval: &interval}, nil); err == nil || changed {
+		t.Fatalf("corrupt registry accepted: %v", err)
+	}
+	if after, _ := os.ReadFile(path); string(after) != "broken" {
+		t.Fatal("corrupt registry was rewritten")
+	}
+}
+
 func TestHealthUpdateApply(t *testing.T) {
 	empty, zero, path, body := "", 0, "/ready", "ok"
 	current := &HealthConfig{Path: "/old", StatusMin: 204, BodyContains: "x", Interval: "2m"}

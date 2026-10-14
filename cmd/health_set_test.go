@@ -248,6 +248,12 @@ func TestHealthSetCommandInProcess(t *testing.T) {
 	if strings.Contains(out, `"body_contains"`) || !strings.Contains(out, `"body_check":true`) {
 		t.Fatalf("%q", out)
 	}
+	if _, err := runHealthSetRoot(t, "app"); output.ExitCode(err) != output.ExitUsage || !strings.Contains(err.Error(), "nothing to change") {
+		t.Fatalf("no-op request: %v", err)
+	}
+	if _, err := runHealthSetRoot(t, "missing", "--path", "/x"); output.ExitCode(err) != output.ExitNotFound {
+		t.Fatalf("unknown app: %v", err)
+	}
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		t.Fatal(err)
