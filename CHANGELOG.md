@@ -22,7 +22,7 @@ Portal gateway mode: a person outside your tailnet accepts one device share, of 
 
 ### Changed
 
-- People-scoped apps now report `allow.mode: people` in list, status and doctor output, including when gateway mode is off.
+- People-scoped apps now report `allow.mode: people` wherever an app's access summary is printed (`list`, `status`, `add`), including when gateway mode is off.
 
 ### Fixed
 
@@ -30,7 +30,7 @@ Portal gateway mode: a person outside your tailnet accepts one device share, of 
 
 ### Compatibility
 
-Gateway configuration uses registry schema 3, which older releases refuse. Before downgrading, follow the steps in `docs/portal.md`: stop the daemon, back up the registry and portal state, remove portal-only and remote apps and all routes, turn gateway mode off with this version, and keep gateway invite history or restore a compatible backup. Replacing only the binary is not a downgrade.
+Gateway configuration uses registry schema 3, which older releases refuse. Before downgrading, follow the steps in `docs/portal.md`: stop the daemon, back up the registry and portal state, remove portal-only and remote apps and all routes, and turn gateway mode off with this version. Recorded gateway invites keep the registry at schema 3 even with gateway mode off; if any remain, restore a registry backup taken before gateway mode was enabled (people and invite changes made since then are lost). Replacing only the binary is not a downgrade.
 
 ## [0.1.2] - 2026-10-12
 
