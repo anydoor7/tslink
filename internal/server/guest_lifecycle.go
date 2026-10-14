@@ -296,7 +296,17 @@ func (w *guestResponse) authorized() bool {
 		return registry.CheckGuest(w.gate.path, w.gate.svc.Name, w.flight.id, w.gate.now(), false, false)
 	})
 	if reason != "allowed" {
-		w.flight.end()
+		// A closed gate means the node is stopping. A concurrent write or read
+		// can get here before Close reaches this flight; the first cancel cause
+		// wins, so end it with the node cause rather than as a grant ending.
+		w.gate.mu.Lock()
+		closed := w.gate.closed
+		w.gate.mu.Unlock()
+		if closed {
+			w.flight.endCause(errNodeClosed)
+		} else {
+			w.flight.end()
+		}
 		return false
 	}
 	w.flight.mu.Lock()
