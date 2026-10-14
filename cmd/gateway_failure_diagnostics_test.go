@@ -21,3 +21,12 @@ func TestGatewayFailedEnrollmentDoctor(t *testing.T) {
 		})
 	}
 }
+
+func TestGatewayRecoveredIdentityDoctorWarning(t *testing.T) {
+	d := DoctorResult{Portal: tsruntime.PortalState{Enabled: true, State: "running", Gateway: &tsruntime.GatewayState{Enabled: true, Persistent: true, IdentityChanged: true}}}
+	diagnoseGateway(&d)
+	const message = "Gateway NodeID changed previously; this history warning persists after recovery. Check people invite records for any stale gateway targets."
+	if len(d.Findings) != 1 || d.Findings[0].Code != "gateway_node_identity_changed" || d.Findings[0].Severity != "warning" || d.Findings[0].Message != message {
+		t.Fatalf("identity history warning: %+v", d.Findings)
+	}
+}

@@ -85,7 +85,7 @@ func diagnoseGateway(result *DoctorResult) {
 		return
 	}
 	if g.IdentityChanged {
-		result.addFinding("gateway_node_identity_changed", "", "portal", "Gateway NodeID changed; accepted shares still target the previous device.", nil)
+		result.addFinding("gateway_node_identity_changed", "", "portal", "Gateway NodeID changed previously; this history warning persists after recovery. Check people invite records for any stale gateway targets.", nil)
 	}
 	if (result.Portal.State == "running" || result.Portal.Error == "gateway_ephemeral_refused") && !g.Persistent {
 		result.addFinding("gateway_ephemeral_refused", "", "portal", "Gateway must use a persistent node.", nil)

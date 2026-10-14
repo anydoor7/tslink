@@ -199,6 +199,11 @@ and allows a new invitation; it does not revoke the old remote share. For a
 stale pending/sending/unknown attempt without a recorded ID, explicitly retire
 it with `--reconcile-invite @gateway=none`. Use plain `--invite` for later retries.
 See [gateway invitation recovery](people.md) for the full procedure.
+The `gateway_node_identity_changed` warning persists after completed recovery:
+retired NodeIDs remain in the ownership ledger as history. It does not mean
+current invitations still target an old device. Check `tslink people list --json`
+for live invitations on retired nodes; `target_gone` history needs no further
+replacement.
 Never copy an enrollment marker between nodes or assume a configured flag proves
 persistence. Route add/remove, grants, owner/admin edits and port-range changes
 keep the shared node running. Gateway enable/disable, hostname/tag changes, and
