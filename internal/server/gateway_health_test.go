@@ -84,6 +84,7 @@ func TestGatewayRemoteActivationRequiresObservedTagAndTailnet(t *testing.T) {
 	}{
 		{"untagged", "https://remote.tailnet.ts.net", "remote_upstream_requires_tag", false},
 		{"outside-tailnet", "https://remote.foreign.ts.net", "remote_upstream_outside_tailnet", true},
+		{"not-peer", "https://absent.tailnet.ts.net", "remote_upstream_not_peer", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var st atomic.Pointer[ipnstate.Status]

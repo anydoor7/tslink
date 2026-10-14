@@ -66,6 +66,45 @@ func taggedGatewayStatus(tagged bool) *ipnstate.Status {
 	return &ipnstate.Status{Peer: peers, Self: &ipnstate.PeerStatus{Tags: &v}, CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "tailnet.ts.net"}}
 }
 
+func TestGatewayRemoteTagTransitionsThroughCheck(t *testing.T) {
+	var status atomic.Pointer[ipnstate.Status]
+	status.Store(taggedGatewayStatus(true))
+	f := newGatewayFixture(t, func(f *gatewayFixture) {
+		// syncPortal must publish a tagged enrollment before any remote check.
+		// An untagged start would hide missing cache initialization.
+		f.node.status.Self.Tags = status.Load().Self.Tags
+		original := f.node.localClient.Transport
+		f.node.localClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			if strings.HasSuffix(r.URL.Path, "/status") {
+				return remoteLocalClient(&status, nil).Transport.RoundTrip(r)
+			}
+			return original.RoundTrip(r)
+		})
+	})
+	published := func() bool {
+		f.s.mu.Lock()
+		defer f.s.mu.Unlock()
+		return f.s.portalState.Gateway.Tagged
+	}
+	if !published() {
+		t.Fatal("tagged enrollment was not published")
+	}
+	d := f.s.remoteGatewayUpstream(f.s.portalRun, registry.Service{Target: "https://remote.tailnet.ts.net"})
+	for i, tagged := range []bool{false, true, false} {
+		status.Store(taggedGatewayStatus(tagged))
+		wantCode := "remote_upstream_requires_tag"
+		if tagged {
+			wantCode = ""
+		}
+		if code := d.check(context.Background()); code != wantCode {
+			t.Fatalf("transition %d: check = %q, want %q", i+1, code, wantCode)
+		}
+		if got := published(); got != tagged {
+			t.Fatalf("transition %d: LocalAPI tagged = %v, published Tagged = %v", i+1, tagged, got)
+		}
+	}
+}
+
 func TestGatewayRemoteUnchangedTagDoesNotLockServer(t *testing.T) {
 	t.Setenv("TSLINK_CONFIG_DIR", t.TempDir())
 	run := &portalRun{node: &mcpControlPlaneNode{}}
