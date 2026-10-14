@@ -60,6 +60,12 @@ func taggedGatewayStatus(tagged bool) *ipnstate.Status {
 }
 
 func TestGatewayRemoteDialBoundary(t *testing.T) {
+	// A host-dial mutation must not issue real DNS queries from this fixture.
+	resolver := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("host resolver forbidden in gateway fixture")
+	}}
+	t.Cleanup(func() { net.DefaultResolver = resolver })
 	var calls atomic.Int64
 	var status atomic.Pointer[ipnstate.Status]
 	var failed atomic.Bool

@@ -12,16 +12,17 @@ import (
 
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
-	"golang.org/x/net/dns/dnsmessage"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/tsd"
 	"tailscale.com/tsnet"
 )
 
-// Called from the real-tsnet fixture after the positive peer round trip.
-// A private DNS responder makes a valid but absent MagicDNS name resolve on
-// the host to a real listener; no public DNS or live tailnet is involved.
+// Called after the positive peer round trip. The node's resolver seam supplies
+// a host-only localhost address for a valid registered name absent from its
+// LocalAPI peer list. This models a stale/split DNS result without changing the
+// machine's resolver or calling any public DNS server. Real UserDial and its
+// SystemDial fallback remain intact, so the old implementation hits the host.
 func gatewayAssertNoHostFallback(t *testing.T, node *tsnet.Server) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -45,7 +46,7 @@ func gatewayAssertNoHostFallback(t *testing.T, node *tsnet.Server) {
 	}()
 	defer func() { ln.Close(); <-done }()
 	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-	// Discrimination control: UserDial really can reach the host-only target.
+	// Discrimination control: unmodified tsnet UserDial reaches host localhost.
 	c, err := node.Dial(ctx, "tcp", net.JoinHostPort("localhost", port))
 	if err != nil {
 		t.Fatal("host listener control", err)
@@ -56,47 +57,18 @@ func gatewayAssertNoHostFallback(t *testing.T, node *tsnet.Server) {
 	case <-ctx.Done():
 		t.Fatal("host listener control not observed")
 	}
-	dns, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", "localhost")
+	if err != nil || len(ips) == 0 || !ips[0].IsLoopback() {
+		t.Fatalf("host DNS control: %v %v", ips, err)
 	}
-	var lookups atomic.Int64
-	dnsDone := make(chan struct{})
-	go func() {
-		defer close(dnsDone)
-		b := make([]byte, 2048)
-		for {
-			n, addr, err := dns.ReadFrom(b)
-			if err != nil {
-				return
-			}
-			lookups.Add(1)
-			var q dnsmessage.Message
-			if q.Unpack(b[:n]) != nil {
-				continue
-			}
-			reply := dnsmessage.Message{Header: dnsmessage.Header{ID: q.ID, Response: true, RecursionAvailable: true}, Questions: q.Questions}
-			for _, question := range q.Questions {
-				if question.Type == dnsmessage.TypeA {
-					reply.Answers = append(reply.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: question.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 1}, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}}})
-				}
-			}
-			data, _ := reply.Pack()
-			dns.WriteTo(data, addr)
+	var resolutions atomic.Int64
+	node.Sys().Dialer.Get().SetResolveMagicDNS(func(host, network string) (netip.Addr, bool) {
+		resolutions.Add(1)
+		if host == "ghost.tailnet.ts.net" {
+			return ips[0], true
 		}
-	}()
-	defer func() { dns.Close(); <-dnsDone }()
-	old := net.DefaultResolver
-	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "udp", dns.LocalAddr().String())
-	}}
-	defer func() { net.DefaultResolver = old }()
-	// Prove that this host resolver can resolve the absent name.
-	ips, err := net.DefaultResolver.LookupHost(ctx, "ghost.tailnet.ts.net")
-	if err != nil || len(ips) == 0 || ips[0] != "127.0.0.1" {
-		t.Fatalf("DNS control: %v %v", ips, err)
-	}
-	before := lookups.Load()
+		return netip.Addr{}, false
+	})
 	lc, err := node.LocalClient()
 	if err != nil {
 		t.Fatal(err)
@@ -117,14 +89,13 @@ func gatewayAssertNoHostFallback(t *testing.T, node *tsnet.Server) {
 				t.Errorf("non-peer refusal=%q want %q (err=%v)", code, want, err)
 			}
 			svc := registry.Service{Name: "remote", Type: registry.TypeProxy, Target: d.target, Upstream: "tailnet", PortalOnly: true}
-			result := health.ProbeWithDialer(ctx, svc, d)
-			if result == health.Healthy {
+			if result := health.ProbeWithDialer(ctx, svc, d); result == health.Healthy {
 				t.Error("host-only target reported healthy")
 			}
 		})
 	}
-	if lookups.Load() != before {
-		t.Errorf("remote traffic consulted host DNS: %d", lookups.Load()-before)
+	if resolutions.Load() != 0 {
+		t.Errorf("remote traffic entered UserDial name resolution: %d", resolutions.Load())
 	}
 	ln.Close()
 	<-done

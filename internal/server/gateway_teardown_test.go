@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -128,6 +129,15 @@ func TestGatewayRouteCloseLockOrder(t *testing.T) {
 			case <-snapshot:
 			case <-time.After(3 * time.Second):
 				fmt.Fprintln(os.Stderr, "snapshot blocked behind route teardown while admission waits on LocalAPI")
+				close(body.release)
+				select {
+				case <-closed:
+					fmt.Fprintln(os.Stderr, "teardown held routesMu while waiting for admission")
+				case <-time.After(2 * time.Second):
+					buf := make([]byte, 1<<20)
+					n := runtime.Stack(buf, true)
+					fmt.Fprintf(os.Stderr, "lock-order DEADLOCK after releasing LocalAPI response:\n%s", buf[:n])
+				}
 				os.Exit(2)
 			}
 			close(body.release)
