@@ -22,7 +22,7 @@ type guestFlight struct {
 	gate   *guestGate
 	id     string
 	expiry time.Time
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	mu     sync.Mutex
 	conn   net.Conn
 	ended  bool
@@ -34,9 +34,14 @@ type guestFlightKey struct{}
 // A grant-ended request is an authorization failure, not an offline backend.
 // Require both a canceled transport and our ended flight; ordinary upstream
 // failures and client-only cancellation retain the proxy's error handling.
+// A flight the gate ended because its node is stopping is not a denial: the
+// proxy records it as TSLink's own cancellation.
 func denyGuestProxyCancellation(w http.ResponseWriter, r *http.Request, err error) bool {
 	flight, _ := r.Context().Value(guestFlightKey{}).(*guestFlight)
 	if flight == nil || !errors.Is(err, context.Canceled) {
+		return false
+	}
+	if _, ok := serverCause(r.Context()); ok {
 		return false
 	}
 	flight.mu.Lock()
@@ -58,15 +63,21 @@ func denyGuestProxyCancellation(w http.ResponseWriter, r *http.Request, err erro
 	return true
 }
 
-func (f *guestFlight) end() {
+// end ends the flight because its grant ended or can no longer be checked.
+func (f *guestFlight) end() { f.endCause(nil) }
+
+// endCause ends the flight with cause on its request context; errNodeClosed
+// marks the node stopping rather than the grant ending. The first end wins.
+func (f *guestFlight) endCause(cause error) {
 	f.mu.Lock()
 	f.ended = true
 	conn := f.conn
 	f.mu.Unlock()
+	// Cancel before release, whose own cancel carries no cause.
+	f.cancel(cause)
 	if f.gate != nil {
 		f.gate.release(f)
 	}
-	f.cancel()
 	if conn != nil {
 		_ = conn.Close()
 	}
@@ -183,7 +194,7 @@ func (g *guestGate) Close() error {
 		}
 		g.mu.Unlock()
 		for _, f := range flights {
-			f.end()
+			f.endCause(errNodeClosed)
 		}
 		<-g.done
 		g.stateReads.Wait()
@@ -201,16 +212,16 @@ func (g *guestGate) release(flight *guestFlight) {
 	g.mu.Lock()
 	delete(g.flights, flight)
 	g.mu.Unlock()
-	flight.cancel()
+	flight.cancel(nil)
 }
 
 func (g *guestGate) serveApp(w http.ResponseWriter, r *http.Request, view registry.GuestView) {
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := context.WithCancelCause(r.Context())
 	flight := &guestFlight{gate: g, id: view.ID, expiry: view.ExpiresAt, cancel: cancel}
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
-		cancel()
+		cancel(nil)
 		g.deny(w, r, view.ID, "unavailable", g.now())
 		return
 	}
@@ -223,6 +234,13 @@ func (g *guestGate) serveApp(w http.ResponseWriter, r *http.Request, view regist
 		flight.mu.Unlock()
 		if !handedOff {
 			flight.end()
+		}
+		// The node stopping cut a response already started. The cause is on
+		// the flight's context, which the access middleware does not see.
+		if !returned {
+			if cause, ok := serverCause(ctx); ok {
+				accessServerCanceled(r, cause.reason)
+			}
 		}
 		// Panics, including http.ErrAbortHandler, propagate through this defer.
 	}()

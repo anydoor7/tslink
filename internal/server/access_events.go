@@ -110,7 +110,8 @@ var (
 	// errRouteClosed cancels the requests of a gateway route being torn down.
 	errRouteClosed error = serverCancel{"route_closed"}
 	// errNodeClosed cancels the requests an app node still serves when its
-	// graceful shutdown runs out of time, on stop or reload.
+	// graceful shutdown runs out of time, on stop or reload, and the guest
+	// requests a guest-gated node ends as it stops.
 	errNodeClosed error = serverCancel{"node_closed"}
 )
 
