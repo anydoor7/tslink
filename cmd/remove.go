@@ -147,7 +147,7 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 	// a node that enrolled while this command waited for the registry lock is
 	// retired too, rather than left with a row nobody retired.
 	var owned []tsruntime.OwnedNode
-	svc, removed, err := registry.RemoveAndReturnWithinContext(ctx, regPath, name, func(_ registry.Service, commit func() error) error {
+	svc, removed, err := registry.RemoveAndReturnWithinAuthorizedContext(ctx, regPath, name, func(_ registry.Service, commit func() error) error {
 		committing := false
 		var err error
 		owned, err = tsruntime.RetireServiceNodesContext(ctx, ownershipPath, name, removeNowFn(), func() error {
@@ -158,6 +158,8 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			return fmt.Errorf("record the removal of %q in the node ownership ledger before unregistering it: %w", name, err)
 		}
 		return err
+	}, func(reg *registry.Registry, svc registry.Service) error {
+		return authorizePortalServiceMutation(ctx, reg, svc)
 	})
 	if err != nil {
 		return RemoveResult{}, err

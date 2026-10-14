@@ -541,7 +541,10 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 		return AddResult{}, registry.Service{}, err
 	}
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
-		Context:              ctx,
+		Context: ctx,
+		Authorize: func(reg *registry.Registry, effective registry.Service) error {
+			return authorizePortalServiceMutation(ctx, reg, effective)
+		},
 		PreserveFunnelExpiry: preserveFunnelExpiry,
 		LifetimePolicy:       &policy,
 		Now:                  now,

@@ -1542,6 +1542,8 @@ func Add(path string, svc Service) (created bool, err error) {
 
 type AddOptions struct {
 	Context context.Context
+	// Authorize sees the current registry and the effective service under the writer lock.
+	Authorize func(*Registry, Service) error
 	// PreserveFunnelExpiry keeps a decided public lifetime when the TTL was
 	// omitted. A private service's absent expiry is never a public decision.
 	PreserveFunnelExpiry bool
@@ -1657,6 +1659,11 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		}
 		if svc.PortalOnly && svc.PortalRoute == nil {
 			svc.PortalRoute = &PortalRoute{}
+		}
+		if options.Authorize != nil {
+			if err := options.Authorize(reg, svc); err != nil {
+				return err
+			}
 		}
 		if svc.PortalRoute != nil {
 			route := *svc.PortalRoute
@@ -1803,6 +1810,11 @@ func RemoveAndReturnWithin(path, name string, within func(svc Service, commit fu
 }
 
 func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
+	return RemoveAndReturnWithinAuthorizedContext(ctx, path, name, within, nil)
+}
+
+// Authorization precedes both registry removal and ownership-ledger retirement.
+func RemoveAndReturnWithinAuthorizedContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error, authorize func(*Registry, Service) error) (removedService Service, removed bool, err error) {
 	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
@@ -1814,6 +1826,11 @@ func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within
 				continue
 			}
 
+			if authorize != nil {
+				if err := authorize(reg, svc); err != nil {
+					return err
+				}
+			}
 			remaining := append(append([]Service{}, reg.Services[:i]...), reg.Services[i+1:]...)
 			commit := func() error {
 				if err := mcpscope.CheckEffect(ctx); err != nil {

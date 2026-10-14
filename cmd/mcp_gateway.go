@@ -75,3 +75,12 @@ func init() {
 		mcpToolDefinition{Name: "portal_route_list", Description: "List configured gateway routes and exact URLs when current runtime evidence proves them. Read-only; no enrollment or remote API calls.", InputSchema: objectSchema(map[string]any{}), OutputSchema: out},
 	)
 }
+
+// add also preserves existing routes when replacing a service. Authorize the
+// effective service, not just explicit route flags in the incoming request.
+func authorizePortalServiceMutation(ctx context.Context, reg *registry.Registry, svc registry.Service) error {
+	if svc.PortalRoute != nil {
+		return requireRequestOwnerInRegistry(ctx, reg)
+	}
+	return nil
+}
