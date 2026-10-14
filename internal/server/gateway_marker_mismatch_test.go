@@ -14,7 +14,10 @@ func TestGatewayPersistentMarkerMismatch(t *testing.T) {
 	for _, kind := range []string{"node-id", "enrollment-identity"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newGatewayFixture(t, nil)
-			if !f.s.portalState.Gateway.Persistent {
+			f.s.mu.Lock()
+			persistent := f.s.portalState.Gateway.Persistent
+			f.s.mu.Unlock()
+			if !persistent {
 				t.Fatal("persistent positive control failed")
 			}
 			f.s.closePortal()

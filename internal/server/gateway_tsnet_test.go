@@ -233,7 +233,7 @@ func TestGatewayRealTSNetRoundTrip(t *testing.T) {
 		t.Fatal("real tsnet remote round trip missing")
 	}
 	gatewayAssertNoHostFallback(t, gateway.s)
-	t.Log("5 real tsnet nodes, 3 route ports; real WhoIs gates; stranger EOF with zero upstream traffic; remote HTTPS through real tsnet Dial authenticates gateway tag. Incoming gateway TLS/certificate issuance is not covered by this plain-listener integration.")
+	t.Log("5 real tsnet nodes, 3 route ports; real WhoIs gates; stranger EOF with zero upstream traffic; remote HTTPS through gateway netstack authenticates gateway tag. Incoming gateway TLS/certificate issuance is not covered by this plain-listener integration.")
 }
 
 // Keep the relay fixture small: importing the upstream integration harness
