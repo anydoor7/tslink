@@ -114,12 +114,18 @@ var (
 	errNodeClosed error = serverCancel{"node_closed"}
 )
 
+// serverCause reports whether TSLink itself canceled ctx, and its reason.
+func serverCause(ctx context.Context) (serverCancel, bool) {
+	var cause serverCancel
+	return cause, errors.As(context.Cause(ctx), &cause)
+}
+
 // serverCanceled reports whether a proxy error is TSLink's own cancellation
 // of the request, and its reason. The transport reports a canceled request
 // either as context.Canceled or as the context's cause itself.
 func serverCanceled(r *http.Request, err error) (string, bool) {
-	var cause serverCancel
-	if !errors.As(context.Cause(r.Context()), &cause) {
+	cause, ok := serverCause(r.Context())
+	if !ok {
 		return "", false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, cause) {
@@ -250,11 +256,21 @@ func AccessEventMiddleware(svc registry.Service, opts accesslog.Options, writer 
 		if r.Body != nil {
 			r.Body = body
 		}
+		returned := false
 		defer func() {
 			observation.mu.Lock()
 			if observation.gone {
 				observation.mu.Unlock()
 				return
+			}
+			// TSLink cut a response it had already started, as when a route
+			// teardown or forced node close aborts the body copy: the handler
+			// did not return. The forwarded status stays; the reason says
+			// TSLink ended it. A response that completed keeps its reason.
+			if !returned && observation.decision == "allowed" {
+				if cause, ok := serverCause(r.Context()); ok {
+					observation.reason = cause.reason
+				}
 			}
 			e := accesslog.Event{Time: at, Kind: "http", App: svc.Name, Identity: observation.identity, Method: r.Method, Status: rw.status, BytesIn: body.bytes.Load(), BytesOut: rw.bytes, DurationMS: float64(time.Since(start)) / float64(time.Millisecond), Decision: observation.decision, Reason: observation.reason, ErrorClass: observation.errorClass, Grant: observation.grant}
 			if via, _ := r.Context().Value(gatewayAccessKey{}).(bool); via {
@@ -276,6 +292,7 @@ func AccessEventMiddleware(svc registry.Service, opts accesslog.Options, writer 
 			recordAccess(writer, e, identity, r.RemoteAddr, known)
 		}()
 		next.ServeHTTP(rw, r)
+		returned = true
 	})
 }
 func matchedLegacy(login string, tags, allow []string) *accesslog.Grant {
