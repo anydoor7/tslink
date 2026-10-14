@@ -21,7 +21,7 @@ func TestReview3ListCompleteResponseContract(t *testing.T) {
 				valid      bool
 			}{
 				{"complete-empty", valid, 200, true},
-				{"null", "null", 200, false},
+				{"null", "null", 200, kind == "user-invites"},
 				{"blank", "", 200, false},
 				{"whitespace", " \n\t", 200, false},
 				{"missing-array", "{}", 200, false},
@@ -93,6 +93,33 @@ func TestReview3BodylessMutationsRemainSuccessful(t *testing.T) {
 			}
 			if _, err := client.CreateUserInvites(ctx, nil); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestUserInviteNullKeepsDeviceInvitesVisible(t *testing.T) {
+	for _, users := range []string{"null", " \n null \t", "[]"} {
+		t.Run(users, func(t *testing.T) {
+			withInviteServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" {
+					t.Fatalf("unexpected mutation %s", r.Method)
+				}
+				switch r.URL.Path {
+				case "/api/v2/tailnet/-/user-invites":
+					io.WriteString(w, users)
+				case "/api/v2/tailnet/-/devices":
+					io.WriteString(w, `{"devices":[{"nodeId":"n1","hostname":"app"}]}`)
+				case "/api/v2/device/n1/device-invites":
+					io.WriteString(w, `[{"id":"123","inviteUrl":"https://fixture.invalid/invite"}]`)
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			})
+			got, err := ListInvites(context.Background(), []DeviceTarget{{Service: "app", Hostname: "app", NodeID: "n1"}})
+			if err != nil || !got.Complete || got.UserInvites == nil || len(got.UserInvites) != 0 || len(got.DeviceInvites) != 1 || got.DeviceInvites[0].ID != "123" {
+				t.Fatalf("null user list hid device invitations: %+v %v", got, err)
 			}
 		})
 	}

@@ -381,7 +381,9 @@ func (c *inviteHTTPClient) ListUserInvites(ctx context.Context) ([]userInviteRes
 	var response []userInviteResponse
 	err := c.doList(ctx, []string{"tailnet", "-", "user-invites"}, &response)
 	if err == nil && response == nil {
-		err = invalidInviteListing("user invite listing omitted a non-null array")
+		// doList has already required HTTP 200, a non-empty body, and valid
+		// JSON. Only the user-invites endpoint defines root null as empty.
+		response = []userInviteResponse{}
 	}
 	return response, err
 }
