@@ -328,6 +328,9 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 			gatewayErrorPage(w, r, 403, reason, message, g.dashboard, requestable)
 		}
 		who := g.who(r.Context(), r.RemoteAddr)
+		if who == nil && accessGoneBeforeDecision(r) {
+			return
+		}
 		if who == nil {
 			deny("whois_failed", false)
 			return

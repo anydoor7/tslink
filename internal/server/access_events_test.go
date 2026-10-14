@@ -59,6 +59,11 @@ func (l *accessPublicListener) Accept() (net.Conn, error) {
 
 func setupAccessNode(t *testing.T, svc registry.Service, who *apitype.WhoIsResponse, opts accesslog.Options, edit func(string), writer accesslog.Writer, publicFunnel ...bool) (*Server, *accesslog.Store, string, string) {
 	t.Helper()
+	return setupAccessNodeWithClient(t, svc, fakeWhoIsClient(t, who, nil), opts, edit, writer, publicFunnel...)
+}
+
+func setupAccessNodeWithClient(t *testing.T, svc registry.Service, lc *LocalClient, opts accesslog.Options, edit func(string), writer accesslog.Writer, publicFunnel ...bool) (*Server, *accesslog.Store, string, string) {
+	t.Helper()
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatal(err)
@@ -75,7 +80,7 @@ func setupAccessNode(t *testing.T, svc registry.Service, who *apitype.WhoIsRespo
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, who, nil)}, ln: ln}
+	fake := &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: lc}, ln: ln}
 	if svc.Funnel {
 		fake.publicFunnel = len(publicFunnel) == 0 || publicFunnel[0]
 		fake.status = funnelEnabledStatus("app.tailnet.ts.net.")

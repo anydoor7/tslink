@@ -81,6 +81,9 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 				return
 			}
 			who, err := lc.WhoIs(r.Context(), r.RemoteAddr)
+			if err != nil && accessGoneBeforeDecision(r) {
+				return
+			}
 			if err != nil || who == nil || who.UserProfile == nil {
 				accessDeny(r, "people")
 				writeAccessDenied(w, "access denied: unable to identify caller")

@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -65,12 +67,64 @@ func configureAccessHTTP(srv *http.Server) {
 }
 
 type accessObservation struct {
-	mu       sync.Mutex
-	identity accesslog.Identity
-	known    bool
-	decision string
-	reason   string
-	grant    *accesslog.Grant
+	mu         sync.Mutex
+	identity   accesslog.Identity
+	known      bool
+	decision   string
+	reason     string
+	errorClass string
+	grant      *accesslog.Grant
+	// gone marks a client that left before any access decision was made.
+	gone bool
+}
+
+// statusClientClosedRequest is the access-log status of a request whose
+// client went away while TSLink was proxying it. It is never a 5xx.
+const statusClientClosedRequest = 499
+
+// accessGoneBeforeDecision reports whether the client canceled the request
+// before TSLink could identify it, for example a phone dropping the connection
+// during WhoIs. That is not a denial: no access event is recorded and nothing
+// is logged as an identification failure.
+func accessGoneBeforeDecision(r *http.Request) bool {
+	if r.Context().Err() == nil {
+		return false
+	}
+	if a, ok := r.Context().Value(accessObservationKey{}).(*accessObservation); ok {
+		a.mu.Lock()
+		a.gone = true
+		a.mu.Unlock()
+	}
+	slog.Debug("access: client canceled before identification")
+	return true
+}
+
+// clientCanceled reports whether a proxy error is the cancellation of the
+// request itself, as when the client goes away, rather than a backend
+// failure. Other errors on an ended request, such as a guest grant ending
+// while the backend is offline, keep their backend classification.
+func clientCanceled(r *http.Request, err error) bool {
+	return errors.Is(err, context.Canceled) && r.Context().Err() != nil
+}
+
+// accessClientCanceled records an allowed request whose client left during
+// proxying: status 499 and reason client_canceled, never a backend failure.
+func accessClientCanceled(w http.ResponseWriter, r *http.Request) {
+	if a, ok := r.Context().Value(accessObservationKey{}).(*accessObservation); ok {
+		a.mu.Lock()
+		a.reason = "client_canceled"
+		a.mu.Unlock()
+	}
+	w.WriteHeader(statusClientClosedRequest)
+}
+
+// accessBackendFailure classifies a real backend failure for the access log.
+func accessBackendFailure(r *http.Request, class string) {
+	if a, ok := r.Context().Value(accessObservationKey{}).(*accessObservation); ok {
+		a.mu.Lock()
+		a.errorClass = class
+		a.mu.Unlock()
+	}
 }
 
 func accessDeny(r *http.Request, reason string) {
@@ -158,7 +212,11 @@ func AccessEventMiddleware(svc registry.Service, opts accesslog.Options, writer 
 		}
 		defer func() {
 			observation.mu.Lock()
-			e := accesslog.Event{Time: at, Kind: "http", App: svc.Name, Identity: observation.identity, Method: r.Method, Status: rw.status, BytesIn: body.bytes.Load(), BytesOut: rw.bytes, DurationMS: float64(time.Since(start)) / float64(time.Millisecond), Decision: observation.decision, Reason: observation.reason, Grant: observation.grant}
+			if observation.gone {
+				observation.mu.Unlock()
+				return
+			}
+			e := accesslog.Event{Time: at, Kind: "http", App: svc.Name, Identity: observation.identity, Method: r.Method, Status: rw.status, BytesIn: body.bytes.Load(), BytesOut: rw.bytes, DurationMS: float64(time.Since(start)) / float64(time.Millisecond), Decision: observation.decision, Reason: observation.reason, ErrorClass: observation.errorClass, Grant: observation.grant}
 			if via, _ := r.Context().Value(gatewayAccessKey{}).(bool); via {
 				e.Via = "portal"
 			}

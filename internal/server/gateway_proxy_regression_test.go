@@ -64,8 +64,9 @@ func TestGatewayClientCancellationPreservesHealth(t *testing.T) {
 	for time.Now().Before(deadline) {
 		for _, e := range f.events.all() {
 			if e.App == "slow" && e.Path == "/slow" {
-				if e.Reason != "client_cancelled" {
-					t.Fatalf("cancel reason=%s", e.Reason)
+				// A client cancellation is allowed traffic, never a denial or 5xx.
+				if e.Reason != "client_canceled" || e.Decision != "allowed" || e.Status != 499 || e.ErrorClass != "" {
+					t.Fatalf("cancel event=%+v", e)
 				}
 				state := f.waitRoute(t, "slow", "running")
 				if state.Health != "healthy" || state.OfflineSince != nil {
