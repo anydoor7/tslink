@@ -508,3 +508,24 @@ func TestPortalAdminTombstoneAndExpiryLatch(t *testing.T) {
 		t.Fatal("clock rollback resurrected expiry latch")
 	}
 }
+
+// Visitors see Degraded for an app that answers unexpectedly, so the help text
+// must not describe Down as any repeated failure.
+func TestPortalHelpDescribesHealthStates(t *testing.T) {
+	f := newPortalFixture(t)
+	r, body := f.request(t, "GET", "/", "home.tailnet.ts.net", "", nil)
+	if r.StatusCode != 200 {
+		t.Fatalf("status=%d", r.StatusCode)
+	}
+	for _, want := range []string{
+		"Degraded means it answers but not as expected, or it missed a recent check.",
+		"Down means it could not be reached on repeated checks.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("help text missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Down means repeated checks failed") {
+		t.Fatal("stale Down description")
+	}
+}
