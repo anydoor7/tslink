@@ -1123,3 +1123,34 @@ func contains(value, want string) bool {
 	}
 	return false
 }
+
+// A command executed in-process, as many tests do, gains Cobra's --help flag.
+// The manifest must not change because of that, or its content and the
+// compact budget above would depend on test order.
+func TestManifestIgnoresFlagsCobraAddsOnExecution(t *testing.T) {
+	for _, path := range [][]string{{"status"}, {"list"}, {"health", "set"}} {
+		c, _, err := rootCmd.Find(path)
+		if err != nil {
+			t.Fatalf("find %v: %v", path, err)
+		}
+		c.InitDefaultHelpFlag()
+		if c.Flags().Lookup("help") == nil {
+			t.Fatalf("%v: Cobra did not add its help flag", path)
+		}
+	}
+	rootCmd.InitDefaultHelpFlag()
+	for _, command := range Manifest().Commands {
+		for _, flag := range command.Flags {
+			if flag.Name == "help" {
+				t.Fatalf("manifest lists Cobra's help flag on %q", command.Path)
+			}
+		}
+	}
+	for path, flags := range CompactManifest().Commands {
+		for _, name := range flags {
+			if name == "help" {
+				t.Fatalf("compact manifest lists Cobra's help flag on %q", path)
+			}
+		}
+	}
+}
