@@ -114,7 +114,7 @@ import json, os, sys
 repo, work = sys.argv[1], sys.argv[2]
 src_path = os.path.join(repo, "cmd", "install_linux.go")
 src = open(src_path, encoding="utf-8").read()
-anchor = "func verifySystemdServiceRunning() (bool, error) {\n"
+anchor = "func verifySystemdServiceRunning(ctx context.Context) (bool, error) {\n"
 n = src.count(anchor)
 if n != 1:
     sys.exit(f"blind mutant: anchor found {n} times, want 1 (install_linux.go changed shape?)")

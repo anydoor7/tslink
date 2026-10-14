@@ -280,8 +280,13 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 		}
 	}
 	result.Message = peopleMessage(result.Person, result.Invites, args.Invite, args.PrintLinks)
-	if gateway && !result.Person.Revoked {
-		result.Message = gatewayPeopleMessage(result, args.PrintLinks)
+	if !result.Person.Revoked {
+		for _, inv := range result.Invites {
+			if inv.TargetKind == registry.InviteTargetGateway {
+				result.Message = gatewayPeopleMessage(result, args.PrintLinks)
+				break
+			}
+		}
 	}
 	if result.Portal.Enabled && !gateway {
 		if result.Portal.URL != "" {

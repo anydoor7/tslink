@@ -5,6 +5,8 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ## [0.2.0]
 
+- People-scoped apps now report `allow.mode: people` in list, status and doctor output, including when gateway mode is off.
+
 ### Added
 
 - Opt-in persistent portal gateway: one device share per person, a private dashboard on port 443, and stable per-app HTTPS ports with fresh WhoIs, people policy and same-origin checks.
