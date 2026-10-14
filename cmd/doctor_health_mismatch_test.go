@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
@@ -115,5 +116,80 @@ func TestHumanHealthShowsObservedStatus(t *testing.T) {
 	formatAppHealth(&out, "offline", health.State{State: health.Down, LastChecked: &checked, LastError: "health_request_failed", ConsecutiveFailures: 3}, health.Expiry{Source: "localclient"})
 	if strings.Contains(out.String(), "status=") || !strings.Contains(out.String(), "error=health_request_failed\n") {
 		t.Fatal(out.String())
+	}
+}
+
+// Each suggested command is executed against an isolated registry holding the
+// app's stored settings: health set must accept it, keep the other health
+// fields, and the backend's answer must then pass the check. Full doctor
+// probes a real backend; reduced MCP doctor reads the stored settings itself.
+func TestDoctorSuggestionIsAcceptedByHealthSet(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stored *registry.HealthConfig
+		answer int
+		flags  string
+	}{
+		{"default range, 401 above maximum", nil, 401, "--status-max 401"},
+		{"explicit 2xx, redirect above maximum", &registry.HealthConfig{StatusMin: 200, StatusMax: 299, Timeout: "7s"}, 302, "--status-max 399"},
+		{"explicit 2xx, 403 above maximum", &registry.HealthConfig{StatusMin: 200, StatusMax: 299, Timeout: "7s"}, 403, "--status-max 403"},
+		{"minimum only, redirect above maximum", &registry.HealthConfig{StatusMin: 250, Timeout: "7s"}, 307, "--status-max 399"},
+		{"explicit 4xx, redirect below minimum", &registry.HealthConfig{StatusMin: 400, StatusMax: 499, Timeout: "7s"}, 302, "--status-min 300"},
+		{"explicit 5xx, 401 below minimum", &registry.HealthConfig{StatusMin: 500, StatusMax: 599, Timeout: "7s"}, 401, "--status-min 401"},
+	} {
+		for _, surface := range []string{"doctor", "mcp"} {
+			t.Run(surface+"/"+tc.name, func(t *testing.T) {
+				app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if tc.answer/100 == 3 {
+						w.Header().Set("Location", "/login")
+					}
+					w.WriteHeader(tc.answer)
+				}))
+				defer app.Close()
+				svc := registry.Service{Name: "app", Type: registry.TypeProxy, Target: app.URL, Health: tc.stored}
+				if code := health.Probe(context.Background(), svc); code != "health_status_mismatch" {
+					t.Fatalf("precondition: probe %q", code)
+				}
+				env := newDoctorTestEnv(t, []registry.Service{svc})
+				t.Setenv(config.ConfigDirEnv, env.dir)
+				var f DoctorFinding
+				if surface == "doctor" {
+					doctorHTTPProbeFn = health.Probe
+					f = assertDoctorFinding(t, buildDoctorResult(context.Background(), doctorOptions{}), inspect.WarningCodeAppProbeUnexpected)
+				} else {
+					a := fakeMCPActions()
+					a.registryPath = env.regPath
+					a.status = func(context.Context) (any, error) {
+						return mcpStatusSummary{Services: []mcpHealthService{{Name: "app", Status: "up", Health: health.State{State: health.Degraded, LastError: "health_status_mismatch", ConsecutiveFailures: 4, StatusCode: tc.answer}}}}, nil
+					}
+					v, err := mcpScopedDoctor(context.Background(), a, testRoleScope("owner"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(v.(DoctorResult).Findings) != 1 {
+						t.Fatalf("%+v", v)
+					}
+					f = v.(DoctorResult).Findings[0]
+				}
+				next := f.Evidence["next"]
+				if next != "tslink health set app "+tc.flags || !strings.Contains(f.Message, next) {
+					t.Fatalf("suggestion %q, want flags %q", next, tc.flags)
+				}
+				if _, err := runHealthSetRoot(t, strings.Fields(next)[3:]...); err != nil {
+					t.Fatalf("health set refused the suggestion %q: %v", next, err)
+				}
+				reg, err := registry.Load(env.regPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after := reg.Services[0]
+				if tc.stored != nil && (after.Health == nil || after.Health.Timeout != tc.stored.Timeout) {
+					t.Fatalf("other health settings changed: %+v", after.Health)
+				}
+				if code := health.Probe(context.Background(), after); code != "" {
+					t.Fatalf("after %q the answer still fails: %q (%+v)", next, code, after.Health)
+				}
+			})
+		}
 	}
 }

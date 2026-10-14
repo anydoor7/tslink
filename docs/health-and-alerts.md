@@ -115,7 +115,10 @@ redirect targets are never recorded. `doctor` reports an unexpected response as
 `app_probe_unexpected_response` (warning, area `app_probe`; the reduced MCP
 doctor uses area `health`) with `status_code` and a `next` command that changes
 only the check, such as `tslink health set <app> --path /health` or
-`tslink health set <app> --status-max 401`.
+`tslink health set <app> --status-max 401`. For a redirect, 401 or 403 the
+command widens the app's stored range to include the answer: it raises
+`--status-max` when the answer is above the range and lowers `--status-min`
+when it is below, so `health set` accepts it.
 An absent check is `unknown`; an observation older than twice its configured
 interval plus its timeout is shown as unknown. The monitor wakes connected
 `/events` clients when an observation crosses that boundary, even if no new

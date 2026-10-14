@@ -121,17 +121,16 @@ var doctorHTTPProbeFn = func(ctx context.Context, svc registry.Service) string {
 
 // healthMismatchFinding explains a backend that answered outside its health
 // settings and names the one command that changes only the check. Re-running
-// add would replace the whole service, so it is never suggested.
-func healthMismatchFinding(app, code string, status int) (string, map[string]string) {
+// add would replace the whole service, so it is never suggested. stored is the
+// app's saved health block: the suggestion widens its effective range just
+// enough for the answer, so health set always accepts it.
+func healthMismatchFinding(app, code string, status int, stored *registry.HealthConfig) (string, map[string]string) {
 	next := "tslink health set " + app + " --path /health"
 	answered := "an unexpected body"
 	if code == "health_status_mismatch" {
 		answered = "a status outside the accepted range"
-		switch {
-		case status == 401 || status == 403:
-			next = fmt.Sprintf("tslink health set %s --status-max %d", app, status)
-		case status >= 300 && status <= 399:
-			next = "tslink health set " + app + " --status-max 399"
+		if flags := statusRangeFlags(status, stored); flags != "" {
+			next = "tslink health set " + app + flags
 		}
 	}
 	evidence := map[string]string{"error_code": code, "next": next}
@@ -144,6 +143,51 @@ func healthMismatchFinding(app, code string, status int) (string, map[string]str
 	}
 	message := fmt.Sprintf("The app answered its health check with %s, so it is reachable but the check does not match it. Point the check at an endpoint that answers 2xx or 3xx, or accept this answer, changing only the health settings: %s", answered, next)
 	return message, evidence
+}
+
+// statusRangeFlags returns the health set flags that widen the stored range
+// to accept a redirect (as the whole 3xx class) or a 401/403 answer: raise the
+// maximum above it, lower the minimum below it. Only a changed bound is named.
+// It returns "" for other answers, which a health path fixes instead.
+func statusRangeFlags(status int, stored *registry.HealthConfig) string {
+	low, high := status, status
+	switch {
+	case status == 401 || status == 403:
+	case status >= 300 && status <= 399:
+		low, high = 300, 399
+	default:
+		return ""
+	}
+	current := registry.HealthConfig{}
+	if stored != nil {
+		current = *stored
+	}
+	effective := current.Effective()
+	if status >= effective.StatusMin && status <= effective.StatusMax {
+		return ""
+	}
+	wantMin, wantMax := min(effective.StatusMin, low), max(effective.StatusMax, high)
+	var update registry.HealthUpdate
+	if wantMin != effective.StatusMin {
+		update.StatusMin = &wantMin
+	}
+	if wantMax != effective.StatusMax {
+		update.StatusMax = &wantMax
+	}
+	// Check the command against health set's own merge and validation, so a
+	// suggestion it would refuse is never printed.
+	next := update.Apply(stored)
+	if result := next.Effective(); result.StatusMin != wantMin || result.StatusMax != wantMax || registry.ValidateHealthConfig(registry.TypeProxy, next) != nil {
+		return ""
+	}
+	flags := ""
+	if update.StatusMin != nil {
+		flags += " --status-min " + strconv.Itoa(*update.StatusMin)
+	}
+	if update.StatusMax != nil {
+		flags += " --status-max " + strconv.Itoa(*update.StatusMax)
+	}
+	return flags
 }
 
 // The journal owns events, monitor state and current read/config errors. Only

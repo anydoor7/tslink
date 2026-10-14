@@ -510,11 +510,21 @@ func mcpScopedDoctor(ctx context.Context, actions mcpActions, scope mcpscope.Sco
 	if err := reprojectJSON(data, &v); err != nil {
 		return nil, err
 	}
+	// Suggestions widen the stored health range, read without changing the
+	// registry. Without it they assume the default settings.
+	stored := map[string]*registry.HealthConfig{}
+	if actions.registryPath != "" {
+		if reg, _, err := registry.Preflight(actions.registryPath); err == nil {
+			for _, svc := range reg.Services {
+				stored[svc.Name] = svc.Health
+			}
+		}
+	}
 	result := DoctorResult{GuestLinks: []registry.GuestView{}, SchemaVersion: 1, ExecutionStatus: doctorExecutionCompleted, Findings: []DoctorFinding{}}
 	result.Counts.Services = len(v.Services)
 	for _, svc := range v.Services {
 		if svc.Health.State == health.Degraded && health.UnexpectedResponse(svc.Health.LastError) {
-			message, evidence := healthMismatchFinding(svc.Name, svc.Health.LastError, svc.Health.StatusCode)
+			message, evidence := healthMismatchFinding(svc.Name, svc.Health.LastError, svc.Health.StatusCode, stored[svc.Name])
 			result.Findings = append(result.Findings, DoctorFinding{Code: inspect.WarningCodeAppProbeUnexpected, Severity: doctorSeverityWarning, Service: svc.Name, Area: "health", Message: message, Evidence: evidence})
 		} else if svc.Health.State == health.Down || svc.Health.State == health.Degraded {
 			result.Findings = append(result.Findings, DoctorFinding{Code: "app_health_unhealthy", Severity: doctorSeverityWarning, Service: svc.Name, Area: "health", Message: "App health observation is unhealthy"})
