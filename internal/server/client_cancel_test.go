@@ -303,3 +303,55 @@ func TestBackendErrorClass(t *testing.T) {
 		t.Errorf("WSAECONNREFUSED: %s want %s", winsock, want)
 	}
 }
+
+// The MCP control plane identifies every request too. A caller that cancels
+// during WhoIs is refused without being served and without the identification
+// warning; only a value-free Debug line remains. A WhoIs failure with the
+// caller still connected keeps its 403 and warning.
+func TestMCPControlPlaneCancelDuringWhoIsIsNotAWarning(t *testing.T) {
+	who := &stallingWhoIs{entered: make(chan struct{}, 1)}
+	logs := &lockedLog{}
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	var served atomic.Int64
+	h := MCPAuthMiddleware([]string{"alice@example.com"}, who.client(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { served.Add(1) }))
+	done := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() { done <- struct{}{} }()
+		h.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	who.stall.Store(true)
+	cancelAfter(t, srv.URL, who.entered)
+	testwait.Recv(t, done, "canceled MCP request handler")
+	canceled := logs.String()
+	if served.Load() != 0 {
+		t.Fatalf("canceled unidentified MCP caller served %d times", served.Load())
+	}
+	if strings.Contains(canceled, "level=WARN") || strings.Contains(canceled, "failed to identify caller") {
+		t.Fatalf("cancellation logged as an identification failure:\n%s", canceled)
+	}
+	if !strings.Contains(canceled, "level=DEBUG") || strings.Contains(canceled, "127.0.0.1") || strings.Contains(canceled, "context canceled") {
+		t.Fatalf("want one value-free debug line:\n%s", canceled)
+	}
+
+	who.stall.Store(false)
+	who.fail.Store(true)
+	if code := getStatus(t, srv.URL); code != http.StatusForbidden {
+		t.Fatalf("live WhoIs failure status=%d", code)
+	}
+	testwait.Recv(t, done, "live MCP failure handler")
+	who.fail.Store(false)
+	if code := getStatus(t, srv.URL); code != http.StatusOK {
+		t.Fatalf("identified caller status=%d", code)
+	}
+	testwait.Recv(t, done, "identified MCP request handler")
+	if served.Load() != 1 {
+		t.Fatalf("served %d times, want only the identified caller", served.Load())
+	}
+	if n := strings.Count(logs.String(), "mcp control plane denied: failed to identify caller"); n != 1 {
+		t.Fatalf("identification warnings=%d, want the live failure only:\n%s", n, logs)
+	}
+}

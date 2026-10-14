@@ -363,6 +363,13 @@ func mcpScopeAuthMiddleware(allowedUsers []string, bindings []mcpscope.Binding, 
 			return
 		}
 		whois, err := localClient.WhoIs(r.Context(), r.RemoteAddr)
+		if err != nil && r.Context().Err() != nil {
+			// The caller went away during identification. Still fail closed,
+			// but this is not an identification failure worth a warning.
+			slog.Debug("mcp control plane: client canceled before identification")
+			mcpDenied(w)
+			return
+		}
 		if err != nil {
 			slog.Warn("mcp control plane denied: failed to identify caller", "remote_addr", r.RemoteAddr, "error", err)
 			mcpDenied(w)
