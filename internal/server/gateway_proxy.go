@@ -68,7 +68,13 @@ func urlPort(u *url.URL) string {
 
 func rewriteGatewayURL(value string, target *url.URL, authority string) string {
 	u, err := url.Parse(value)
-	if err != nil || !u.IsAbs() || u.User != nil || !strings.EqualFold(u.Scheme, target.Scheme) || !strings.EqualFold(u.Hostname(), target.Hostname()) || urlPort(u) != urlPort(target) {
+	if err != nil {
+		return value
+	}
+	if u.Scheme == "" && u.Host != "" {
+		u.Scheme = target.Scheme
+	}
+	if !u.IsAbs() || u.User != nil || !strings.EqualFold(u.Scheme, target.Scheme) || !strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), strings.TrimSuffix(target.Hostname(), ".")) || urlPort(u) != urlPort(target) {
 		return value
 	}
 	u.Scheme, u.Host = "https", authority
