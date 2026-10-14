@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -353,5 +354,59 @@ func TestMCPControlPlaneCancelDuringWhoIsIsNotAWarning(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "mcp control plane denied: failed to identify caller"); n != 1 {
 		t.Fatalf("identification warnings=%d, want the live failure only:\n%s", n, logs)
+	}
+}
+
+// Suppressing the access event is not enough: an unidentified request must
+// never reach the handler behind the identification boundary. The downstream
+// handler here ignores cancellation and counts invocations, as a file handler
+// would, so it cannot rely on a proxy transport noticing the canceled context.
+// Both a canceled and a live identification failure must leave it uncalled.
+func TestUnidentifiedRequestIsNeverServed(t *testing.T) {
+	for _, boundary := range []string{"acl", "people", "gateway"} {
+		t.Run(boundary, func(t *testing.T) {
+			who := &stallingWhoIs{entered: make(chan struct{}, 1)}
+			var served atomic.Int64
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				served.Add(1)
+				io.WriteString(w, "private file")
+			})
+			var h http.Handler
+			switch boundary {
+			case "acl":
+				h = ACLMiddleware([]string{"alice@example.com"}, who.client())(next)
+			case "people":
+				path := t.TempDir() + "/registry.json"
+				svc := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:9", PeopleScoped: true}
+				if _, err := registry.Add(path, svc); err != nil {
+					t.Fatal(err)
+				}
+				h = peopleMiddleware(path, svc, func() (*LocalClient, error) { return who.client(), nil }, time.Now)(next)
+			case "gateway":
+				h = (&gatewayGate{lc: who.client()}).handler(next)
+			}
+			done := make(chan struct{}, 4)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer func() { done <- struct{}{} }()
+				h.ServeHTTP(w, r)
+			}))
+			defer srv.Close()
+
+			who.stall.Store(true)
+			cancelAfter(t, srv.URL, who.entered)
+			testwait.Recv(t, done, "canceled identification handler")
+			if n := served.Load(); n != 0 {
+				t.Fatalf("canceled unidentified request served %d times", n)
+			}
+			who.stall.Store(false)
+			who.fail.Store(true)
+			if code := getStatus(t, srv.URL); code != http.StatusForbidden {
+				t.Fatalf("live identification failure status=%d", code)
+			}
+			testwait.Recv(t, done, "live identification failure handler")
+			if n := served.Load(); n != 0 {
+				t.Fatalf("live unidentified request served %d times", n)
+			}
+		})
 	}
 }
