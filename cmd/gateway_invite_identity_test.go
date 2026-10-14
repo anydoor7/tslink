@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -144,11 +148,125 @@ func TestGatewayInviteProofRecheckedBeforePost(t *testing.T) {
 
 func writeGatewayInviteRegistry(t *testing.T, path string, reg *registry.Registry) {
 	t.Helper()
-	data, err := json.Marshal(reg)
+	data, err := json.MarshalIndent(reg, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, append(data, '\n'), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The HTTP-MCP owner and non-owner cases use an accepted stale invitation.
+// The proof case enters the per-target operation directly so its context seam
+// can retire ownership under the write lock, after the initial proof.
+func TestGatewayMCPStaleInviteRetirementAuthorization(t *testing.T) {
+	for _, scenario := range []string{"non-owner", "current-target-retired", "owner-control"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newGatewayInviteFixture(t)
+			got, err := changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
+			if err != nil || !got.Complete {
+				t.Fatal(got, err)
+			}
+			reg, err := registry.Load(f.paths.Registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range reg.People {
+				if reg.People[i].Login == "alice" {
+					reg.People[i].Invites[0].State = registry.PersonInviteAccepted
+				}
+			}
+			writeGatewayInviteRegistry(t, f.paths.Registry, reg)
+			now := peopleNowFn()
+			ledgerPath := filepath.Join(filepath.Dir(f.paths.Registry), "portal-nodes", "home", "ownership.json")
+			if _, err := tsruntime.TryUpdateOwnership(ledgerPath, func(l *tsruntime.OwnershipLedger) (bool, error) {
+				for i := range l.Nodes {
+					l.Nodes[i].RetiredAt = &now
+				}
+				l.Nodes = append(l.Nodes, tsruntime.OwnedNode{ServiceName: "gateway", NodeID: "gateway-node-2", RecordedAt: now})
+				return true, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			f.nodeID = "gateway-node-2"
+			f.mu.Unlock()
+			f.refresh(t)
+			target := tailapi.DeviceTarget{Kind: "gateway", Hostname: "home", NodeID: "gateway-node-2"}
+			if err := gatewayInviteProof(f.paths.Registry, target); err != nil {
+				t.Fatal("current proof control", err)
+			}
+			before, err := os.ReadFile(f.paths.Registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actions := defaultMCPActions(f.paths, io.Discard)
+			var result []byte
+			principal := "owner"
+			if scenario == "non-owner" {
+				principal = "operator"
+			}
+			if scenario == "current-target-retired" {
+				ledger, err := tsruntime.LoadOwnership(ledgerPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range ledger.Nodes {
+					ledger.Nodes[i].RetiredAt = &now
+				}
+				data, err := json.Marshal(ledger)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lock, err := os.OpenFile(f.paths.Registry+".lock", os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+				ctx := mcpscope.WithSession(context.Background(), mcpscope.Session{Who: "owner", Scope: mcpscope.Scope{Role: "owner"}})
+				next := &gatewayOwnerChangeContext{Context: ctx, lock: lock, path: ledgerPath, data: data}
+				v := resumePeopleInvite(next, f.paths.Registry, "alice", target, peopleArguments{Invite: true, Replace: map[string]string{"@gateway": "1001"}})
+				result, err = json.Marshal(v)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !next.changed {
+					t.Fatal("current target was not retired inside transaction")
+				}
+				if gatewayInviteProof(f.paths.Registry, target) == nil {
+					t.Fatal("retired target still proven")
+				}
+			} else {
+				srv := httptest.NewServer(mcpHTTPControlPlaneHandler(t, []string{principal}, principal, actions))
+				defer srv.Close()
+				result = portalRemoteCall(t, srv, "people_update", map[string]any{"who": "alice", "invite": true, "replace_invites": map[string]string{"@gateway": "1001"}})
+			}
+			after, err := os.ReadFile(f.paths.Registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			posts, deletes := f.counts()
+			if scenario == "owner-control" {
+				p, err := readPerson(f.paths.Registry, "alice")
+				if err != nil || bytes.Contains(result, []byte(`"complete":false`)) || bytes.Contains(result, []byte(`"isError":true`)) || len(p.Invites) != 2 || p.Invites[0].State != registry.PersonInviteTargetGone || p.Invites[1].NodeID != target.NodeID || posts != 2 || deletes != 0 {
+					t.Fatalf("owner recovery control: %s person=%+v posts=%d deletes=%d err=%v", result, p, posts, deletes, err)
+				}
+				return
+			}
+			code := "access_request_owner_required"
+			if scenario == "current-target-retired" {
+				code = registry.CodeInviteOwnershipUnproven
+			}
+			if !bytes.Contains(result, []byte(code)) {
+				t.Errorf("missing retirement refusal %s: %s", code, result)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("refused retirement changed registry")
+			}
+			if posts != 1 || deletes != 0 {
+				t.Errorf("refused retirement sent/revoked invite: posts=%d deletes=%d", posts, deletes)
+			}
+		})
 	}
 }
