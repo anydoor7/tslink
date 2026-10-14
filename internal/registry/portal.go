@@ -86,6 +86,12 @@ func DisablePortal(path string) error {
 }
 
 func DisablePortalContext(ctx context.Context, path string) error {
+	return DisablePortalAuthorizedContext(ctx, path, nil)
+}
+
+// DisablePortalAuthorizedContext checks authority against the current portal
+// while holding the registry write lock.
+func DisablePortalAuthorizedContext(ctx context.Context, path string, authorize func(*Registry) error) error {
 	return withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
@@ -93,6 +99,11 @@ func DisablePortalContext(ctx context.Context, path string) error {
 		}
 		if reg.Portal == nil || !reg.Portal.Enabled {
 			return nil
+		}
+		if authorize != nil {
+			if err := authorize(reg); err != nil {
+				return err
+			}
 		}
 		reg.Portal.Enabled = false
 		return save(path, reg)

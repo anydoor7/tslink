@@ -128,7 +128,12 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 		}, ctx); err != nil {
 			return tsRuntime.PortalState{}, err
 		}
-	} else if err := registry.DisablePortalContext(ctx, paths.Registry); err != nil {
+	} else if err := registry.DisablePortalAuthorizedContext(ctx, paths.Registry, func(reg *registry.Registry) error {
+		if reg.Portal != nil && reg.Portal.Gateway != nil && reg.Portal.Gateway.Enabled {
+			return requireRequestOwnerInRegistry(ctx, reg)
+		}
+		return nil
+	}); err != nil {
 		return tsRuntime.PortalState{}, err
 	}
 	reg, _, err := registry.Preflight(paths.Registry)

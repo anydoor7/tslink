@@ -31,6 +31,7 @@ func gatewayMutationCases() []gatewayMutationCase {
 		{"remote", "add", map[string]any{"name": "new-app", "type": "proxy", "remote": "https://remote.tailnet.ts.net", "no_daemon_install": true}},
 		{"re-add-routed", "add", map[string]any{"name": "app", "type": "proxy", "target": "localhost:10", "no_daemon_install": true}},
 		{"remove-routed", "unshare", map[string]any{"name": "app"}},
+		{"disable", "portal_disable", map[string]any{}},
 	}
 }
 func gatewayAuthorityPaths(t *testing.T) sharePaths {
@@ -150,7 +151,7 @@ func TestGatewayMCPOwnerChangesBeforeWrite(t *testing.T) {
 			}
 			actions := defaultMCPActions(paths, io.Discard)
 			switch tc.tool {
-			case "portal_enable":
+			case "portal_enable", "portal_disable":
 				original := actions.portalChange
 				actions.portalChange = func(ctx context.Context, a portalArguments, b bool) (any, error) { return original(wrap(ctx), a, b) }
 			case "portal_route_add", "portal_route_remove":
@@ -186,5 +187,19 @@ func TestGatewayMCPOwnerChangesBeforeWrite(t *testing.T) {
 				t.Fatal("denied operation modified the new owner's registry", err)
 			}
 		})
+	}
+}
+
+func TestGatewayOffMCPDisablePreservesAuthorityBehavior(t *testing.T) {
+	paths := gatewayCommandPaths(t)
+	if _, err := changePortal(paths, portalArguments{Owner: "owner"}, true); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(mcpHTTPControlPlaneHandler(t, []string{"operator"}, "operator", defaultMCPActions(paths, io.Discard)))
+	defer srv.Close()
+	result := portalRemoteCall(t, srv, "portal_disable", map[string]any{})
+	reg, err := registry.Load(paths.Registry)
+	if err != nil || reg.Portal == nil || reg.Portal.Enabled || reg.Portal.Gateway != nil || bytes.Contains(result, []byte(`"isError":true`)) {
+		t.Fatalf("gateway-off disable changed: %s registry=%+v err=%v", result, reg, err)
 	}
 }
