@@ -173,10 +173,12 @@ func (l *gatewayListener) admissions() {
 			defer workers.Done()
 			defer func() { <-slots }()
 			if l.gate.admit(l.ctx, c.RemoteAddr().String()) {
-				select {
-				case l.ready <- c:
-					return
-				case <-l.ctx.Done():
+				if l.ctx.Err() == nil {
+					select {
+					case l.ready <- c:
+						return
+					case <-l.ctx.Done():
+					}
 				}
 				_ = c.Close()
 				return
