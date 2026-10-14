@@ -622,6 +622,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeInvalidServiceName:         registry.ValidateName("Bad_Name"),
 		registry.CodeInvalidTag:                 registry.ValidateTag("tag:"),
 		registry.CodeAllowUnsupportedTCP:        registry.AllowUnsupportedTCPError(),
+		registry.CodeHealthOptionUnsupported:    registry.CodedError{Code: registry.CodeHealthOptionUnsupported, Message: "HTTP health options require a proxy service"},
 		registry.CodePathMustBeAbsolute:         registry.PathMustBeAbsoluteError("relative"),
 		registry.CodePathNotFound:               registry.PathNotFoundError("/missing"),
 		registry.CodePathNotDirectory:           registry.PathNotDirectoryError("/file"),
@@ -1041,9 +1042,12 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// QR flags, the request commands and seven request codes bring the complete
 	// compact contract past 5000 bytes with scopes, guests and audit.
 	// Gateway routes add three commands, seven flags and fourteen error codes.
-	// Preserve the complete contract within a fixed 6000-byte budget.
-	if len(data) >= 6000 {
-		t.Fatalf("compact manifest = %d bytes, want < 6000", len(data))
+	// Preserve the complete contract within a fixed budget. health set adds
+	// one command with seven flags and health_option_unsupported, about 110
+	// bytes, which took the contract past 6000 (6048 measured); 6100 keeps
+	// that and no more.
+	if len(data) >= 6100 {
+		t.Fatalf("compact manifest = %d bytes, want < 6100", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {
@@ -1118,4 +1122,54 @@ func contains(value, want string) bool {
 		}
 	}
 	return false
+}
+
+// A command executed in-process, as many tests do, gains Cobra's --help flag.
+// The manifest must not change because of that, or its content and the
+// compact budget above would depend on test order.
+func TestManifestIgnoresFlagsCobraAddsOnExecution(t *testing.T) {
+	for _, path := range [][]string{{"status"}, {"list"}, {"health", "set"}} {
+		c, _, err := rootCmd.Find(path)
+		if err != nil {
+			t.Fatalf("find %v: %v", path, err)
+		}
+		c.InitDefaultHelpFlag()
+		if c.Flags().Lookup("help") == nil {
+			t.Fatalf("%v: Cobra did not add its help flag", path)
+		}
+	}
+	rootCmd.InitDefaultHelpFlag()
+	for _, command := range Manifest().Commands {
+		for _, flag := range command.Flags {
+			if flag.Name == "help" {
+				t.Fatalf("manifest lists Cobra's help flag on %q", command.Path)
+			}
+		}
+	}
+	for path, flags := range CompactManifest().Commands {
+		for _, name := range flags {
+			if name == "help" {
+				t.Fatalf("compact manifest lists Cobra's help flag on %q", path)
+			}
+		}
+	}
+}
+
+// commandFlags drops both flags Cobra creates itself, including --version on
+// a versioned command, without depending on the global command tree.
+func TestCommandFlagsSkipsFlagsCobraCreates(t *testing.T) {
+	c := &cobra.Command{Use: "probe", Version: "1.2.3", Run: func(*cobra.Command, []string) {}}
+	c.Flags().Bool("dry-run", false, "")
+	c.InitDefaultHelpFlag()
+	c.InitDefaultVersionFlag()
+	if c.Flags().Lookup("help") == nil || c.Flags().Lookup("version") == nil {
+		t.Fatal("Cobra did not add its help and version flags")
+	}
+	var names []string
+	for _, flag := range commandFlags(c, "probe") {
+		names = append(names, flag.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"dry-run"}) {
+		t.Fatalf("commandFlags = %v, want [dry-run]", names)
+	}
 }

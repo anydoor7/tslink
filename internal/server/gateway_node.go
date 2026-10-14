@@ -186,7 +186,10 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 		delete(run.routes, name)
 	}
 	for name, svc := range wanted {
-		ctx, cancel := context.WithCancel(context.Background())
+		// The route's requests derive from ctx; the cause tells their access
+		// events that TSLink, not the visitor, canceled them.
+		ctx, cancelCause := context.WithCancelCause(context.Background())
+		cancel := func() { cancelCause(errRouteClosed) }
 		port := svc.PortalRoute.Port
 		slot := run.routeSlots[port]
 		if slot == nil {

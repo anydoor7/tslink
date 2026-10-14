@@ -874,6 +874,13 @@ func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {
 		if commandPath == "tslink mcp" && f.Name == "json" {
 			return
 		}
+		// Cobra adds --help (and --version on a versioned root) to a command
+		// the first time it executes. Those flags are not part of the machine
+		// contract, and listing them would make the manifest depend on which
+		// commands already ran in the same process.
+		if _, ok := f.Annotations[cobra.FlagSetByCobraAnnotation]; ok {
+			return
+		}
 		if _, ok := seen[f.Name]; ok {
 			return
 		}

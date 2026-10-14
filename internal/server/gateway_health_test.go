@@ -18,10 +18,18 @@ import (
 )
 
 func TestGatewayPortalOnlyPeriodicHealthAndFreshness(t *testing.T) {
-	var fail atomic.Bool
+	var fail, drop atomic.Bool
 	var calls atomic.Int64
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if drop.Load() {
+			// No response at all: the backend is unreachable.
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				conn.Close()
+			}
+			return
+		}
 		if fail.Load() {
 			w.WriteHeader(500)
 			return
@@ -63,12 +71,24 @@ func TestGatewayPortalOnlyPeriodicHealthAndFreshness(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("interval ignored", calls.Load())
 	}
+	// An answer outside the range is degraded however long it lasts.
 	fail.Store(true)
 	for i := 0; i < 3; i++ {
 		now = now.Add(10 * time.Second)
 		cycle()
 	}
+	check(health.Degraded, false)
+	// Only three unreachable checks in a row are down.
+	drop.Store(true)
+	for i := 0; i < 2; i++ {
+		now = now.Add(10 * time.Second)
+		cycle()
+	}
+	check(health.Degraded, false)
+	now = now.Add(10 * time.Second)
+	cycle()
 	check(health.Down, true)
+	drop.Store(false)
 	now = now.Add(22 * time.Second)
 	f.now.Store(now.UnixNano())
 	check(health.Unknown, true)

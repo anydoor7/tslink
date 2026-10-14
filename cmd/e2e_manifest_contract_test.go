@@ -124,6 +124,8 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink requests list":       {}, // Isolated local registry, no credentials or external action.
 	"tslink requests approve":    {}, // ExactArgs(1), no body when bare.
 	"tslink requests deny":       {}, // ExactArgs(1), no body when bare.
+	"tslink health":              {}, // Group help only; no leaf body.
+	"tslink health set":          {}, // ExactArgs(1) stops before registry writes.
 	// (a) Command groups. RunE is runCommandGroup: it prints help and exits 0.
 	// No leaf command body runs.
 	"tslink":            {},

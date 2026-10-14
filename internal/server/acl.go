@@ -64,6 +64,9 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 			}
 
 			whois, err := localClient.WhoIs(r.Context(), r.RemoteAddr)
+			if err != nil && accessGoneBeforeDecision(r) {
+				return
+			}
 			if err != nil {
 				slog.Warn("acl: failed to identify caller", "error", err)
 				accessDeny(r, "acl")

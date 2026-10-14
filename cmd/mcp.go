@@ -723,6 +723,7 @@ type mcpActions struct {
 	registryPath      string
 	personApp         func(context.Context, string, string, string, bool) (any, error)
 	appRestart        func(context.Context, string) (any, error)
+	healthSet         func(context.Context, healthSetArguments) (any, error)
 	guest             func(context.Context, string, guestArguments) (any, error)
 	peopleChange      func(context.Context, peopleArguments, bool) (any, error)
 	peopleList        func() (any, error)
@@ -947,6 +948,9 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			return map[string]any{"person": peopleView(p, peopleURLs(paths), nowFn()), "app": app, "revoked": revoke}, nil
+		},
+		healthSet: func(ctx context.Context, args healthSetArguments) (any, error) {
+			return setHealthContext(ctx, paths.Registry, args)
 		},
 		appRestart: func(ctx context.Context, app string) (any, error) {
 			session, _ := mcpscope.FromContext(ctx)
@@ -1807,6 +1811,12 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 			return refusal, nil
 		}
 		data, err = actions.appRestart(ctx, args.App)
+	case "health_set":
+		var args healthSetArguments
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args), mcpRequiredArgument{"app", args.App}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.healthSet(ctx, args)
 	case "mcp_audit":
 		var args struct{}
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {

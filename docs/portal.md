@@ -123,7 +123,8 @@ reuse an upstream connection. Traffic and
 health checks dial that peer's Tailscale IP directly through the gateway netstack,
 only while `UseNetstackForIP` confirms it is a peer. They never use the host
 resolver or host network; a missing or disappearing peer fails closed with
-`remote_upstream_not_peer` or a netstack dial error. TLS still verifies the
+`remote_upstream_not_peer` or a netstack dial error, and on an already open
+upstream connection as `upstream_down`. TLS still verifies the
 registered hostname normally. The remote app must permit the gateway tag in its own policy
 (for a TSLink app, its explicit tag allow list). This command does not change
 remote ACLs or registrations.
@@ -181,7 +182,9 @@ response-header deadline preventing long polls.
 
 Portal-only proxy and file apps are probed periodically without visitor traffic.
 Remote probes use the same tagged tsnet transport as requests. The existing health
-configuration and three-failure down threshold apply. Observations older than
+configuration, its classification and the three-failure down threshold apply: a
+route whose backend answers outside its health settings is `degraded`, never
+`down`, and has no “Offline since”. Observations older than
 twice the interval plus timeout become `unknown`; `health_checked` records their
 time. The directory displays “Offline since” when known. A backend observation
 is not proof of a guest's network reachability. `doctor --probe-external` never
@@ -218,7 +221,16 @@ Status and doctor expose `portal.gateway` with observed persistence, tag and nod
 identity, ownership proof, range, route states and a per-run `dropped` connection
 count. Connection-drop logs are rate-limited per gate; the home gate uses the
 fixed app marker `@portal`. Request events retain app names and add `via: portal`
-and a stable reason. The drop counter includes events omitted by the rate limit.
+and a stable reason. A visitor who cancels during identification leaves no event;
+one who cancels during proxying, before the response starts, is `allowed` with
+status 499 and `client_canceled`, and does not mark the route down. A visitor
+who leaves after the response started keeps the forwarded status. Requests in
+flight when TSLink tears a route down are `allowed` with `route_closed`, not a
+visitor cancellation, and do not mark the route down: status 503 before the
+response starts, the forwarded status once it has started. A response that
+completed before the teardown keeps its reason. App nodes, including guest-gated
+apps, record requests they cut on stop or reload the same way with `node_closed`
+(see [access log](access-log.md)). The drop counter includes events omitted by the rate limit.
 
 Gateway registries use schema 3, which older readers refuse. Before downgrading,
 stop the new daemon, back up the registry and portal state, and intentionally

@@ -627,16 +627,16 @@
         {
           "name": "health-status-max",
           "type": "int",
-          "default": "299",
+          "default": "0",
           "scope": "local",
-          "usage": "Highest expected HTTP probe status (proxy only)"
+          "usage": "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)"
         },
         {
           "name": "health-status-min",
           "type": "int",
-          "default": "200",
+          "default": "0",
           "scope": "local",
-          "usage": "Lowest expected HTTP probe status (proxy only)"
+          "usage": "Lowest accepted HTTP probe status (default 200; proxy only)"
         },
         {
           "name": "health-timeout",
@@ -992,16 +992,16 @@
         {
           "name": "health-status-max",
           "type": "int",
-          "default": "299",
+          "default": "0",
           "scope": "local",
-          "usage": "Highest expected HTTP probe status (proxy only)"
+          "usage": "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)"
         },
         {
           "name": "health-status-min",
           "type": "int",
-          "default": "200",
+          "default": "0",
           "scope": "local",
-          "usage": "Lowest expected HTTP probe status (proxy only)"
+          "usage": "Lowest accepted HTTP probe status (default 200; proxy only)"
         },
         {
           "name": "health-timeout",
@@ -1577,6 +1577,77 @@
           "description": "Nonsecret guest grant."
         }
       }
+    },
+    {
+      "path": "tslink health",
+      "short": "Manage app health checks",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink health set",
+      "short": "Change only an app's health check, keeping access, routes and node identity",
+      "flags": [
+        {
+          "name": "body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Expected substring in the first 64 KiB; empty removes the check (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "interval",
+          "type": "string",
+          "scope": "local",
+          "usage": "Probe interval, 10s to 1d and at least the timeout (default 1m)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP probe path joined to the backend base path (default /; proxy only)"
+        },
+        {
+          "name": "reset",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Discard stored health settings before applying the other options"
+        },
+        {
+          "name": "status-max",
+          "type": "int",
+          "default": "0",
+          "scope": "local",
+          "usage": "Highest accepted HTTP status (default 399 with no lower bound set, otherwise 299; proxy only)"
+        },
+        {
+          "name": "status-min",
+          "type": "int",
+          "default": "0",
+          "scope": "local",
+          "usage": "Lowest accepted HTTP status (default 200; proxy only)"
+        },
+        {
+          "name": "timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Probe timeout, 100ms to 30s (default 5s)"
+        }
+      ]
     },
     {
       "path": "tslink install",
@@ -3915,6 +3986,10 @@
     "gateway_tag_requires_credentials": {
       "exit_code": 2,
       "description": "gateway tags require a credentialed enrollment"
+    },
+    "health_option_unsupported": {
+      "exit_code": 2,
+      "description": "health path, status range and body checks apply to HTTP proxy services; file and TCP services accept only timeout and interval"
     },
     "internal_error": {
       "exit_code": 1,

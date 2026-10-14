@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
@@ -34,6 +35,9 @@ func formatAppHealth(out io.Writer, name string, h health.State, e health.Expiry
 	fmt.Fprintf(out, humanText("→ %s app: %s (checked %s; consecutive failures %d)"), name, state, checked, h.ConsecutiveFailures)
 	if h.LastError != "" {
 		fmt.Fprintf(out, " error=%s", h.LastError)
+	}
+	if h.StatusCode != 0 {
+		fmt.Fprintf(out, " status=%d", h.StatusCode)
 	}
 	fmt.Fprintln(out)
 	if e.DaysLeft == nil {
@@ -115,6 +119,77 @@ func healthConfigFromFlags(cmd *cobra.Command) *registry.HealthConfig {
 
 var doctorHTTPProbeFn = func(ctx context.Context, svc registry.Service) string { return health.Probe(ctx, svc) }
 
+// healthMismatchFinding explains a backend that answered outside its health
+// settings and names the one command that changes only the check. Re-running
+// add would replace the whole service, so it is never suggested. stored is the
+// app's saved health block: the suggestion widens its effective range just
+// enough for the answer, so health set always accepts it.
+func healthMismatchFinding(app, code string, status int, stored *registry.HealthConfig) (string, map[string]string) {
+	next := "tslink health set " + app + " --path /health"
+	answered := "an unexpected body"
+	if code == "health_status_mismatch" {
+		answered = "a status outside the accepted range"
+		if flags := statusRangeFlags(status, stored); flags != "" {
+			next = "tslink health set " + app + flags
+		}
+	}
+	evidence := map[string]string{"error_code": code, "next": next}
+	if status != 0 {
+		evidence["status_code"] = strconv.Itoa(status)
+		answered = fmt.Sprintf("HTTP %d", status)
+		if code == "health_body_mismatch" {
+			answered += " without the expected body text"
+		}
+	}
+	message := fmt.Sprintf("The app answered its health check with %s, so it is reachable but the check does not match it. Point the check at an endpoint that answers 2xx or 3xx, or accept this answer, changing only the health settings: %s", answered, next)
+	return message, evidence
+}
+
+// statusRangeFlags returns the health set flags that widen the stored range
+// to accept a redirect (as the whole 3xx class) or a 401/403 answer: raise the
+// maximum above it, lower the minimum below it. Only a changed bound is named.
+// It returns "" for other answers, which a health path fixes instead.
+func statusRangeFlags(status int, stored *registry.HealthConfig) string {
+	low, high := status, status
+	switch {
+	case status == 401 || status == 403:
+	case status >= 300 && status <= 399:
+		low, high = 300, 399
+	default:
+		return ""
+	}
+	current := registry.HealthConfig{}
+	if stored != nil {
+		current = *stored
+	}
+	effective := current.Effective()
+	if status >= effective.StatusMin && status <= effective.StatusMax {
+		return ""
+	}
+	wantMin, wantMax := min(effective.StatusMin, low), max(effective.StatusMax, high)
+	var update registry.HealthUpdate
+	if wantMin != effective.StatusMin {
+		update.StatusMin = &wantMin
+	}
+	if wantMax != effective.StatusMax {
+		update.StatusMax = &wantMax
+	}
+	// Check the command against health set's own merge and validation, so a
+	// suggestion it would refuse is never printed.
+	next := update.Apply(stored)
+	if result := next.Effective(); result.StatusMin != wantMin || result.StatusMax != wantMax || registry.ValidateHealthConfig(registry.TypeProxy, next) != nil {
+		return ""
+	}
+	flags := ""
+	if update.StatusMin != nil {
+		flags += " --status-min " + strconv.Itoa(*update.StatusMin)
+	}
+	if update.StatusMax != nil {
+		flags += " --status-max " + strconv.Itoa(*update.StatusMax)
+	}
+	return flags
+}
+
 // The journal owns events, monitor state and current read/config errors. Only
 // a live, usable snapshot can supplement an error that could not be persisted.
 func alertsWithSnapshot(journal health.AlertsView, snapshot health.AlertsView, live bool) health.AlertsView {
@@ -154,8 +229,8 @@ func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 
 func addHealthFlags(cmd *cobra.Command) {
 	cmd.Flags().String("health-path", "", "HTTP business probe path (default /; proxy only)")
-	cmd.Flags().Int("health-status-min", 200, "Lowest expected HTTP probe status (proxy only)")
-	cmd.Flags().Int("health-status-max", 299, "Highest expected HTTP probe status (proxy only)")
+	cmd.Flags().Int("health-status-min", 0, "Lowest accepted HTTP probe status (default 200; proxy only)")
+	cmd.Flags().Int("health-status-max", 0, "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)")
 	cmd.Flags().String("health-body", "", "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)")
 	cmd.Flags().String("health-timeout", "5s", "Backend probe timeout, 100ms to 30s")
 	cmd.Flags().String("health-interval", "1m", "Backend probe interval, 10s to 1d")

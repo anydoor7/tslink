@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -28,11 +29,57 @@ type State struct {
 	LastChecked         *time.Time `json:"last_checked,omitempty"`
 	LastError           string     `json:"last_error,omitempty"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
+	// StatusCode is the HTTP status the backend answered. It is absent when no
+	// response arrived; response bodies and redirect targets are never kept.
+	StatusCode int `json:"status_code,omitempty"`
 }
 
 func Unchecked(kind string) State { return State{State: Unknown, Kind: kind} }
 
 type canonicalHostKey struct{}
+type responseStatusKey struct{}
+
+// ResponseStatus receives the HTTP status of a probe's backend response. Only
+// a status observed before the probe's deadline counts: a timed-out read can
+// still finish after its caller moved on, and its late status is dropped.
+type ResponseStatus struct {
+	mu     sync.Mutex
+	code   int
+	frozen bool
+}
+
+// Code returns the status observed so far, or 0 when no response arrived.
+func (s *ResponseStatus) Code() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.code
+}
+
+// Snapshot returns the observed status and ignores every later observation.
+// A caller takes it once the probe has returned or its deadline has passed.
+func (s *ResponseStatus) Snapshot() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frozen = true
+	return s.code
+}
+
+// observe records code unless the probe context has already ended or the
+// caller has taken its snapshot.
+func (s *ResponseStatus) observe(ctx context.Context, code int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.frozen && ctx.Err() == nil {
+		s.code = code
+	}
+}
+
+// WithResponseStatus lets a caller learn what the backend answered while Probe
+// keeps returning only a stable error code.
+func WithResponseStatus(ctx context.Context) (context.Context, *ResponseStatus) {
+	s := &ResponseStatus{}
+	return context.WithValue(ctx, responseStatusKey{}, s), s
+}
 
 // WithCanonicalHost supplies trusted receiving-node metadata for a backend
 // probe. Preserve-host services refuse a missing or invalid name. The scheduler
@@ -123,6 +170,9 @@ func ProbeWithDialer(ctx context.Context, svc registry.Service, dialer Dialer) s
 			return "health_request_failed"
 		}
 		defer resp.Body.Close()
+		if s, ok := ctx.Value(responseStatusKey{}).(*ResponseStatus); ok {
+			s.observe(ctx, resp.StatusCode)
+		}
 		if resp.StatusCode < c.StatusMin || resp.StatusCode > c.StatusMax {
 			return "health_status_mismatch"
 		}
@@ -168,16 +218,49 @@ func TargetSafe(svc registry.Service) bool {
 	}
 }
 
+// UnexpectedResponse reports a check that reached the backend and got an
+// answer the health settings do not accept. The backend is up; the check, or
+// the app behind it, needs attention. Every other failure, including a body
+// that could not be read after the headers, means the backend is unreachable.
+func UnexpectedResponse(code string) bool {
+	return code == "health_status_mismatch" || code == "health_body_mismatch"
+}
+
+// Outcome is one attempted check: Error is a stable error code, empty on
+// success; StatusCode is the HTTP status the backend answered, 0 when no
+// response arrived.
+type Outcome struct {
+	Error      string
+	StatusCode int
+}
+
 func Result(previous State, kind, errorCode string, now time.Time) State {
+	return ResultOf(previous, kind, Outcome{Error: errorCode}, now)
+}
+
+// ResultOf derives the next state. Only unreachable checks escalate: three in
+// a row are down. An unexpected response is at most degraded, however long it
+// lasts. consecutive_failures counts the current run of one failure class, so
+// a long mismatch run never makes one connection failure jump to down.
+func ResultOf(previous State, kind string, o Outcome, now time.Time) State {
 	now = now.UTC()
 	r := State{State: Healthy, Kind: kind, LastChecked: &now}
-	if errorCode != "" {
-		r.LastError = errorCode
-		r.ConsecutiveFailures = previous.ConsecutiveFailures + 1
-		r.State = Degraded
-		if r.ConsecutiveFailures >= 3 {
-			r.State = Down
-		}
+	// A timeout keeps a status whose headers arrived before the deadline, as
+	// when a body stalls; ResponseStatus already dropped later ones.
+	if o.StatusCode >= 100 && o.StatusCode <= 999 {
+		r.StatusCode = o.StatusCode
+	}
+	if o.Error == "" {
+		return r
+	}
+	r.LastError = o.Error
+	r.ConsecutiveFailures = previous.ConsecutiveFailures + 1
+	if previous.LastError != "" && UnexpectedResponse(previous.LastError) != UnexpectedResponse(o.Error) {
+		r.ConsecutiveFailures = 1
+	}
+	r.State = Degraded
+	if !UnexpectedResponse(o.Error) && r.ConsecutiveFailures >= 3 {
+		r.State = Down
 	}
 	return r
 }

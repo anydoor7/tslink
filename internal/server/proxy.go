@@ -2,14 +2,19 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -144,11 +149,26 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			if denyGuestProxyCancellation(w, r, err) {
 				return
 			}
-			if options.Gateway != nil {
-				if r.Context().Err() != nil {
-					accessDeny(r, "client_cancelled")
-					return
+			// TSLink closing the route or node is not the client going away
+			// and not a backend failure: 503, no route-down observation.
+			if reason, ok := serverCanceled(r, err); ok {
+				accessServerCanceled(r, reason)
+				if options.Gateway != nil {
+					gatewayErrorPage(w, r, http.StatusServiceUnavailable, reason, options.Gateway.App+" is being reconfigured; try again", "", false)
+				} else {
+					http.Error(w, "Service unavailable — app is restarting", http.StatusServiceUnavailable)
 				}
+				return
+			}
+			// A client that went away is neither a backend failure nor a
+			// denial: no 5xx, no route-down or health observation.
+			if clientCanceled(r, err) {
+				accessClientCanceled(w, r)
+				return
+			}
+			class := backendErrorClass(err)
+			accessBackendFailure(r, class)
+			if options.Gateway != nil {
 				accessDeny(r, "upstream_down")
 				if options.Gateway.Observe != nil {
 					options.Gateway.Observe(false)
@@ -156,7 +176,7 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				gatewayErrorPage(w, r, http.StatusBadGateway, "upstream_down", options.Gateway.App+" on "+options.Gateway.HostLabel+" is not reachable right now", "", false)
 				return
 			}
-			slog.Error("proxy error", "code", "backend_request_failed")
+			slog.Error("proxy error", "code", "backend_request_failed", "error_class", class)
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)
 			} else {
@@ -198,6 +218,35 @@ func canonicalHostFor(node tsnetServer, runtimeHost string) string {
 		domains = node.CertDomains()
 	}
 	return registry.CanonicalProxyHost(domains, runtimeHost)
+}
+
+// backendErrorClass names a backend failure without its URL, host or address.
+func backendErrorClass(err error) string {
+	var record tls.RecordHeaderError
+	var alert tls.AlertError
+	var verify *tls.CertificateVerificationError
+	var authority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	switch {
+	case isTimeout(err):
+		return "timeout"
+	case errnoIs(err, syscall.ECONNREFUSED, 10061):
+		return "connection_refused"
+	case errnoIs(err, syscall.ECONNRESET, 10054), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection_reset"
+	case errors.As(err, &record), errors.As(err, &alert), errors.As(err, &verify), errors.As(err, &authority), errors.As(err, &hostname), errors.As(err, &invalid):
+		return "tls"
+	}
+	return "other"
+}
+
+// errnoIs matches a socket error. Winsock reports refusals and resets with its
+// own numbers (WSAECONNREFUSED 10061, WSAECONNRESET 10054), which differ from
+// the syscall package's portable values on Windows.
+func errnoIs(err error, portable syscall.Errno, winsock uintptr) bool {
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == portable || runtime.GOOS == "windows" && uintptr(errno) == winsock)
 }
 
 func isTimeout(err error) bool {

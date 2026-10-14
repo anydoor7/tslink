@@ -13,16 +13,48 @@ tslink list --verbose
 tslink doctor --json
 ```
 
-HTTP defaults are GET `/`, status 200 through 299, no body assertion, 5-second
-timeout and a 1-minute interval. The path is joined to the backend base path
+HTTP defaults are GET `/`, any status from 200 through 399, no body assertion,
+5-second timeout and a 1-minute interval. The default is computed when the
+check runs, so upgrading rewrites no registry and does not change
+`runtime_snapshot.registry_fingerprint`. Setting only one status bound keeps
+the meaning it had before 0.2.0: the other bound defaults to 200 or 299, so
+`--health-status-min 200` alone still accepts only 2xx. `401` and `403` are
+not accepted by default; accept them explicitly, for example with
+`tslink health set <app> --status-max 401`.
+
+## Changing an existing app's check
+
+```sh
+tslink health set micwave-phone --path /health
+tslink health set opencode-server --status-max 401
+tslink health set photos --interval 5m
+tslink health set photos --reset
+```
+
+`tslink health set <app>` changes only the health settings, in one registry
+transaction. Access lists, tags, people scope, portal routes and the enrolled
+node are kept, and the running node is not restarted. Options you leave out
+keep their stored value; an empty value or `0` selects the default; `--reset`
+discards the stored settings first, and a reset app stores no health block at
+all. Validation is the same as for `add`; a refused change writes nothing.
+Path, status range and body apply to proxy services only; on file and TCP
+services they fail with `health_option_unsupported` (exit 2). An unknown app is
+`not_found` (exit 5). The JSON result reports `changed`, `defaults` and the
+effective settings; it shows whether a body check exists, never its text. The
+owner-only MCP tool `health_set` takes the same fields (`body_contains` for
+`--body`) and, over HTTP MCP, requires the current portal owner for a routed
+app, checked inside the write transaction. Do not re-run `add` to change a
+check: `add` replaces the whole service and drops flags you do not repeat.
+Changing the settings starts a new observation: the failure count and alert
+state of the previous settings are not carried over. The path is joined to the backend base path
 with the same rules as the reverse proxy; any backend query is preserved. The
 probe uses that backend directly, without Tailscale caller identity. HTTP and
 TCP probes enforce the registry's target-safety refusals before doing any I/O;
 refused targets are excluded from scheduling. Enrollment and policy failures
 still permit backend checks. Redirects
-are not followed: configure the expected range or a suitable endpoint if the
-app redirects. An endpoint requiring caller authentication may need a separate
-local readiness path. This observation does not prove remote access, ACLs or
+are not followed: a redirect itself counts as an answer. An endpoint requiring
+caller authentication may need a separate local readiness path, or an explicit
+range that accepts its 401 or 403. This observation does not prove remote access, ACLs or
 TLS on the Tailscale frontend.
 
 For `preserve_host` services, probes send the same canonical Host and
@@ -52,12 +84,41 @@ backend calls can remain in progress across cycles. Paths may not contain a
 query, fragment or another host. Use a non-sensitive substring; secrets do not
 belong in CLI arguments. Registry `health` and the MCP `add` tool accept the
 same settings (`path`, `status_min`, `status_max`, `body_contains`, `timeout`,
-`interval`). Re-adding an existing name replaces its health settings too.
+`interval`). Re-adding an existing name replaces its health settings too, with
+the rest of the service; use `tslink health set` to change only the check.
 
-A successful check is `healthy`. One or two consecutive failures are
-`degraded`; three failures are `down`. A success clears the failure count.
-`health` includes `last_checked`, `last_error` (a stable code), and
-`consecutive_failures` in CLI JSON, MCP `status`/`list`, and `/events` state.
+A successful check is `healthy`. Failures fall into two classes:
+
+- **Unreachable**: no usable answer, such as `health_request_failed`,
+  `health_timeout`, `health_tcp_failed`, file-check failures and
+  `health_body_read_failed` (the connection failed after the headers). One or
+  two consecutive unreachable checks are `degraded`; three are `down`, and the
+  first `down` records an `app_down` event.
+- **Unexpected response**: the backend answered, but with a status outside the
+  accepted range (`health_status_mismatch`) or without the expected body text
+  (`health_body_mismatch`). The app is `degraded` however long this lasts; it is
+  never `down` and never records `app_down`.
+
+`consecutive_failures` counts the current run of one class. When the class
+changes, the count starts again at 1, so a long run of unexpected responses
+never makes a single connection failure `down`: three consecutive unreachable
+checks are still required. An app that is `down` and then answers unexpectedly
+becomes `degraded` without `app_recovered`, which is reserved for `healthy`. A
+success clears the failure count. `health` includes `last_checked`,
+`last_error` (a stable code), `consecutive_failures` and, when the backend
+answered, `status_code` (the HTTP status; omitted when no response arrived) in
+CLI JSON, MCP `status`/`list`, and `/events` state. A check that times out
+after the response headers arrived, for example while the body stalls, keeps
+the status it received before the deadline; a status that would arrive after
+the deadline is dropped. Response bodies and
+redirect targets are never recorded. `doctor` reports an unexpected response as
+`app_probe_unexpected_response` (warning, area `app_probe`; the reduced MCP
+doctor uses area `health`) with `status_code` and a `next` command that changes
+only the check, such as `tslink health set <app> --path /health` or
+`tslink health set <app> --status-max 401`. For a redirect, 401 or 403 the
+command widens the app's stored range to include the answer: it raises
+`--status-max` when the answer is above the range and lowers `--status-min`
+when it is below, so `health set` accepts it.
 An absent check is `unknown`; an observation older than twice its configured
 interval plus its timeout is shown as unknown. The monitor wakes connected
 `/events` clients when an observation crosses that boundary, even if no new

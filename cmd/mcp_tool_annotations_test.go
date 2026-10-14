@@ -32,6 +32,7 @@ var mcpWantHints = map[string][4]bool{
 	"people_revoke":       {false, true, true, false},
 	"app_restart":         {false, true, false, false},
 	"health":              {true, false, true, false},
+	"health_set":          {false, false, true, false},
 	"mcp_audit":           {true, false, true, false},
 	"guest_create":        {false, false, false, false}, "guest_list": {true, false, true, false}, "guest_show": {true, false, true, false}, "guest_revoke": {false, true, true, false},
 	"requests_list": {false, false, true, false}, "requests_approve": {false, true, true, false}, "requests_deny": {false, true, true, false},

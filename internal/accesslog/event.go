@@ -84,6 +84,7 @@ type Event struct {
 	DurationMS    float64           `json:"duration_ms"`
 	Decision      string            `json:"decision"`
 	Reason        string            `json:"reason,omitempty"`
+	ErrorClass    string            `json:"error_class,omitempty"` // backend failure class; never a URL or address
 	Grant         *Grant            `json:"grant,omitempty"`
 	Connection    string            `json:"connection,omitempty"`
 	MCP           *MCPAudit         `json:"mcp,omitempty"`
@@ -284,14 +285,23 @@ func sanitize(e Event) Event {
 	e.Path = SafePath(e.Path)
 	if e.Decision != "denied" {
 		e.Decision = "allowed"
-		if e.Via != "portal" || (e.Reason != "granted" && e.Reason != "owner" && e.Reason != "admin") {
+		// An allowed request keeps only portal grant reasons and cancellations
+		// by the client or by TSLink, which are never denials or backend
+		// failures.
+		if e.Reason != "client_canceled" && e.Reason != "route_closed" && e.Reason != "node_closed" && (e.Via != "portal" || (e.Reason != "granted" && e.Reason != "owner" && e.Reason != "admin")) {
 			e.Reason = ""
 		}
 	}
 	switch e.Reason {
-	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_cancelled", "remote_upstream_requires_tag", "remote_upstream_outside_tailnet", "remote_upstream_unavailable", "remote_upstream_not_peer":
+	// client_cancelled stays readable in logs from earlier gateway builds.
+	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_canceled", "client_cancelled", "route_closed", "node_closed", "remote_upstream_requires_tag", "remote_upstream_outside_tailnet", "remote_upstream_unavailable", "remote_upstream_not_peer":
 	default:
 		e.Reason = "unavailable"
+	}
+	switch e.ErrorClass {
+	case "", "connection_refused", "connection_reset", "tls", "timeout", "other":
+	default:
+		e.ErrorClass = "other"
 	}
 	if e.Grant != nil {
 		e.Grant = &Grant{Kind: safeText(e.Grant.Kind, 32), Entry: safeText(e.Grant.Entry, 256)}

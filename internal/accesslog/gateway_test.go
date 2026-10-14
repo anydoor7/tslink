@@ -46,3 +46,52 @@ func TestGatewayReasonsSurviveStoreAndQuery(t *testing.T) {
 		t.Fatal("untrusted metadata accepted")
 	}
 }
+
+// A client cancellation stays allowed traffic with its reason, and only the
+// fixed backend failure classes reach the file.
+func TestClientCancellationAndErrorClassSurviveStoreAndQuery(t *testing.T) {
+	dir := t.TempDir()
+	s := newTestStore(t, dir, Options{}, func() time.Time { return testTime })
+	for _, e := range []Event{
+		{Time: testTime, Kind: "http", App: "app", Path: "/canceled", Status: 499, Decision: "allowed", Reason: "client_canceled"},
+		{Time: testTime, Kind: "http", App: "app", Path: "/route-closed", Status: 503, Decision: "allowed", Reason: "route_closed", Via: "portal"},
+		{Time: testTime, Kind: "http", App: "app", Path: "/node-closed", Status: 503, Decision: "allowed", Reason: "node_closed"},
+		{Time: testTime, Kind: "http", App: "app", Path: "/refused", Status: 502, Decision: "allowed", ErrorClass: "connection_refused"},
+		{Time: testTime, Kind: "http", App: "app", Path: "/leaky", Status: 502, Decision: "allowed", ErrorClass: "dial tcp 10.0.0.9:8080: refused"},
+		{Time: testTime, Kind: "http", App: "app", Path: "/other", Status: 200, Decision: "allowed", Reason: "acl"},
+	} {
+		if !s.Record(e) {
+			t.Fatal("event dropped")
+		}
+	}
+	closeStore(t, s)
+	got, err := Query(dir, Filter{App: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]Event{}
+	for _, e := range got.Events {
+		byPath[e.Path] = e
+	}
+	if e := byPath["/canceled"]; e.Decision != "allowed" || e.Reason != "client_canceled" || e.Status != 499 {
+		t.Fatalf("%+v", e)
+	}
+	// TSLink's own cancellations keep their reasons as allowed traffic.
+	for path, reason := range map[string]string{"/route-closed": "route_closed", "/node-closed": "node_closed"} {
+		if e := byPath[path]; e.Decision != "allowed" || e.Reason != reason || e.Status != 503 || e.ErrorClass != "" {
+			t.Fatalf("%+v", e)
+		}
+	}
+	if e := byPath["/refused"]; e.ErrorClass != "connection_refused" || e.Reason != "" {
+		t.Fatalf("%+v", e)
+	}
+	if e := byPath["/leaky"]; e.ErrorClass != "other" {
+		t.Fatalf("%+v", e)
+	}
+	if e := byPath["/other"]; e.Reason != "" {
+		t.Fatalf("allowed events keep only client_canceled and portal reasons: %+v", e)
+	}
+	if got.Summary.Denied != 0 || got.Summary.Allowed != 6 {
+		t.Fatalf("%+v", got.Summary)
+	}
+}

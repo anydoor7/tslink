@@ -98,6 +98,7 @@ var table = []Code{
 	{"invalid_tag", ExitUsage, Service, "ACL tag is invalid"},
 	{"invalid_request_limits", ExitUsage, Service, "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"},
 	{"allow_unsupported_for_tcp", ExitUsage, Service, "HTTP allow lists do not apply to raw TCP"},
+	{"health_option_unsupported", ExitUsage, Command, "health path, status range and body checks apply to HTTP proxy services; file and TCP services accept only timeout and interval"},
 	{"portal_funnel_refused", ExitConflict, Command, "the home portal is Tailnet-only and cannot use Funnel"},
 	{"portal_hostname_conflict", ExitConflict, Command, "the portal hostname is reserved or already used by an app"},
 	{"portal_identity_invalid", ExitUsage, Command, "portal owner and admins must be canonical Tailscale login identities"},

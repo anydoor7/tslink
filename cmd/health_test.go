@@ -31,7 +31,7 @@ func TestStatusListMCPAndEventsExposeAppHealthAndExpiry(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	expiry := now.Add(3 * 24 * time.Hour)
 	svc := addStatusTestService(t, regPath, registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:1234"})
-	h := health.Result(health.State{ConsecutiveFailures: 2}, "proxy", "health_status_mismatch", now)
+	h := health.Result(health.State{ConsecutiveFailures: 2}, "proxy", "health_request_failed", now)
 	snapshot := tsruntime.NewSnapshot(4242, now.Add(-time.Hour), statusRegistryFingerprint(t, regPath), now, []tsruntime.ServiceState{{Service: svc, RuntimeHost: "app.tailnet.ts.net", Health: h, NodeKey: health.ExpiryAt(&expiry, "localclient", now, nil)}})
 	snapshot.Alerts = health.AlertsView{Notifier: "webhook", Destination: "[redacted]", Events: []health.Event{{ID: 1, Kind: "app_down", At: now, Service: "app"}}}
 	// Status projects committed events from the journal, even if runtime
@@ -110,8 +110,10 @@ func TestDoctorBusinessProbeDetectsListeningBrokenApp(t *testing.T) {
 	newDoctorTestEnv(t, []registry.Service{{Name: "app", Type: registry.TypeProxy, Target: app.URL}})
 	doctorHTTPProbeFn = defaultProbe
 	result := buildDoctorResult(context.Background(), doctorOptions{})
-	finding := assertDoctorFinding(t, result, inspect.WarningCodeAppProbeFailed)
-	if finding.Evidence["error_code"] != "health_status_mismatch" {
+	// A listening app that answers 500 is reachable: the check reports the
+	// answer as a warning with a health set suggestion, not an app failure.
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeAppProbeUnexpected)
+	if finding.Evidence["error_code"] != "health_status_mismatch" || finding.Evidence["status_code"] != "500" || finding.Severity != "warning" {
 		t.Fatal(finding)
 	}
 	b, _ := json.Marshal(result)
