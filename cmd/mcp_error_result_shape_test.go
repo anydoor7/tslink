@@ -30,6 +30,7 @@ var mcpToolMinimalArguments = map[string]string{
 	"people_revoke":       `{"who":"alice","app":"web"}`,
 	"app_restart":         `{"app":"web"}`,
 	"health":              `{}`,
+	"health_set":          `{"app":"web","path":"/health"}`,
 	"mcp_audit":           `{}`,
 	"guest_create":        `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
 	"requests_list": `{}`, "requests_approve": `{"id":"1","for":"8h"}`, "requests_deny": `{"id":"1"}`,
@@ -113,6 +114,7 @@ func refusingMCPActions() mcpActions {
 			return nil, mcpRefusal(name)
 		},
 		appRestart: func(context.Context, string) (any, error) { return nil, mcpRefusal("app_restart") },
+		healthSet:  func(context.Context, healthSetArguments) (any, error) { return nil, mcpRefusal("health_set") },
 		auditRead:  func() ([]mcpaudit.Entry, error) { return nil, mcpRefusal("mcp_audit") },
 		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
 			name := "people_add"

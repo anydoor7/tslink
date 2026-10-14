@@ -31,6 +31,7 @@ func gatewayMutationCases() []gatewayMutationCase {
 		{"remote", "add", map[string]any{"name": "new-app", "type": "proxy", "remote": "https://remote.tailnet.ts.net", "no_daemon_install": true}},
 		{"re-add-routed", "add", map[string]any{"name": "app", "type": "proxy", "target": "localhost:10", "no_daemon_install": true}},
 		{"remove-routed", "unshare", map[string]any{"name": "app"}},
+		{"health-set-routed", "health_set", map[string]any{"app": "app", "path": "/health"}},
 		{"disable", "portal_disable", map[string]any{}},
 	}
 }
@@ -165,6 +166,9 @@ func TestGatewayMCPOwnerChangesBeforeWrite(t *testing.T) {
 			case "unshare":
 				original := actions.unshare
 				actions.unshare = func(ctx context.Context, a string) (any, error) { return original(wrap(ctx), a) }
+			case "health_set":
+				original := actions.healthSet
+				actions.healthSet = func(ctx context.Context, a healthSetArguments) (any, error) { return original(wrap(ctx), a) }
 			}
 			srv := httptest.NewServer(mcpHTTPControlPlaneHandler(t, []string{"owner"}, "owner", actions))
 			defer srv.Close()

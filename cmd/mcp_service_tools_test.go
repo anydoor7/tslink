@@ -83,6 +83,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	"tslink portal disable":      {Tools: []string{"portal_disable"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink mcp":                 {Tools: []string{"people_grant", "people_revoke", "app_restart", "health"}, ExcludedFlags: map[string]string{"scope": "trusted transport launch option, not a tool argument", "apps": "trusted transport app restriction", "inventory": "trusted transport inventory opt-in", "max-duration": "trusted transport lifetime limit"}},
 	"tslink mcp-audit":           {Tools: []string{"mcp_audit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink health set":          {Tools: []string{"health_set"}, Args: []string{"app"}, Flags: map[string]string{"path": "path", "status-min": "status_min", "status-max": "status_max", "body": "body_contains", "timeout": "timeout", "interval": "interval", "reset": "reset"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
 		Tools: []string{"share"},
 		Args:  []string{"target"},
@@ -281,6 +282,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 var mcpUncoveredCommands = map[string]string{
 	"tslink access path":        "Changes per-app path privacy settings; owner CLI only.",
 	"tslink requests":           "command group; all three owner actions are covered",
+	"tslink health":             "command group; its only leaf, health set, is covered",
 	"tslink portal":             "command group; leaf actions have corresponding tools",
 	"tslink portal route":       "command group; its leaf commands are mapped above",
 	"tslink guest":              "command group; all guest leaves are covered",

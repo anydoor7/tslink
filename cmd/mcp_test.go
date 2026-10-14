@@ -60,6 +60,9 @@ func fakeMCPActions() mcpActions {
 		appRestart: func(_ context.Context, app string) (any, error) {
 			return map[string]any{"app": app, "queued": true, "restart_generation": 1}, nil
 		},
+		healthSet: func(_ context.Context, args healthSetArguments) (any, error) {
+			return HealthSetResult{App: args.App, Type: registry.TypeProxy, Changed: true, Health: HealthSettingsView{Path: "/health", StatusMin: 200, StatusMax: 399, Timeout: "5s", Interval: "1m"}}, nil
+		},
 		auditRead: func() ([]mcpaudit.Entry, error) { return []mcpaudit.Entry{}, nil },
 		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
 			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
@@ -541,7 +544,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"template_list", "template_plan", "template_apply",
 		"access_log", "access_summary",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
-		"extend", "portal_route_add", "portal_route_remove", "portal_route_list", "guest_create", "guest_list", "guest_show", "guest_revoke",
+		"health_set", "extend", "portal_route_add", "portal_route_remove", "portal_route_list", "guest_create", "guest_list", "guest_show", "guest_revoke",
 		"people_add", "people_update", "people_list", "people_remove",
 		"portal_enable", "portal_disable",
 		"requests_list", "requests_approve", "requests_deny",

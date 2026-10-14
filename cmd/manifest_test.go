@@ -622,6 +622,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeInvalidServiceName:         registry.ValidateName("Bad_Name"),
 		registry.CodeInvalidTag:                 registry.ValidateTag("tag:"),
 		registry.CodeAllowUnsupportedTCP:        registry.AllowUnsupportedTCPError(),
+		registry.CodeHealthOptionUnsupported:    registry.CodedError{Code: registry.CodeHealthOptionUnsupported, Message: "HTTP health options require a proxy service"},
 		registry.CodePathMustBeAbsolute:         registry.PathMustBeAbsoluteError("relative"),
 		registry.CodePathNotFound:               registry.PathNotFoundError("/missing"),
 		registry.CodePathNotDirectory:           registry.PathNotDirectoryError("/file"),
@@ -1041,9 +1042,12 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// QR flags, the request commands and seven request codes bring the complete
 	// compact contract past 5000 bytes with scopes, guests and audit.
 	// Gateway routes add three commands, seven flags and fourteen error codes.
-	// Preserve the complete contract within a fixed 6000-byte budget.
-	if len(data) >= 6000 {
-		t.Fatalf("compact manifest = %d bytes, want < 6000", len(data))
+	// Preserve the complete contract within a fixed budget. health set adds
+	// one command with seven flags and health_option_unsupported, about 110
+	// bytes, which took the contract past 6000 (6048 measured); 6100 keeps
+	// that and no more.
+	if len(data) >= 6100 {
+		t.Fatalf("compact manifest = %d bytes, want < 6100", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {
