@@ -20,10 +20,13 @@ import (
 )
 
 type gatewayRouteRun struct {
+	health   health.State
 	done     chan struct{}
 	slot     chan struct{}
 	failures uint
 	retryAt  time.Time
+	dialer   UpstreamDialer
+	remote   *gatewayRemoteUpstream
 	svc      registry.Service
 	state    tsRuntime.GatewayRouteState // guarded by portalRun.routesMu
 	ctx      context.Context
@@ -63,7 +66,11 @@ func (run *portalRun) routeStates() []tsRuntime.GatewayRouteState {
 	defer run.routesMu.Unlock()
 	states := make([]tsRuntime.GatewayRouteState, 0, len(run.routes))
 	for _, r := range run.routes {
-		states = append(states, r.state)
+		state := r.state
+		if r.health.LastChecked != nil {
+			state.Health = health.CurrentAt(r.health, r.svc, run.now()).State
+		}
+		states = append(states, state)
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].App < states[j].App })
 	return states
@@ -218,11 +225,22 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 		fail("route_listener_failed")
 		return
 	}
-	// R2 installs the tagged tsnet dialer; never fall back to host networking.
+	var dialer UpstreamDialer = &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	var remote *gatewayRemoteUpstream
 	if svc.Upstream == "tailnet" {
-		fail("remote_upstream_unavailable")
-		return
+		remote = s.remoteGatewayUpstream(run, svc)
+		if code := remote.check(r.ctx); code != "" {
+			fail(code)
+			return
+		}
+		dialer = remote
 	}
+	run.routesMu.Lock()
+	r.dialer, r.remote = dialer, remote
+	if remote != nil {
+		r.state.HostLabel = "remote host"
+	}
+	run.routesMu.Unlock()
 	host := canonicalHostFor(run.node.tsnetSrv, run.runtimeHost)
 	if host == "" {
 		fail("gateway_hostname_unavailable")
@@ -230,11 +248,14 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 	}
 	authority := net.JoinHostPort(host, strconv.Itoa(svc.PortalRoute.Port))
 	gate := &gatewayGate{path: filepath.Join(s.cfgDir, "registry.json"), svc: svc, lc: run.lc, now: run.now, authority: authority, dashboard: "https://" + host, writer: s.accessWriter, expire: registry.TryExpirePeople, totalDropped: &run.dropped}
+	if remote != nil {
+		gate.upstreamCheck = remote.check
+	}
 	var handler http.Handler
 	var closer io.Closer
 	var err error
 	if svc.Type == registry.TypeProxy {
-		handler, err = NewProxyHandlerWithOptions(svc.Target, nil, ProxyOptions{PreserveHost: svc.PreserveHost, Gateway: &GatewayProxyOptions{Authority: func() string { return authority }, App: svc.Name, HostLabel: "this host", Observe: func(up bool) { s.observeGatewayUpstream(run, r, up) }}, Dialer: &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}})
+		handler, err = NewProxyHandlerWithOptions(svc.Target, nil, ProxyOptions{PreserveHost: svc.PreserveHost, Gateway: &GatewayProxyOptions{Authority: func() string { return authority }, App: svc.Name, HostLabel: r.state.HostLabel, Remote: remote != nil, Observe: func(up bool) { s.observeGatewayUpstream(run, r, up) }}, Dialer: dialer})
 		if err == nil {
 			closer = handler.(io.Closer)
 		}
@@ -321,6 +342,9 @@ func (s *Server) observeGatewayUpstream(run *portalRun, r *gatewayRouteRun, up b
 		}
 		changed = r.state.Health != state
 		r.state.Health = state
+		now := run.now().UTC()
+		r.health = health.State{State: state, Kind: r.svc.Type, LastChecked: &now}
+		r.state.HealthChecked = &now
 		if up {
 			r.state.OfflineSince = nil
 		} else if r.state.OfflineSince == nil {

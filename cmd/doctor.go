@@ -991,6 +991,10 @@ func doctorRegistryValidationCode(svc registry.Service, err error) string {
 }
 
 func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doctorOptions, nonLoopbackCode string) {
+	if svc.Upstream == "tailnet" {
+		result.addFinding("target_probe_skipped_remote", svc.Name, "target_probe", "Remote health is observed through the gateway node; host-network probing is disabled.", nil)
+		return
+	}
 	target, err := classifyServiceTarget(svc)
 	if err != nil {
 		result.addFinding(inspect.WarningCodeTargetInvalid, svc.Name, "target", "Service target could not be parsed for probing.", evidenceError(err))

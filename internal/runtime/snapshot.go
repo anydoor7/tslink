@@ -106,14 +106,15 @@ type GatewayState struct {
 }
 
 type GatewayRouteState struct {
-	App          string     `json:"app"`
-	Port         int        `json:"port"`
-	URL          string     `json:"url,omitempty"`
-	State        string     `json:"state"`
-	Reason       string     `json:"reason,omitempty"`
-	HostLabel    string     `json:"host_label"`
-	Health       string     `json:"health,omitempty"`
-	OfflineSince *time.Time `json:"offline_since,omitempty"`
+	HealthChecked *time.Time `json:"health_checked,omitempty"`
+	App           string     `json:"app"`
+	Port          int        `json:"port"`
+	URL           string     `json:"url,omitempty"`
+	State         string     `json:"state"`
+	Reason        string     `json:"reason,omitempty"`
+	HostLabel     string     `json:"host_label"`
+	Health        string     `json:"health,omitempty"`
+	OfflineSince  *time.Time `json:"offline_since,omitempty"`
 }
 
 type Snapshot struct {

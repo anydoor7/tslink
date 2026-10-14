@@ -17,6 +17,7 @@ type UpstreamDialer interface {
 }
 
 type GatewayProxyOptions struct {
+	Remote    bool
 	Authority func() string
 	App       string
 	HostLabel string

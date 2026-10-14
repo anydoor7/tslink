@@ -43,7 +43,18 @@ func WithCanonicalHost(ctx context.Context, host string) context.Context {
 
 // Probe returns only stable error codes. No URL, path, transport error or body
 // is returned, including on malformed configuration or a response read failure.
-func Probe(ctx context.Context, svc registry.Service) string {
+type Dialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
+func Probe(ctx context.Context, svc registry.Service) string { return ProbeWithDialer(ctx, svc, nil) }
+
+// ProbeWithDialer uses the supplied gateway transport for remote probes. A
+// remote service without it is refused before DNS or host-network I/O.
+func ProbeWithDialer(ctx context.Context, svc registry.Service, dialer Dialer) string {
+	if svc.Upstream == "tailnet" && dialer == nil {
+		return "remote_upstream_unavailable"
+	}
 	if registry.ValidateHealthConfig(svc.Type, svc.Health) != nil {
 		return "health_config_invalid"
 	}
@@ -80,7 +91,14 @@ func Probe(ctx context.Context, svc registry.Service) string {
 		out.URL.User = nil // ReverseProxy does not synthesize Basic Auth.
 		if svc.PreserveHost {
 			host, _ := ctx.Value(canonicalHostKey{}).(string)
-			host = registry.CanonicalProxyHost(nil, host)
+			if svc.PortalRoute != nil {
+				name, port, err := net.SplitHostPort(host)
+				if err != nil || port == "" || registry.CanonicalProxyHost(nil, name) == "" {
+					host = ""
+				}
+			} else {
+				host = registry.CanonicalProxyHost(nil, host)
+			}
 			if host == "" {
 				return "health_canonical_host_unavailable"
 			}
@@ -92,6 +110,9 @@ func Probe(ctx context.Context, svc registry.Service) string {
 		// header and idle limits bound incoming client data, not this backend's
 		// response; health.timeout and the 64 KiB response cap still apply.
 		transport := &http.Transport{DisableCompression: true}
+		if dialer != nil {
+			transport.DialContext = dialer.DialContext
+		}
 		defer transport.CloseIdleConnections()
 		client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		resp, err := client.Do(out)

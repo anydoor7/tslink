@@ -34,6 +34,7 @@ import (
 // One embedded node, with independent TLS listeners keyed by the requested
 // tsnet port. Real clients reach those listeners through a loopback dial map.
 type gatewayFakeNode struct {
+	dial    remoteDialFunc
 	entered map[string]chan struct{}
 	fakeTSNetServer
 	mu    sync.Mutex
@@ -43,6 +44,13 @@ type gatewayFakeNode struct {
 	cert  tls.Certificate
 	stop  chan struct{}
 	once  sync.Once
+}
+
+func (n *gatewayFakeNode) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+	if n.dial == nil {
+		return nil, errors.New("fake tsnet dial unavailable")
+	}
+	return n.dial(ctx, network, address)
 }
 
 func (n *gatewayFakeNode) ListenTLS(_ string, addr string) (net.Listener, error) {
@@ -303,10 +311,12 @@ func TestGatewayTLSGateAndPerRequestRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = c.SetDeadline(time.Now().Add(7 * time.Second))
-	// A TLS ClientHello makes bypassing the gate observable as server TLS bytes.
-	tlsC := tls.Client(c, &tls.Config{RootCAs: f.pool, ServerName: "home.tailnet.ts.net", MinVersion: tls.VersionTLS12})
-	if err := tlsC.Handshake(); !errors.Is(err, io.EOF) {
-		t.Fatalf("stranger handshake must end with EOF, got %v", err)
+	// Read before sending ClientHello: refusal must close the connection without
+	// emitting a TLS byte. Sending data concurrently with close can yield a
+	// platform-dependent TCP reset instead of EOF.
+	var first [1]byte
+	if n, err := c.Read(first[:]); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("stranger must receive no bytes and EOF, got bytes=%d err=%v", n, err)
 	}
 	_ = c.Close()
 	if f.backend[0].Load() != 0 {

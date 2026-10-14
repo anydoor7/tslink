@@ -66,6 +66,9 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				r.Out.Header.Set("X-Forwarded-Host", options.Gateway.Authority())
 				r.Out.Header.Set("X-Forwarded-Proto", "https")
 				stripGatewayCookies(r.Out.Header)
+				if options.Gateway.Remote {
+					r.Out.Header.Del("X-Forwarded-For")
+				}
 			}
 			if options.PreserveHost {
 				host, _ := r.In.Context().Value(canonicalProxyHostKey{}).(string)
@@ -87,7 +90,9 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			var whois *apitype.WhoIsResponse
 			gated, _ := r.In.Context().Value(guestProxyKey{}).(bool)
 			if options.Gateway != nil {
-				whois, _ = r.In.Context().Value(gatewayWhoKey{}).(*apitype.WhoIsResponse)
+				if !options.Gateway.Remote {
+					whois, _ = r.In.Context().Value(gatewayWhoKey{}).(*apitype.WhoIsResponse)
+				}
 			} else if !public || !gated {
 				whois = identity.whoIs(r.In.Context(), r.In.RemoteAddr)
 			}

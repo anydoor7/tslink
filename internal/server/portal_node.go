@@ -295,6 +295,7 @@ func (s *Server) portalApps(reg *registry.Registry, now time.Time) map[string]Po
 			for _, route := range s.portalRun.routeStates() {
 				if route.App == svc.Name && route.Port == svc.PortalRoute.Port {
 					app.URL = route.URL
+					app.HostLabel = route.HostLabel
 					if route.Health != "" {
 						app.Health = route.Health
 					}

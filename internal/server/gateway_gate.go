@@ -22,18 +22,19 @@ import (
 type gatewayWhoKey struct{}
 
 type gatewayGate struct {
-	path         string
-	svc          registry.Service // no route denotes the dashboard connection gate
-	lc           *LocalClient
-	now          func() time.Time
-	authority    string
-	dashboard    string
-	writer       accesslog.Writer
-	expire       func(string, time.Time) (bool, error)
-	dropped      atomic.Uint64
-	totalDropped *atomic.Uint64
-	mu           sync.Mutex
-	lastDrop     time.Time
+	upstreamCheck func(context.Context) string
+	path          string
+	svc           registry.Service // no route denotes the dashboard connection gate
+	lc            *LocalClient
+	now           func() time.Time
+	authority     string
+	dashboard     string
+	writer        accesslog.Writer
+	expire        func(string, time.Time) (bool, error)
+	dropped       atomic.Uint64
+	totalDropped  *atomic.Uint64
+	mu            sync.Mutex
+	lastDrop      time.Time
 }
 
 func (g *gatewayGate) who(ctx context.Context, remote string) *apitype.WhoIsResponse {
@@ -75,6 +76,9 @@ func (g *gatewayGate) registry() (*registry.Registry, error) {
 // Admit performs no TLS reads or writes. The returned tls.Conn from ListenTLS
 // still has an unstarted handshake when this runs.
 func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
+	if g.upstreamCheck != nil && g.upstreamCheck(ctx) != "" {
+		return false
+	}
 	who := g.who(ctx, remote)
 	if who == nil {
 		return false
@@ -379,6 +383,13 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		if !current.PortalRoute.AllowCrossOrigin && !gatewaySameOrigin(r, "https://"+g.authority) {
 			deny("cross_origin_blocked", false)
 			return
+		}
+		if g.upstreamCheck != nil {
+			if code := g.upstreamCheck(r.Context()); code != "" {
+				accessDeny(r, code)
+				gatewayErrorPage(w, r, 503, code, "Remote upstream is unavailable", g.dashboard, false)
+				return
+			}
 		}
 		if a, ok := r.Context().Value(accessObservationKey{}).(*accessObservation); ok {
 			a.mu.Lock()

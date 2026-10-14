@@ -233,3 +233,25 @@ func gatewayCommandPaths(t *testing.T) sharePaths {
 	t.Setenv(config.ConfigDirEnv, dir)
 	return sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "tslink.pid"), Snapshot: filepath.Join(dir, "runtime.json")}
 }
+
+func TestGatewayDoctorNeverDialsRemoteFromHost(t *testing.T) {
+	old := doctorProbeTargetFn
+	defer func() { doctorProbeTargetFn = old }()
+	calls := 0
+	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { calls++; return nil }
+	svc := registry.Service{Name: "remote", Type: registry.TypeProxy, Target: "https://remote.tailnet.ts.net", Upstream: "tailnet"}
+	result := DoctorResult{}
+	diagnoseNetworkTarget(&result, svc, doctorOptions{ProbeExternal: true}, "")
+	if calls != 0 || len(result.Findings) != 1 || result.Findings[0].Code != "target_probe_skipped_remote" {
+		t.Fatalf("host remote probe: calls=%d result=%+v", calls, result)
+	}
+	// Same network spy has a reachable local control in the existing doctor path.
+	svc.Upstream = ""
+	svc.Type = registry.TypeTCP
+	svc.Target = "127.0.0.1:1234"
+	result.Daemon.Running = true
+	diagnoseNetworkTarget(&result, svc, doctorOptions{ProbeExternal: true}, "")
+	if calls != 1 {
+		t.Fatal("host probe spy did not observe local control", calls)
+	}
+}
