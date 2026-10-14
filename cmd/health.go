@@ -36,6 +36,9 @@ func formatAppHealth(out io.Writer, name string, h health.State, e health.Expiry
 	if h.LastError != "" {
 		fmt.Fprintf(out, " error=%s", h.LastError)
 	}
+	if h.StatusCode != 0 {
+		fmt.Fprintf(out, " status=%d", h.StatusCode)
+	}
 	fmt.Fprintln(out)
 	if e.DaysLeft == nil {
 		fmt.Fprintf(out, "  node key expiry: unknown (%s)\n", e.Source)

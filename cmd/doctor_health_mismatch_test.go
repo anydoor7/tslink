@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
@@ -99,5 +101,19 @@ func TestMCPReducedDoctorReportsUnexpectedResponse(t *testing.T) {
 	}
 	if strings.Contains(f.Message, "tslink add") {
 		t.Fatal(f.Message)
+	}
+}
+
+func TestHumanHealthShowsObservedStatus(t *testing.T) {
+	checked := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	formatAppHealth(&out, "rootless", health.State{State: health.Degraded, LastChecked: &checked, LastError: "health_status_mismatch", ConsecutiveFailures: 4, StatusCode: 404}, health.Expiry{Source: "localclient"})
+	if !strings.Contains(out.String(), "rootless app: degraded (checked 2030-01-01T00:00:00Z; consecutive failures 4) error=health_status_mismatch status=404") {
+		t.Fatal(out.String())
+	}
+	out.Reset()
+	formatAppHealth(&out, "offline", health.State{State: health.Down, LastChecked: &checked, LastError: "health_request_failed", ConsecutiveFailures: 3}, health.Expiry{Source: "localclient"})
+	if strings.Contains(out.String(), "status=") || !strings.Contains(out.String(), "error=health_request_failed\n") {
+		t.Fatal(out.String())
 	}
 }
