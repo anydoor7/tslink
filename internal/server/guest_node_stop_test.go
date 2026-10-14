@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -137,6 +139,42 @@ func TestGuestNodeStopIsNotADenial(t *testing.T) {
 				t.Fatalf("node stop changed the grant: %+v", grant)
 			}
 		})
+	}
+}
+
+// A transport can report the stopped node's cancellation as plain
+// context.Canceled rather than its cause, as when it cancels a dial. The
+// flight's cause still makes it node_closed, not a guest denial.
+func TestGuestNodeStopCanceledDialIsNotADenial(t *testing.T) {
+	f := newGuestFixture(t, "", false, true)
+	g := cleanupGate(f)
+	proxy := mustReverseProxy(t, f.svc.Target, nil)
+	g.app = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := g.Close(); err != nil {
+			t.Error(err)
+		}
+		proxy.ErrorHandler(w, r, fmt.Errorf("dial: %w", context.Canceled))
+	})
+	events := &gatewayEvents{}
+	h := AccessEventMiddleware(f.svc, accesslog.Options{}, events, nil, func() time.Time { return accessTestTime }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.serveApp(w, r, f.grant)
+	}))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dial", nil))
+	got := events.all()
+	if w.Code != http.StatusServiceUnavailable || len(got) != 1 {
+		t.Fatalf("status %d, events %+v", w.Code, got)
+	}
+	if e := got[0]; e.Decision != "allowed" || e.Status != http.StatusServiceUnavailable || e.Reason != "node_closed" || e.ErrorClass != "" {
+		t.Fatalf("canceled dial event %+v", e)
+	}
+	drainAccess(t, f.store)
+	page, err := accesslog.Query(f.dir, accesslog.Filter{Decision: "denied"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 0 {
+		t.Fatalf("node stop recorded a guest denial: %+v", page.Events)
 	}
 }
 
