@@ -125,6 +125,10 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			expectedGrant = &previous
 		}
 	}
+	currentTarget := target
+	if target.Kind == registry.InviteTargetGateway && (target.NodeID == "" || gatewayInviteProof(path, target) != nil) {
+		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
+	}
 	for _, existing := range p.Invites {
 		same := registry.SameInviteTarget(existing, op)
 		if target.Kind == registry.InviteTargetGateway && existing.TargetKind == registry.InviteTargetGateway {
@@ -137,6 +141,31 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			expected = &previous
 			break
 		}
+	}
+	if expected != nil && target.Kind == registry.InviteTargetGateway && target.NodeID != currentTarget.NodeID {
+		// An old accepted share cannot reach the replacement gateway. Keep the
+		// historical operation until the current owner explicitly retires it.
+		retire := (op.ID != "" && args.Replace[gatewayInviteKey] == op.ID) || (op.ID == "" && args.Reconcile[gatewayInviteKey] == "none")
+		if !retire {
+			return peopleInviteFailure(op, nil, "gateway_invite_stale")
+		}
+		retired := op
+		retired.State = registry.PersonInviteTargetGone
+		err := registry.SavePersonInviteWithOptions(path, login, retired, registry.PersonInviteSaveOptions{
+			Context: peopleMutationContext(ctx), Now: peopleNowFn(), Expected: expected, RetireGatewayTarget: currentTarget.NodeID,
+			Authorize: func(reg *registry.Registry) error {
+				if err := requireRequestOwnerInRegistry(ctx, reg); err != nil {
+					return err
+				}
+				return gatewayInviteProof(path, currentTarget)
+			},
+		})
+		if err != nil {
+			return peopleInviteFailure(op, err, "invite_state_failed")
+		}
+		nextArgs := args
+		nextArgs.Replace, nextArgs.Reconcile = nil, nil
+		return resumePeopleInvite(ctx, path, login, currentTarget, nextArgs)
 	}
 	if target.NodeID == "" || gatewayInviteProof(path, target) != nil {
 		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
@@ -156,7 +185,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	if replaceID != "" && !replace {
 		retired := false
 		for _, old := range p.Invites {
-			if registry.SameInviteTarget(old, op) && old.ID == replaceID && old.State == registry.PersonInviteReplaced {
+			if old.ID == replaceID && ((registry.SameInviteTarget(old, op) && old.State == registry.PersonInviteReplaced) || (old.TargetKind == registry.InviteTargetGateway && op.TargetKind == registry.InviteTargetGateway && old.State == registry.PersonInviteTargetGone)) {
 				retired = true
 			}
 		}

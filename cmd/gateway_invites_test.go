@@ -28,13 +28,15 @@ type gatewayInviteFixture struct {
 	fail, partial  bool
 	listBody       string
 	beforePost     func()
+	beforeList     func()
+	nodeID         string
 }
 
 func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 	t.Helper()
 	paths := peopleTestPaths(t)
 	restoreInviteCommandSeams(t)
-	f := &gatewayInviteFixture{paths: paths, pending: map[string]string{}, accepted: map[string]bool{}}
+	f := &gatewayInviteFixture{paths: paths, nodeID: "gateway-node", pending: map[string]string{}, accepted: map[string]bool{}}
 	now := peopleNowFn()
 	inviteIsRunningFn = func(string) bool { return true }
 	inviteReadPIDFn = func(string) (int, error) { return 42, nil }
@@ -68,7 +70,7 @@ func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/devices"):
-			io.WriteString(w, `{"devices":[{"nodeId":"gateway-node","hostname":"home"},{"nodeId":"lookalike","hostname":"home"},{"nodeId":"n1","hostname":"photos"},{"nodeId":"n2","hostname":"finance"}]}`)
+			fmt.Fprintf(w, `{"devices":[{"nodeId":%q,"hostname":"home"},{"nodeId":"lookalike","hostname":"home"},{"nodeId":"n1","hostname":"photos"},{"nodeId":"n2","hostname":"finance"}]}`, f.nodeID)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/user-invites"):
 			io.WriteString(w, "null")
 		case strings.Contains(r.URL.Path, "/device/") && strings.HasSuffix(r.URL.Path, "/device-invites"):
@@ -108,6 +110,9 @@ func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 				}
 				json.NewEncoder(w).Encode([]map[string]any{{"id": id, "inviteUrl": "https://fixture.invalid/invite/" + id}})
 			} else if r.Method == "GET" {
+				if f.beforeList != nil {
+					f.beforeList()
+				}
 				if f.listBody != "" {
 					io.WriteString(w, f.listBody)
 					return
@@ -150,7 +155,7 @@ func (f *gatewayInviteFixture) refresh(t *testing.T) {
 	}
 	snap := tsruntime.NewSnapshot(42, now, currentRegistryFingerprint(f.paths.Registry), now, nil)
 	snap.Services = []tsruntime.ServiceSnapshot{{Name: "photos", Type: "proxy", NodeID: "n1", RuntimeState: "running"}, {Name: "finance", Type: "proxy", NodeID: "n2", RuntimeState: "running"}}
-	snap.Portal = tsruntime.PortalState{Enabled: true, Hostname: "home", State: "running", URL: "https://home.tailnet.ts.net", Gateway: &tsruntime.GatewayState{Enabled: true, Persistent: true, OwnershipProven: true, NodeID: "gateway-node", Ports: reg.Portal.Gateway.Ports, Routes: []tsruntime.GatewayRouteState{}}}
+	snap.Portal = tsruntime.PortalState{Enabled: true, Hostname: "home", State: "running", URL: "https://home.tailnet.ts.net", Gateway: &tsruntime.GatewayState{Enabled: true, Persistent: true, OwnershipProven: true, NodeID: f.nodeID, Ports: reg.Portal.Gateway.Ports, Routes: []tsruntime.GatewayRouteState{}}}
 	if err := tsruntime.Save(f.paths.Snapshot, snap); err != nil {
 		t.Fatal(err)
 	}

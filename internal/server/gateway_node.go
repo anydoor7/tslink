@@ -94,6 +94,10 @@ func recordGatewayIdentity(dir string, cfg *registry.GatewayConfig, status *ipns
 		for i, node := range ledger.Nodes {
 			if node.NodeID != view.NodeID {
 				view.IdentityChanged = true
+				if node.RetiredAt == nil {
+					retired := now.UTC()
+					ledger.Nodes[i].RetiredAt = &retired
+				}
 				continue
 			}
 			if node.ServiceName != "gateway" {

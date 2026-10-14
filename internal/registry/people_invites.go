@@ -130,10 +130,14 @@ func TryPeopleInviteWork(path string, fn func() error) (bool, error) {
 // proved no POST was attempted or explicitly reconciled an empty remote list.
 // Callers must hold TryPeopleInviteWork across remote proof and transitions.
 type PersonInviteSaveOptions struct {
-	Context        context.Context
-	Now            time.Time
-	Expected       *PersonInvite
-	ResetConfirmed bool
+	// RetireGatewayTarget is the proven replacement NodeID. It permits only an
+	// exact CAS of an accepted gateway attempt to target_gone, never remote revocation.
+	RetireGatewayTarget string
+	Authorize           func(*Registry) error
+	Context             context.Context
+	Now                 time.Time
+	Expected            *PersonInvite
+	ResetConfirmed      bool
 	// ExpectedGrant optionally binds a pending/send transition to the exact
 	// grant observed before remote work. Late outcomes can still be recorded.
 	ExpectedGrant *PersonGrant
@@ -162,6 +166,11 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if opts.Authorize != nil {
+			if err := opts.Authorize(reg); err != nil {
+				return err
+			}
 		}
 		for i := range reg.People {
 			p := &reg.People[i]
@@ -193,7 +202,8 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 					if opts.Expected != nil && old != *opts.Expected {
 						return CodedError{Code: errcode.Conflict, Message: "invite attempt changed before transition"}
 					}
-					if PersonInviteTerminal(old) && old != op {
+					retireAccepted := old.TargetKind == InviteTargetGateway && old.State == PersonInviteAccepted && op.State == PersonInviteTargetGone && opts.RetireGatewayTarget != "" && opts.RetireGatewayTarget != old.NodeID && opts.Expected != nil && old == *opts.Expected
+					if PersonInviteTerminal(old) && old != op && !retireAccepted {
 						return CodedError{Code: errcode.Conflict, Message: "terminal invite attempt cannot be overwritten"}
 					}
 					if old.ID != "" && op.ID != old.ID {

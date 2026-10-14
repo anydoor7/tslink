@@ -96,11 +96,30 @@ but cannot bypass local denial.
 
 Use `@gateway` instead of an app name with `--reconcile-invite` or
 `--replace-invite`, for example `--reconcile-invite @gateway=12345`. Replacement
-retains the old attempt and requires explicit remote absence proof. The same
+retains the old attempt and requires explicit remote absence proof when the
+NodeID is unchanged. The same
 sending-before-POST, CAS, remote-work lock, finite timeout and no-stored-URL rules
 apply. Missing gateway ownership proof refuses the invite without discarding
-saved grants. A gateway identity change requires owner recovery: existing live
-invitations are not silently duplicated onto a replacement node.
+saved grants. After a gateway identity change, a live invitation for the old
+NodeID returns `complete: false` and `gateway_invite_stale`. The old NodeID is
+retired in the gateway ownership ledger and cannot authorize new invitations.
+
+To recover, first check `tslink doctor --json` and `tslink status --json` for the
+new running, persistent gateway with proven ownership. Then inspect
+`tslink people list --json` and explicitly retire the recorded old invitation:
+
+```sh
+tslink people update alice@example.com --invite --replace-invite @gateway=12345
+```
+
+This changes the stale operation (including an accepted share) to `target_gone`
+and creates an invitation for the current gateway. It does not revoke the old
+remote share. History and grants remain; repeating the same recorded-ID action
+reuses the new invitation. If a pending/sending/unknown stale operation has no
+recorded invite ID, explicitly acknowledge its retirement with
+`--reconcile-invite @gateway=none`, then use plain `--invite` for later retries.
+Without current gateway proof, recovery is refused. The recipient must accept
+the new device invitation; an old accepted share cannot transfer to a new node.
 
 The message, phone guide and ordinary QR point to the gateway dashboard. An
 explicit bearer invitation QR uses `--invite --print-links --qr-invite @gateway`

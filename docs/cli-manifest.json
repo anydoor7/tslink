@@ -3900,6 +3900,10 @@
       "exit_code": 4,
       "description": "gateway persistent enrollment is not proven"
     },
+    "gateway_invite_stale": {
+      "exit_code": 4,
+      "description": "gateway invitation targets a replaced node; explicit owner retirement is required"
+    },
     "gateway_ports_invalid": {
       "exit_code": 2,
       "description": "gateway port range must be within 1-65535"

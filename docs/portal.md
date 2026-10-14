@@ -190,6 +190,15 @@ state unless a matching persistent-enrollment marker proves it can be reused.
 The separate `portal-nodes/<hostname>/ownership.json` ledger records observed
 NodeIDs. A changed NodeID produces `gateway_node_identity_changed`: existing
 accepted device shares still refer to the old node and require owner recovery.
+Replaced NodeIDs are retired in the ownership ledger. `people update --invite`
+reports `complete: false` with `gateway_invite_stale` for a live invitation
+attached to another NodeID. After status proves the new persistent gateway,
+use `tslink people update <login> --invite --replace-invite @gateway=<old-id>`.
+This retires the old local attempt as `target_gone` (including accepted shares)
+and allows a new invitation; it does not revoke the old remote share. For a
+stale pending/sending/unknown attempt without a recorded ID, explicitly retire
+it with `--reconcile-invite @gateway=none`. Use plain `--invite` for later retries.
+See [gateway invitation recovery](people.md) for the full procedure.
 Never copy an enrollment marker between nodes or assume a configured flag proves
 persistence. Route add/remove, grants, owner/admin edits and port-range changes
 keep the shared node running. Gateway enable/disable, hostname/tag changes, and

@@ -57,6 +57,7 @@ type Code struct {
 
 var table = []Code{
 	{"remote_upstream_requires_tag", ExitConflict, Service, "remote upstream requires an observed tagged gateway"},
+	{"gateway_invite_stale", ExitConflict, Command, "gateway invitation targets a replaced node; explicit owner retirement is required"},
 	{"remote_upstream_not_peer", ExitConflict, Service, "remote upstream is not a gateway netstack peer"},
 	{"remote_upstream_unavailable", ExitError, Service, "gateway remote transport or identity status is unavailable"},
 	{"remote_upstream_outside_tailnet", ExitUsage, Service, "remote upstream is outside the gateway tailnet suffix"},

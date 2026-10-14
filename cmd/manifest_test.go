@@ -570,6 +570,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
 		"remote_upstream_outside_tailnet":       registry.ValidateRemoteTailnet("https://remote.foreign.ts.net", "tailnet.ts.net"),
 		"remote_upstream_requires_tag":          registry.CodedError{Code: "remote_upstream_requires_tag", Message: "observed gateway is untagged"},
+		"gateway_invite_stale":                  registry.CodedError{Code: "gateway_invite_stale", Message: "gateway invite targets the old node"},
 		"remote_upstream_not_peer":              registry.CodedError{Code: "remote_upstream_not_peer", Message: "remote peer absent"},
 		"remote_upstream_unavailable":           registry.CodedError{Code: "remote_upstream_unavailable", Message: "remote dial capability unavailable"},
 		"gateway_tag_requires_credentials":      registry.CodedError{Code: "gateway_tag_requires_credentials", Message: "credentialed enrollment required"},
