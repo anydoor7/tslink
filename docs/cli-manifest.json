@@ -627,16 +627,16 @@
         {
           "name": "health-status-max",
           "type": "int",
-          "default": "299",
+          "default": "0",
           "scope": "local",
-          "usage": "Highest expected HTTP probe status (proxy only)"
+          "usage": "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)"
         },
         {
           "name": "health-status-min",
           "type": "int",
-          "default": "200",
+          "default": "0",
           "scope": "local",
-          "usage": "Lowest expected HTTP probe status (proxy only)"
+          "usage": "Lowest accepted HTTP probe status (default 200; proxy only)"
         },
         {
           "name": "health-timeout",
@@ -992,16 +992,16 @@
         {
           "name": "health-status-max",
           "type": "int",
-          "default": "299",
+          "default": "0",
           "scope": "local",
-          "usage": "Highest expected HTTP probe status (proxy only)"
+          "usage": "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)"
         },
         {
           "name": "health-status-min",
           "type": "int",
-          "default": "200",
+          "default": "0",
           "scope": "local",
-          "usage": "Lowest expected HTTP probe status (proxy only)"
+          "usage": "Lowest accepted HTTP probe status (default 200; proxy only)"
         },
         {
           "name": "health-timeout",

@@ -185,8 +185,8 @@ func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 
 func addHealthFlags(cmd *cobra.Command) {
 	cmd.Flags().String("health-path", "", "HTTP business probe path (default /; proxy only)")
-	cmd.Flags().Int("health-status-min", 200, "Lowest expected HTTP probe status (proxy only)")
-	cmd.Flags().Int("health-status-max", 299, "Highest expected HTTP probe status (proxy only)")
+	cmd.Flags().Int("health-status-min", 0, "Lowest accepted HTTP probe status (default 200; proxy only)")
+	cmd.Flags().Int("health-status-max", 0, "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)")
 	cmd.Flags().String("health-body", "", "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)")
 	cmd.Flags().String("health-timeout", "5s", "Backend probe timeout, 100ms to 30s")
 	cmd.Flags().String("health-interval", "1m", "Backend probe interval, 10s to 1d")
