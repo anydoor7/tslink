@@ -296,11 +296,26 @@ func TestGatewayWhoIsTimeouts(t *testing.T) {
 }
 
 func TestGatewayStalledListenerDoesNotCloseNode(t *testing.T) {
-	old := nodeStartupTimeout
-	nodeStartupTimeout = 100 * time.Millisecond
-	t.Cleanup(func() { nodeStartupTimeout = old })
-	f := newGatewayFixture(t, func(f *gatewayFixture) { f.node.stall[":8444"] = make(chan struct{}) })
+	f := newGatewayFixture(t, func(f *gatewayFixture) {
+		// Enroll and persist the shared node before measuring route timeout.
+		// A 100ms node deadline also times filesystem work under -race.
+		_, err := registry.MutateService(f.path, "payroll", func(s registry.Service) (registry.Service, error) {
+			s.PortalOnly, s.PortalRoute = false, nil
+			return s, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.node.stall[":8444"] = make(chan struct{})
+	})
 	f.waitRoute(t, "photos", "running")
+	// The running-state barrier proves the only existing activation has read
+	// its timeout. Keep the original 100ms deadline for the new stalled route.
+	f.s.portalRun.timeout = 100 * time.Millisecond
+	if err := registry.SetPortalRoute(context.Background(), f.path, "payroll", &registry.PortalRoute{Port: 8444}); err != nil {
+		t.Fatal(err)
+	}
+	f.s.syncGatewayRoutes(f.s.portalRun)
 	r := f.waitRoute(t, "payroll", "failed")
 	if r.Reason != "route_listener_failed" {
 		t.Fatal(r)
