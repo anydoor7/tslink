@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Reviewer probe: a failed gateway start with a pending route sync (a registry
-// event arrived during startup) and no routes. Is the portal retry still armed?
+// event arrived during startup). Keep configured routes so a premature drain
+// would attempt activation on the failed node.
 func TestGatewayFailedStartPendingSyncKeepsRetry(t *testing.T) {
 	for _, pending := range []bool{false, true} {
 		name := "control-no-pending"
@@ -19,13 +19,7 @@ func TestGatewayFailedStartPendingSyncKeepsRetry(t *testing.T) {
 			name = "pending-sync-during-start"
 		}
 		t.Run(name, func(t *testing.T) {
-			f := newGatewayFixture(t, func(f *gatewayFixture) {
-				for _, n := range []string{"photos", "payroll"} {
-					if _, err := registry.Remove(f.path, n); err != nil {
-						t.Fatal(err)
-					}
-				}
-			})
+			f := newGatewayFixture(t, nil)
 			f.s.closePortal()
 			prior := f.node
 			f.node = &gatewayFakeNode{fakeTSNetServer: fakeTSNetServer{localClient: prior.localClient, certDomains: prior.certDomains, status: prior.status, upWait: true}, ports: map[string]net.Listener{}, fail: map[string]bool{}, stall: map[string]chan struct{}{}, cert: prior.cert, stop: make(chan struct{})}
@@ -35,10 +29,19 @@ func TestGatewayFailedStartPendingSyncKeepsRetry(t *testing.T) {
 			f.s.portalRetryPending.Store(false)
 			f.s.syncPortal(context.Background(), f.config)
 			run := f.s.portalRun
+			// Failed Up never installs the runtime clock. Supply it for the
+			// mutation control so an erroneous activation reports, not panics.
+			run.startMu.Lock()
+			run.now = time.Now
+			run.startMu.Unlock()
 			if pending {
 				f.s.syncPortal(context.Background(), f.config) // registry event during startup
 			}
 			testwait.Recv(t, run.done, "failed start")
+			run.routesWG.Wait()
+			if routes, calls := run.routeStates(), f.node.listenCalls.Load(); len(routes) != 0 || calls != 0 {
+				t.Fatalf("failed start activated routes: routes=%+v ListenTLS=%d", routes, calls)
+			}
 			f.s.mu.Lock()
 			state := f.s.portalState
 			f.s.mu.Unlock()

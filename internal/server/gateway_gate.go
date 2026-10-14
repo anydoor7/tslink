@@ -77,7 +77,8 @@ func (g *gatewayGate) registry() (*registry.Registry, error) {
 // still has an unstarted handshake when this runs.
 func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
 	// Remote policy is checked per request and per dial (including pooled
-	// connections). Admission must not enter the snapshot/Server.mu path.
+	// connections). Keeping admission out of the snapshot/Server.mu path is
+	// defence in depth: route teardown already releases routesMu before waiting.
 	who := g.who(ctx, remote)
 	if who == nil {
 		return false
@@ -173,6 +174,8 @@ func (l *gatewayListener) admissions() {
 			defer workers.Done()
 			defer func() { <-slots }()
 			if l.gate.admit(l.ctx, c.RemoteAddr().String()) {
+				// Defence in depth: Accept also selects on cancellation. Avoid
+				// offering an already-cancelled connection to the handoff select.
 				if l.ctx.Err() == nil {
 					select {
 					case l.ready <- c:

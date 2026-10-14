@@ -35,8 +35,9 @@ import (
 // One embedded node, with independent TLS listeners keyed by the requested
 // tsnet port. Real clients reach those listeners through a loopback dial map.
 type gatewayFakeNode struct {
-	dial    remoteDialFunc
-	entered map[string]chan struct{}
+	listenCalls atomic.Int64
+	dial        remoteDialFunc
+	entered     map[string]chan struct{}
 	fakeTSNetServer
 	mu    sync.Mutex
 	ports map[string]net.Listener
@@ -57,6 +58,7 @@ func (n *gatewayFakeNode) Dial(ctx context.Context, network, address string) (ne
 }
 
 func (n *gatewayFakeNode) ListenTLS(_ string, addr string) (net.Listener, error) {
+	n.listenCalls.Add(1)
 	n.mu.Lock()
 	fail, stall := n.fail[addr], n.stall[addr]
 	if ch := n.entered[addr]; ch != nil {
