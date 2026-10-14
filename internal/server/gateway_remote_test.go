@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/tsd"
@@ -33,7 +34,9 @@ type remoteDialFunc func(context.Context, string, string) (net.Conn, error)
 func (f remoteDialFunc) Dial(ctx context.Context, n, a string) (net.Conn, error) { return f(ctx, n, a) }
 func (f remoteDialFunc) Sys() *tsd.System {
 	sys := &tsd.System{}
-	sys.Dialer.Set(&tsdial.Dialer{UseNetstackForIP: func(ip netip.Addr) bool { return ip == netip.MustParseAddr("100.64.0.9") }, NetstackDialTCP: func(ctx context.Context, a netip.AddrPort) (net.Conn, error) { return f(ctx, "tcp", a.String()) }})
+	sys.Dialer.Set(&tsdial.Dialer{UseNetstackForIP: func(ip netip.Addr) bool {
+		return ip == netip.MustParseAddr("100.64.0.9") || ip == netip.MustParseAddr("100.64.0.10") || ip == netip.MustParseAddr("100.64.0.11")
+	}, NetstackDialTCP: func(ctx context.Context, a netip.AddrPort) (net.Conn, error) { return f(ctx, "tcp", a.String()) }})
 	return sys
 }
 
@@ -42,7 +45,11 @@ func remoteLocalClient(st *atomic.Pointer[ipnstate.Status], fail *atomic.Bool) *
 		if fail != nil && fail.Load() {
 			return nil, errors.New("status unavailable")
 		}
-		body, _ := json.Marshal(st.Load())
+		status := *st.Load()
+		if r.URL.Query().Get("peers") == "false" {
+			status.Peer = nil
+		}
+		body, _ := json.Marshal(&status)
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body)))}, nil
 	})}
 }
@@ -53,10 +60,35 @@ func taggedGatewayStatus(tagged bool) *ipnstate.Status {
 	}
 	v := views.SliceOf(tags)
 	peers := map[key.NodePublic]*ipnstate.PeerStatus{}
-	for _, name := range []string{"remote", "home", "wrong"} {
-		peers[key.NewNode().Public()] = &ipnstate.PeerStatus{DNSName: name + ".tailnet.ts.net.", TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.9")}}
+	for i, name := range []string{"remote", "home", "wrong"} {
+		peers[key.NewNode().Public()] = &ipnstate.PeerStatus{DNSName: name + ".tailnet.ts.net.", TailscaleIPs: []netip.Addr{netip.AddrFrom4([4]byte{100, 64, 0, byte(9 + i)})}}
 	}
 	return &ipnstate.Status{Peer: peers, Self: &ipnstate.PeerStatus{Tags: &v}, CurrentTailnet: &ipnstate.TailnetStatus{MagicDNSSuffix: "tailnet.ts.net"}}
+}
+
+func TestGatewayRemoteUnchangedTagDoesNotLockServer(t *testing.T) {
+	t.Setenv("TSLINK_CONFIG_DIR", t.TempDir())
+	run := &portalRun{node: &mcpControlPlaneNode{}}
+	s := &Server{portalRun: run, portalState: tsRuntime.PortalState{Gateway: &tsRuntime.GatewayState{}}}
+	d := s.remoteGatewayUpstream(run, registry.Service{})
+	for _, tagged := range []bool{false, true, false} {
+		// A changed observation must reach the published state too.
+		d.observe(tagged)
+		if s.portalState.Gateway.Tagged != tagged {
+			t.Fatal("changed tag was not published")
+		}
+		s.mu.Lock()
+		done := make(chan struct{})
+		go func() { d.observe(tagged); close(done) }()
+		select {
+		case <-done:
+			s.mu.Unlock()
+		case <-time.After(2 * time.Second):
+			s.mu.Unlock()
+			<-done
+			t.Fatal("unchanged tag waited for Server.mu")
+		}
+	}
 }
 
 func TestGatewayRemoteDialBoundary(t *testing.T) {
@@ -159,19 +191,26 @@ func TestGatewayRemoteTrafficAndHealth(t *testing.T) {
 	defer upstream.Close()
 	var st atomic.Pointer[ipnstate.Status]
 	st.Store(taggedGatewayStatus(true))
-	var dials atomic.Int64
+	var dials, fullStatus, leanStatus atomic.Int64
+	var expectedIP atomic.Value
+	expectedIP.Store("100.64.0.10:443")
 	var offline atomic.Bool
 	f := newGatewayFixture(t, func(f *gatewayFixture) {
 		original := f.node.localClient.Transport
 		f.node.localClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			if strings.HasSuffix(r.URL.Path, "/status") {
+				if r.URL.Query().Get("peers") == "false" {
+					leanStatus.Add(1)
+				} else {
+					fullStatus.Add(1)
+				}
 				return remoteLocalClient(&st, nil).Transport.RoundTrip(r)
 			}
 			return original.RoundTrip(r)
 		})
 		f.node.dial = func(ctx context.Context, n, a string) (net.Conn, error) {
 			dials.Add(1)
-			if a != "100.64.0.9:443" {
+			if a != expectedIP.Load().(string) {
 				t.Errorf("unexpected remote destination %q", a)
 			}
 			if offline.Load() {
@@ -217,6 +256,16 @@ func TestGatewayRemoteTrafficAndHealth(t *testing.T) {
 	if code != 200 || body != "remote-ok" {
 		t.Fatal(code, body)
 	}
+	// A second request uses the existing upstream connection, but still checks
+	// the gateway tag and suffix without fetching the peer list.
+	beforeFull, beforeLean, beforeDials := fullStatus.Load(), leanStatus.Load(), dials.Load()
+	if beforeFull == 0 || beforeDials == 0 {
+		t.Fatal("positive control did not fetch peers and dial")
+	}
+	code, body, _ = gatewayGet(t, c, "8443", "/", nil)
+	if code != 200 || body != "remote-ok" || dials.Load() != beforeDials || fullStatus.Load() != beforeFull || leanStatus.Load() != beforeLean+1 {
+		t.Fatalf("pooled request: status=%d body=%s dials=%d->%d full=%d->%d lean=%d->%d", code, body, beforeDials, dials.Load(), beforeFull, fullStatus.Load(), beforeLean, leanStatus.Load())
+	}
 	before := seen.Load()
 	st.Store(taggedGatewayStatus(false))
 	code, body, _ = gatewayGet(t, c, "8443", "/", nil)
@@ -255,6 +304,7 @@ func TestGatewayRemoteTrafficAndHealth(t *testing.T) {
 	}
 	svc := reg.Services[0]
 	svc.Target = "https://wrong.tailnet.ts.net"
+	expectedIP.Store("100.64.0.11:443")
 	if _, err := registry.Add(f.path, svc); err != nil {
 		t.Fatal(err)
 	}

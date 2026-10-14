@@ -243,7 +243,7 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 	var remote *gatewayRemoteUpstream
 	if svc.Upstream == "tailnet" {
 		remote = s.remoteGatewayUpstream(run, svc)
-		if code := remote.check(r.ctx); code != "" {
+		if _, code := remote.peer(r.ctx); code != "" {
 			fail(code)
 			return
 		}

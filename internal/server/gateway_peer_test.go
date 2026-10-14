@@ -74,7 +74,11 @@ func gatewayAssertNoHostFallback(t *testing.T, node *tsnet.Server) {
 		t.Fatal(err)
 	}
 	for _, host := range []string{"ghost.tailnet.ts.net", "localhost"} {
-		t.Run(host, func(t *testing.T) {
+		name := host
+		if host == "localhost" {
+			name = "registration-rejects-localhost"
+		}
+		t.Run(name, func(t *testing.T) {
 			d := &gatewayRemoteUpstream{node: node, lc: lc, target: "https://" + net.JoinHostPort(host, port)}
 			c, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 			if c != nil {
@@ -118,7 +122,9 @@ func TestGatewayRemotePeerResolution(t *testing.T) {
 	var status atomic.Pointer[ipnstate.Status]
 	st := taggedGatewayStatus(true)
 	for _, p := range st.Peer {
-		p.DNSName = "REMOTE.TAILNET.TS.NET."
+		if p.DNSName == "remote.tailnet.ts.net." {
+			p.DNSName = "REMOTE.TAILNET.TS.NET."
+		}
 	}
 	status.Store(st)
 	var calls atomic.Int64
@@ -137,6 +143,11 @@ func TestGatewayRemotePeerResolution(t *testing.T) {
 	if err == nil || err.Error() != "netstack offline" || calls.Load() != 1 {
 		t.Fatalf("positive peer resolution: %v calls=%d", err, calls.Load())
 	}
+	d.target = "https://absent.tailnet.ts.net"
+	if _, code := d.peer(context.Background()); code != "remote_upstream_not_peer" {
+		t.Fatalf("unmatched DNSName accepted: %s", code)
+	}
+	d.target = "https://remote.tailnet.ts.net."
 	peer.Store(false)
 	_, err = d.DialContext(context.Background(), "tcp", "remote.tailnet.ts.net.:443")
 	code, _ := registry.ErrorCode(err)
@@ -146,7 +157,7 @@ func TestGatewayRemotePeerResolution(t *testing.T) {
 	st = taggedGatewayStatus(true)
 	st.Peer = nil
 	status.Store(st)
-	if code := d.check(context.Background()); code != "remote_upstream_not_peer" {
+	if _, code := d.peer(context.Background()); code != "remote_upstream_not_peer" {
 		t.Fatal(code)
 	}
 }

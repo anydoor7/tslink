@@ -19,6 +19,8 @@ import (
 )
 
 type portalRun struct {
+	gatewayTagged atomic.Bool // cached portalState.Gateway.Tagged; writes hold Server.mu
+
 	routeSlots  map[int]chan struct{}
 	dropped     atomic.Uint64
 	startMu     sync.Mutex
@@ -114,6 +116,9 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 			s.portalRetryPending.Store(true)
 		}
 		s.portalState = state
+		if state.Gateway != nil {
+			run.gatewayTagged.Store(state.Gateway.Tagged)
+		}
 		s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
 	}()
 }

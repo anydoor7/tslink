@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsd"
 )
 
@@ -27,27 +28,32 @@ type gatewayRemoteUpstream struct {
 }
 
 func (d *gatewayRemoteUpstream) check(ctx context.Context) string {
-	_, code := d.peer(ctx)
+	_, code := d.status(ctx, false)
 	return code
 }
 
-// peer resolves only from this gateway's netmap, never host DNS.
-func (d *gatewayRemoteUpstream) peer(ctx context.Context) (netip.Addr, string) {
+// Requests recheck tag and suffix even when the transport reuses a connection.
+// Only activation and new dials need the full peer list.
+func (d *gatewayRemoteUpstream) status(ctx context.Context, peers bool) (*ipnstate.Status, string) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if d.node == nil || d.lc == nil {
-		return netip.Addr{}, "remote_upstream_unavailable"
+		return nil, "remote_upstream_unavailable"
 	}
-	status, err := d.lc.Status(ctx)
+	read := d.lc.StatusWithoutPeers
+	if peers {
+		read = d.lc.Status
+	}
+	status, err := read(ctx)
 	if err != nil || status == nil || status.Self == nil {
-		return netip.Addr{}, "remote_upstream_unavailable"
+		return nil, "remote_upstream_unavailable"
 	}
 	tagged := status.Self.Tags != nil && status.Self.Tags.Len() > 0
 	if d.observe != nil {
 		d.observe(tagged)
 	}
 	if !tagged {
-		return netip.Addr{}, "remote_upstream_requires_tag"
+		return nil, "remote_upstream_requires_tag"
 	}
 	suffix := ""
 	if status.CurrentTailnet != nil {
@@ -55,9 +61,18 @@ func (d *gatewayRemoteUpstream) peer(ctx context.Context) (netip.Addr, string) {
 	}
 	if err := registry.ValidateRemoteTailnet(d.target, suffix); err != nil {
 		if code, ok := registry.ErrorCode(err); ok {
-			return netip.Addr{}, code
+			return nil, code
 		}
-		return netip.Addr{}, "remote_upstream_outside_tailnet"
+		return nil, "remote_upstream_outside_tailnet"
+	}
+	return status, ""
+}
+
+// peer resolves only from this gateway's netmap, never host DNS.
+func (d *gatewayRemoteUpstream) peer(ctx context.Context) (netip.Addr, string) {
+	status, code := d.status(ctx, true)
+	if code != "" {
+		return netip.Addr{}, code
 	}
 	u, _ := url.Parse(d.target)
 	for _, peer := range status.Peer {
@@ -112,12 +127,16 @@ func (d *gatewayRemoteUpstream) DialContext(ctx context.Context, network, addres
 func (s *Server) remoteGatewayUpstream(run *portalRun, svc registry.Service) *gatewayRemoteUpstream {
 	node, _ := run.node.tsnetSrv.(gatewayNodeDialer)
 	return &gatewayRemoteUpstream{node: node, lc: run.lc, target: svc.Target, observe: func(tagged bool) {
+		if run.gatewayTagged.Load() == tagged {
+			return
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.portalRun == run && s.portalState.Gateway != nil && s.portalState.Gateway.Tagged != tagged {
 			copy := *s.portalState.Gateway
 			copy.Tagged = tagged
 			s.portalState.Gateway = &copy
+			run.gatewayTagged.Store(tagged)
 			s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
 		}
 	}}
