@@ -123,7 +123,8 @@ reuse an upstream connection. Traffic and
 health checks dial that peer's Tailscale IP directly through the gateway netstack,
 only while `UseNetstackForIP` confirms it is a peer. They never use the host
 resolver or host network; a missing or disappearing peer fails closed with
-`remote_upstream_not_peer` or a netstack dial error. TLS still verifies the
+`remote_upstream_not_peer` or a netstack dial error, and on an already open
+upstream connection as `upstream_down`. TLS still verifies the
 registered hostname normally. The remote app must permit the gateway tag in its own policy
 (for a TSLink app, its explicit tag allow list). This command does not change
 remote ACLs or registrations.
