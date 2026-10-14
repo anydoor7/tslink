@@ -110,8 +110,10 @@ func TestDoctorBusinessProbeDetectsListeningBrokenApp(t *testing.T) {
 	newDoctorTestEnv(t, []registry.Service{{Name: "app", Type: registry.TypeProxy, Target: app.URL}})
 	doctorHTTPProbeFn = defaultProbe
 	result := buildDoctorResult(context.Background(), doctorOptions{})
-	finding := assertDoctorFinding(t, result, inspect.WarningCodeAppProbeFailed)
-	if finding.Evidence["error_code"] != "health_status_mismatch" {
+	// A listening app that answers 500 is reachable: the check reports the
+	// answer as a warning with a health set suggestion, not an app failure.
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeAppProbeUnexpected)
+	if finding.Evidence["error_code"] != "health_status_mismatch" || finding.Evidence["status_code"] != "500" || finding.Severity != "warning" {
 		t.Fatal(finding)
 	}
 	b, _ := json.Marshal(result)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/health"
+	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
@@ -512,7 +513,10 @@ func mcpScopedDoctor(ctx context.Context, actions mcpActions, scope mcpscope.Sco
 	result := DoctorResult{GuestLinks: []registry.GuestView{}, SchemaVersion: 1, ExecutionStatus: doctorExecutionCompleted, Findings: []DoctorFinding{}}
 	result.Counts.Services = len(v.Services)
 	for _, svc := range v.Services {
-		if svc.Health.State == health.Down || svc.Health.State == health.Degraded {
+		if svc.Health.State == health.Degraded && health.UnexpectedResponse(svc.Health.LastError) {
+			message, evidence := healthMismatchFinding(svc.Name, svc.Health.LastError, svc.Health.StatusCode)
+			result.Findings = append(result.Findings, DoctorFinding{Code: inspect.WarningCodeAppProbeUnexpected, Severity: doctorSeverityWarning, Service: svc.Name, Area: "health", Message: message, Evidence: evidence})
+		} else if svc.Health.State == health.Down || svc.Health.State == health.Degraded {
 			result.Findings = append(result.Findings, DoctorFinding{Code: "app_health_unhealthy", Severity: doctorSeverityWarning, Service: svc.Name, Area: "health", Message: "App health observation is unhealthy"})
 		}
 	}

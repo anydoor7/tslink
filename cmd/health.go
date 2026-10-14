@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
@@ -114,6 +115,33 @@ func healthConfigFromFlags(cmd *cobra.Command) *registry.HealthConfig {
 }
 
 var doctorHTTPProbeFn = func(ctx context.Context, svc registry.Service) string { return health.Probe(ctx, svc) }
+
+// healthMismatchFinding explains a backend that answered outside its health
+// settings and names the one command that changes only the check. Re-running
+// add would replace the whole service, so it is never suggested.
+func healthMismatchFinding(app, code string, status int) (string, map[string]string) {
+	next := "tslink health set " + app + " --path /health"
+	answered := "an unexpected body"
+	if code == "health_status_mismatch" {
+		answered = "a status outside the accepted range"
+		switch {
+		case status == 401 || status == 403:
+			next = fmt.Sprintf("tslink health set %s --status-max %d", app, status)
+		case status >= 300 && status <= 399:
+			next = "tslink health set " + app + " --status-max 399"
+		}
+	}
+	evidence := map[string]string{"error_code": code, "next": next}
+	if status != 0 {
+		evidence["status_code"] = strconv.Itoa(status)
+		answered = fmt.Sprintf("HTTP %d", status)
+		if code == "health_body_mismatch" {
+			answered += " without the expected body text"
+		}
+	}
+	message := fmt.Sprintf("The app answered its health check with %s, so it is reachable but the check does not match it. Point the check at an endpoint that answers 2xx or 3xx, or accept this answer, changing only the health settings: %s", answered, next)
+	return message, evidence
+}
 
 // The journal owns events, monitor state and current read/config errors. Only
 // a live, usable snapshot can supplement an error that could not be persisted.

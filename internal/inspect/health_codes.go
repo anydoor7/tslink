@@ -3,6 +3,7 @@ package inspect
 const (
 	WarningCodeHealthMonitorSaturated = "health_monitor_saturated"
 	WarningCodeAppProbeFailed         = "app_probe_failed"
+	WarningCodeAppProbeUnexpected     = "app_probe_unexpected_response"
 	WarningCodeNodeKeyExpiring        = "node_key_expiring"
 	WarningCodeNodeKeyCritical        = "node_key_expiry_critical"
 	WarningCodeNodeKeyExpired         = "node_key_expired"
@@ -14,6 +15,7 @@ func init() {
 	for code, meta := range map[string]WarningCodeMeta{
 		WarningCodeHealthMonitorSaturated: {Severity: "warning", Source: "health_monitor", Description: "Health monitor slots are stuck; unattempted checks preserve the last observation until capacity recovers."},
 		WarningCodeAppProbeFailed:         {Severity: "error", Source: "app_probe", Description: "HTTP business probe failed; inspect the backend app and its configured health endpoint."},
+		WarningCodeAppProbeUnexpected:     {Severity: "warning", Source: "app_probe", Description: "The app answers, but its health check expects another status or body; change only the check with tslink health set."},
 		WarningCodeNodeKeyExpiring:        {Severity: "warning", Source: "node_key", Description: "Service node key expires within 14 days; review this node in the Tailscale admin console."},
 		WarningCodeNodeKeyCritical:        {Severity: "error", Source: "node_key", Description: "Service node key expires within 3 days; reauthenticate or review expiry before it loses connectivity."},
 		WarningCodeNodeKeyExpired:         {Severity: "error", Source: "node_key", Description: "Service node key has expired; review this node in the Tailscale admin console."},
