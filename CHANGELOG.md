@@ -3,6 +3,28 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [0.2.0]
+
+### Added
+
+- Opt-in persistent portal gateway: one device share per person, a private dashboard on port 443, and stable per-app HTTPS ports with fresh WhoIs, people policy and same-origin checks.
+- Portal-only local HTTP/file apps and remote HTTPS apps through an observed tagged gateway's tsnet Dial. Remote hosts authenticate the gateway tag; visitor identity assertions are not forwarded.
+- Periodic portal-only health checks, exact route status/URLs, ownership and identity-change diagnostics, connection-drop counts, CLI route management and matching MCP tools.
+- Gateway invitation target records with exact ownership proof, live-invite deduplication, durable attempts, reconciliation and pending-invite cleanup. Guides and QR payloads use the dashboard.
+
+### Fixed
+
+- Portal enable preserves gateway settings unless explicitly changed; disabling gateway mode refuses while routes remain. Failed routes retry without interrupting other routes.
+- Connection admission no longer serializes slow identity lookups. Directory visibility, unrelated invalid apps, deny-page privacy, long polls and proxy redirect hygiene retain their intended behavior.
+- A valid HTTP 200 user-invites response containing root JSON `null` is treated as an empty list, so device invitations remain visible. Device list completeness checks are unchanged.
+
+### Compatibility
+
+Gateway fields require registry schema 3. Older readers refuse them. Back up and
+remove or migrate gateway configuration before downgrade; newer people invitation
+fields also require a compatible reader. Gateway remains optional and ordinary
+per-app registration is still the default. This section is undated until release.
+
 ## [0.1.2] - 2026-10-12
 
 macOS background-service startup fix. Commands, flags and stored data are unchanged from 0.1.1.

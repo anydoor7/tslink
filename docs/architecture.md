@@ -25,7 +25,7 @@ on each host. There is no cross-host aggregate inventory or cloud VPC creation.
 1. **Configure.** CLI and MCP service-management operations persist service
    settings in `~/.config/tslink/registry.json`. The file survives restarts.
 2. **Reconcile.** The shared daemon watches the registry and applies changes
-   to its embedded nodes without a daemon restart. Each service has its
+   to its embedded nodes without a daemon restart. By default each service has its
    own node identity; a fresh node must complete Tailscale enrollment.
 3. **Connect.** A permitted tailnet device reaches the selected node. An HTTP
    proxy forwards to an existing app or model API; a file service reads the
@@ -95,3 +95,26 @@ Registry writes and lifecycle receipts are separate commits; see
   stop behavior. See [daemon lifecycle](daemon-lifecycle.md).
 - Structured logging uses `slog` for diagnostics and bounded asynchronous local
   access history for HTTP/file requests and TCP connections. See [access log](access-log.md).
+
+## Optional gateway data path
+
+A persistent portal node owns the directory on 443 and one TLS listener per
+routed HTTP/file app. Admission performs real WhoIs before TLS with bounded
+concurrency; request middleware repeats identity, registry, expiry and origin
+checks. Listener activation and retries are per route, with per-port lifetime
+serialization; a failed route does not close the shared node. Portal-only apps
+have no per-app node or app-node ownership entry. Existing routed apps retain
+their own node, where the same people policy still applies.
+
+Local proxy targets use the host network. Remote targets use only this portal
+node's tsnet Dial, restricted to the registered HTTPS hostname/port in the
+observed tailnet suffix and an observed tagged gateway. Upstream TLS verifies the
+remote hostname. The remote app authenticates the gateway tag; no visitor
+identity headers are forwarded. Periodic portal-only health checks use the same
+transport and bounded probe machinery, with stale observations shown as unknown.
+
+Gateway ownership and persistent-enrollment evidence live in the portal state
+directory, outside the app-node cleanup ledger. People invitations record a
+separate gateway target kind and exact NodeID. Registry schema 3 protects the
+new routing fields from older readers. Gateway mode is a manually configured
+route catalog, not federated discovery or a cross-host control plane.
