@@ -1154,3 +1154,22 @@ func TestManifestIgnoresFlagsCobraAddsOnExecution(t *testing.T) {
 		}
 	}
 }
+
+// commandFlags drops both flags Cobra creates itself, including --version on
+// a versioned command, without depending on the global command tree.
+func TestCommandFlagsSkipsFlagsCobraCreates(t *testing.T) {
+	c := &cobra.Command{Use: "probe", Version: "1.2.3", Run: func(*cobra.Command, []string) {}}
+	c.Flags().Bool("dry-run", false, "")
+	c.InitDefaultHelpFlag()
+	c.InitDefaultVersionFlag()
+	if c.Flags().Lookup("help") == nil || c.Flags().Lookup("version") == nil {
+		t.Fatal("Cobra did not add its help and version flags")
+	}
+	var names []string
+	for _, flag := range commandFlags(c, "probe") {
+		names = append(names, flag.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"dry-run"}) {
+		t.Fatalf("commandFlags = %v, want [dry-run]", names)
+	}
+}
