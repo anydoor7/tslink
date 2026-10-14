@@ -76,9 +76,8 @@ func (g *gatewayGate) registry() (*registry.Registry, error) {
 // Admit performs no TLS reads or writes. The returned tls.Conn from ListenTLS
 // still has an unstarted handshake when this runs.
 func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
-	if g.upstreamCheck != nil && g.upstreamCheck(ctx) != "" {
-		return false
-	}
+	// Remote policy is checked per request and per dial (including pooled
+	// connections). Admission must not enter the snapshot/Server.mu path.
 	who := g.who(ctx, remote)
 	if who == nil {
 		return false
@@ -173,12 +172,14 @@ func (l *gatewayListener) admissions() {
 		go func() {
 			defer workers.Done()
 			defer func() { <-slots }()
-			if l.gate.admit(l.ctx, c.RemoteAddr().String()) && l.ctx.Err() == nil {
+			if l.gate.admit(l.ctx, c.RemoteAddr().String()) {
 				select {
 				case l.ready <- c:
 					return
 				case <-l.ctx.Done():
 				}
+				_ = c.Close()
+				return
 			}
 			l.gate.drop(c.RemoteAddr().String())
 			_ = c.Close()

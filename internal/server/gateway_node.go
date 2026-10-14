@@ -54,11 +54,12 @@ func (r *gatewayRouteRun) close() {
 
 func (run *portalRun) closeRoutes() {
 	run.routesMu.Lock()
-	defer run.routesMu.Unlock()
-	for _, r := range run.routes {
+	routes := run.routes
+	run.routes = nil
+	run.routesMu.Unlock()
+	for _, r := range routes {
 		r.close()
 	}
-	run.routes = nil
 }
 
 func (run *portalRun) routeStates() []tsRuntime.GatewayRouteState {
@@ -142,7 +143,15 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 		}
 	}
 	run.routesMu.Lock()
-	defer run.routesMu.Unlock()
+	var closing []*gatewayRouteRun
+	defer func() {
+		run.routesMu.Unlock()
+		// Close joins admission workers. Never hold routesMu across that wait:
+		// snapshot writers acquire it while holding Server.mu.
+		for _, route := range closing {
+			route.close()
+		}
+	}()
 	if run.routes == nil {
 		run.routes = map[string]*gatewayRouteRun{}
 	}
@@ -168,7 +177,8 @@ func (s *Server) syncGatewayRoutes(run *portalRun) {
 			}
 			failures[name] = route.failures
 		}
-		route.close()
+		route.cancel()
+		closing = append(closing, route)
 		delete(run.routes, name)
 	}
 	for name, svc := range wanted {
