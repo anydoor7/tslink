@@ -110,11 +110,18 @@ func inviteDeviceTargetsForPaths(regPath, pidPath, snapshotPath string) ([]taila
 
 	targets := make([]tailapi.DeviceTarget, 0, len(reg.Services))
 	for _, service := range reg.Services {
+		if service.PortalOnly {
+			continue
+		}
 		targets = append(targets, tailapi.DeviceTarget{
 			Service:  service.Name,
 			Hostname: service.Name,
 			NodeID:   nodeIDs[service.Name],
 		})
+	}
+	if reg.Portal != nil && reg.Portal.Enabled && reg.Portal.Gateway != nil && reg.Portal.Gateway.Enabled {
+		view := portalView(reg, snapshot, freshness.Exact && inviteIsRunningFn(pidPath))
+		targets = append(targets, gatewayInviteTarget(regPath, view))
 	}
 	return targets, nil
 }

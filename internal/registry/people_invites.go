@@ -12,17 +12,20 @@ import (
 // Sending survives a crash as an unknown outcome, never as permission to POST.
 // Bearer URLs and credentials must never be stored here.
 type PersonInvite struct {
-	App      string `json:"app"`
-	Hostname string `json:"hostname"`
-	NodeID   string `json:"node_id"`
-	ID       string `json:"id,omitempty"`
-	State    string `json:"state"`
+	TargetKind string `json:"target_kind,omitempty"`
+	App        string `json:"app"`
+	Hostname   string `json:"hostname"`
+	NodeID     string `json:"node_id"`
+	ID         string `json:"id,omitempty"`
+	State      string `json:"state"`
 	// Attempt zero is the original schema-2 operation. Later attempts retain
 	// terminal records instead of overwriting person/app/node evidence.
 	Attempt uint64 `json:"attempt,omitempty"`
 }
 
 const (
+	InviteTargetApp        = "app"
+	InviteTargetGateway    = "gateway"
 	PersonInvitePending    = "pending"
 	PersonInviteSending    = "sending"
 	PersonInviteUnknown    = "unknown"
@@ -38,12 +41,43 @@ func PersonInviteTerminal(op PersonInvite) bool {
 	return op.State == PersonInviteRevoked || op.State == PersonInviteAccepted || op.State == PersonInviteCancelled || op.State == PersonInviteTargetGone || op.State == PersonInviteReplaced
 }
 
+// Accepted gateway shares remain live for deduplication; they are terminal
+// for remote cleanup, which must never delete an accepted network share.
+func PersonInviteLive(op PersonInvite) bool {
+	return !PersonInviteTerminal(op) || (op.TargetKind == InviteTargetGateway && op.State == PersonInviteAccepted)
+}
+
+func SameInviteTarget(a, b PersonInvite) bool {
+	return a.TargetKind == b.TargetKind && a.App == b.App && a.NodeID == b.NodeID
+}
+
+func GatewayInviteGrantActive(p Person, reg *Registry, now time.Time) bool {
+	if p.Revoked || !PersonIsGuest(p) {
+		return false
+	}
+	for _, svc := range reg.Services {
+		if svc.PortalRoute != nil && PersonGrantActiveAt(p, svc.Name, now) {
+			return true
+		}
+	}
+	return false
+}
+
 func validatePersonInvites(ops []PersonInvite) error {
 	seen := map[string]bool{}
 	active := map[string]bool{}
 	for _, op := range ops {
-		if err := ValidateName(op.App); err != nil {
-			return err
+		switch op.TargetKind {
+		case "", InviteTargetApp:
+			if err := ValidateName(op.App); err != nil {
+				return err
+			}
+		case InviteTargetGateway:
+			if op.App != "" {
+				return fmt.Errorf("gateway invite must not name an app")
+			}
+		default:
+			return fmt.Errorf("unsupported invite target kind")
 		}
 		if err := ValidateName(op.Hostname); err != nil {
 			return err
@@ -64,17 +98,21 @@ func validatePersonInvites(ops []PersonInvite) error {
 		if (op.State == PersonInviteComplete || op.State == PersonInviteAccepted || op.State == PersonInviteRevoked || op.State == PersonInviteReplaced) && op.ID == "" {
 			return fmt.Errorf("completed invite operation requires ID")
 		}
-		target := op.App + "\x00" + op.NodeID
+		target := op.TargetKind + "\x00" + op.App + "\x00" + op.NodeID
 		key := fmt.Sprintf("%s\x00%d", target, op.Attempt)
 		if seen[key] {
 			return fmt.Errorf("duplicate invite operation for %s", op.App)
 		}
 		seen[key] = true
-		if !PersonInviteTerminal(op) {
-			if active[target] {
+		if PersonInviteLive(op) {
+			activeKey := target
+			if op.TargetKind == InviteTargetGateway {
+				activeKey = InviteTargetGateway
+			}
+			if active[activeKey] {
 				return fmt.Errorf("multiple active invite attempts for %s", op.App)
 			}
-			active[target] = true
+			active[activeKey] = true
 		}
 	}
 	return nil
@@ -131,7 +169,7 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 				continue
 			}
 			if op.State == PersonInvitePending || op.State == PersonInviteSending {
-				if !PersonGrantActiveAt(*p, op.App, opts.Now) {
+				if (op.TargetKind == InviteTargetGateway && !GatewayInviteGrantActive(*p, reg, opts.Now)) || (op.TargetKind != InviteTargetGateway && !PersonGrantActiveAt(*p, op.App, opts.Now)) {
 					return CodedError{Code: errcode.Conflict, Message: "person grant removed or expired before invite send"}
 				}
 				if opts.ExpectedGrant != nil {
@@ -151,7 +189,7 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 			found := false
 			for j := range p.Invites {
 				old := p.Invites[j]
-				if old.App == op.App && old.NodeID == op.NodeID && old.Attempt == op.Attempt {
+				if SameInviteTarget(old, op) && old.Attempt == op.Attempt {
 					if opts.Expected != nil && old != *opts.Expected {
 						return CodedError{Code: errcode.Conflict, Message: "invite attempt changed before transition"}
 					}

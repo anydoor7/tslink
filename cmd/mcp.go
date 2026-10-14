@@ -173,15 +173,15 @@ var (
 		"boundaries":     stringArraySchema(),
 	}, "schema_version", "id", "operation", "remote_system", "mutates", "default", "resources", "boundaries")
 	mcpInviteProperties = map[string]any{
-		"kind":               map[string]any{"type": "string", "enum": []string{tailapi.InviteKindUser, tailapi.InviteKindDevice}},
-		"id":                 map[string]any{"type": "string"},
-		"recipient":          map[string]any{"type": "string"},
-		"email":              map[string]any{"type": "string"},
-		"emailed":            map[string]any{"type": "boolean"},
-		"invite_url":         map[string]any{"type": "string", "description": "Bearer invitation URL. Present only when the invite was created with print_link true or when invite_list was called with show_urls true; anyone holding it can accept the invitation."},
-		"role":               map[string]any{"type": "string"},
-		"service":            map[string]any{"type": "string"},
-		"device_id":          map[string]any{"type": "integer"},
+		"kind":        map[string]any{"type": "string", "enum": []string{tailapi.InviteKindUser, tailapi.InviteKindDevice}},
+		"id":          map[string]any{"type": "string"},
+		"recipient":   map[string]any{"type": "string"},
+		"email":       map[string]any{"type": "string"},
+		"emailed":     map[string]any{"type": "boolean"},
+		"invite_url":  map[string]any{"type": "string", "description": "Bearer invitation URL. Present only when the invite was created with print_link true or when invite_list was called with show_urls true; anyone holding it can accept the invitation."},
+		"role":        map[string]any{"type": "string"},
+		"service":     map[string]any{"type": "string"},
+		"target_kind": map[string]any{"type": "string", "enum": []string{"app", "gateway"}}, "device_id": map[string]any{"type": "integer"},
 		"multi_use":          map[string]any{"type": "boolean"},
 		"allow_exit_node":    map[string]any{"type": "boolean"},
 		"accepted":           map[string]any{"type": "boolean"},
@@ -307,9 +307,10 @@ var (
 		"daemon_installed":  mcpDaemonInstalledSchema,
 	}, "name", "type", "created", "replaced_fields", "funnel_rearmed", "url", "url_pending", "endpoint", "exposure")
 	mcpURLOutputSchema = objectSchema(map[string]any{
-		"name":  map[string]any{"type": "string"},
-		"url":   map[string]any{"type": "string"},
-		"state": map[string]any{"type": "string"},
+		"portal_url": map[string]any{"type": "string"},
+		"name":       map[string]any{"type": "string"},
+		"url":        map[string]any{"type": "string"},
+		"state":      map[string]any{"type": "string"},
 	}, "name", "url", "state")
 	mcpTagsListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{
@@ -388,9 +389,9 @@ var (
 		"device_targets": map[string]any{
 			"type": "array",
 			"items": objectSchema(map[string]any{
-				"service":      map[string]any{"type": "string"},
-				"checked":      map[string]any{"type": "boolean"},
-				"invite_count": map[string]any{"type": "integer", "minimum": 0},
+				"service":     map[string]any{"type": "string"},
+				"checked":     map[string]any{"type": "boolean"},
+				"target_kind": map[string]any{"type": "string", "enum": []string{"app", "gateway"}}, "invite_count": map[string]any{"type": "integer", "minimum": 0},
 				"error": objectSchema(map[string]any{
 					"code":    map[string]any{"type": "string"},
 					"message": map[string]any{"type": "string"},

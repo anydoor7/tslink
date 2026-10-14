@@ -2555,7 +2555,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none before cleanup"
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway before cleanup"
         }
       ],
       "json_result_fields": {
@@ -2656,7 +2656,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway; requires --invite",
           "requires": [
             "--invite"
           ]
@@ -2666,7 +2666,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite",
+          "usage": "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines; requires --invite",
           "requires": [
             "--invite"
           ],

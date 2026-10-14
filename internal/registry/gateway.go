@@ -80,6 +80,13 @@ func validateGatewayService(svc Service) error {
 }
 
 func hasGatewayFields(reg *Registry) bool {
+	for _, person := range reg.People {
+		for _, op := range person.Invites {
+			if op.TargetKind == InviteTargetGateway {
+				return true
+			}
+		}
+	}
 	if reg.Portal != nil && reg.Portal.Gateway != nil {
 		return true
 	}
