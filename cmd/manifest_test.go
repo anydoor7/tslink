@@ -568,6 +568,11 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"remote_upstream_outside_tailnet":       registry.ValidateRemoteTailnet("https://remote.foreign.ts.net", "tailnet.ts.net"),
+		"remote_upstream_requires_tag":          registry.CodedError{Code: "remote_upstream_requires_tag", Message: "observed gateway is untagged"},
+		"remote_upstream_unavailable":           registry.CodedError{Code: "remote_upstream_unavailable", Message: "remote dial capability unavailable"},
+		"gateway_tag_requires_credentials":      registry.CodedError{Code: "gateway_tag_requires_credentials", Message: "credentialed enrollment required"},
+		"gateway_ephemeral_refused":             registry.CodedError{Code: "gateway_ephemeral_refused", Message: "persistent enrollment unproven"},
 		"gateway_ports_invalid":                 registry.ValidateGatewayConfig(&registry.GatewayConfig{}),
 		"gateway_required":                      registry.CodedError{Code: "gateway_required", Message: "gateway required"},
 		"portal_only_required":                  registry.CodedError{Code: "portal_only_required", Message: "portal port requires portal-only"},

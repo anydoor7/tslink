@@ -60,8 +60,14 @@ func (d *gatewayRemoteUpstream) DialContext(ctx context.Context, network, addres
 	if err != nil || registry.ValidateRemoteTarget(d.target) != nil || network != "tcp" || !strings.EqualFold(address, net.JoinHostPort(u.Hostname(), urlPort(u))) {
 		return nil, registry.CodedError{Code: "portal_upstream_invalid", Message: "remote transport destination differs from registered target"}
 	}
-	if code := d.check(ctx); code != "" {
-		return nil, registry.CodedError{Code: code, Message: "Remote upstream is unavailable"}
+	switch d.check(ctx) {
+	case "":
+	case "remote_upstream_requires_tag":
+		return nil, registry.CodedError{Code: "remote_upstream_requires_tag", Message: "Remote upstream requires a tagged gateway"}
+	case "remote_upstream_outside_tailnet":
+		return nil, registry.CodedError{Code: "remote_upstream_outside_tailnet", Message: "Remote upstream is outside the gateway tailnet"}
+	default:
+		return nil, registry.CodedError{Code: "remote_upstream_unavailable", Message: "Remote upstream is unavailable"}
 	}
 	return d.node.Dial(ctx, "tcp", address)
 }

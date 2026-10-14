@@ -4156,6 +4156,14 @@
       "exit_code": 2,
       "description": "remote upstream is outside the gateway tailnet suffix"
     },
+    "remote_upstream_requires_tag": {
+      "exit_code": 4,
+      "description": "remote upstream requires an observed tagged gateway"
+    },
+    "remote_upstream_unavailable": {
+      "exit_code": 1,
+      "description": "gateway remote transport or identity status is unavailable"
+    },
     "runtime_snapshot_missing": {
       "exit_code": 1,
       "description": "no runtime snapshot (runtime.json) is available, so exact runtime endpoints cannot be proven"
