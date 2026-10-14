@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -456,3 +457,47 @@ func TestNodeForcedCloseIsNotAClientCancellation(t *testing.T) {
 	}
 }
 
+// Once the backend's response headers are forwarded, the status on the wire is
+// committed. A client that leaves during the body keeps that status, including
+// a forwarded 5xx: no 499, no client_canceled, no error class and no backend
+// failure log.
+func TestClientCancelAfterResponseStartKeepsForwardedStatus(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusInternalServerError} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(status)
+				io.WriteString(w, "hello")
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			defer backend.Close()
+			url, done, _, events := cancelNode(t, registry.Service{Name: "app", Type: registry.TypeProxy, Target: backend.URL, AllowedUsers: []string{"alice@example.com"}}, nil)
+			logs := captureServerLog(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url+"/stream", nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			first := make([]byte, 5)
+			if _, err := io.ReadFull(resp.Body, first); err != nil || resp.StatusCode != status || string(first) != "hello" {
+				t.Fatalf("response %d %q %v", resp.StatusCode, first, err)
+			}
+			cancel()
+			testwait.Recv(t, done, "streaming request handler")
+			got := events()
+			if len(got) != 1 {
+				t.Fatalf("events %+v", got)
+			}
+			if e := got[0]; e.Decision != "allowed" || e.Status != status || e.Reason != "" || e.ErrorClass != "" || e.Path != "/stream" {
+				t.Fatalf("post-header cancellation event %+v", e)
+			}
+			if strings.Contains(logs.String(), "backend_request_failed") {
+				t.Fatalf("post-header cancellation logged as a backend failure:\n%s", logs)
+			}
+		})
+	}
+}

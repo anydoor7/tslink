@@ -221,8 +221,11 @@ identity, ownership proof, range, route states and a per-run `dropped` connectio
 count. Connection-drop logs are rate-limited per gate; the home gate uses the
 fixed app marker `@portal`. Request events retain app names and add `via: portal`
 and a stable reason. A visitor who cancels during identification leaves no event;
-one who cancels during proxying is `allowed` with status 499 and `client_canceled`,
-and does not mark the route down. The drop counter includes events omitted by the rate limit.
+one who cancels during proxying, before the response starts, is `allowed` with
+status 499 and `client_canceled`, and does not mark the route down. A visitor
+who leaves after the response started keeps the forwarded status. Requests in
+flight when TSLink tears a route down are `allowed` with status 503 and
+`route_closed`, not a visitor cancellation, and do not mark the route down. The drop counter includes events omitted by the rate limit.
 
 Gateway registries use schema 3, which older readers refuse. Before downgrading,
 stop the new daemon, back up the registry and portal state, and intentionally
