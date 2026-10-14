@@ -50,13 +50,15 @@ cookies are stripped, and request-controlled Host/URLs cannot change a target.
 An untagged gateway could be recognized remotely as its enrolling human, including
 that human's owner privilege. Remote routes therefore require an **observed**
 tagged gateway, an HTTPS MagicDNS name in its observed tailnet suffix and normal
-TLS verification. Traffic and probes resolve the registered name only against
-the gateway LocalAPI peer list, require its Tailscale IP to pass
+TLS verification. The registered hostname must match a peer DNSName in the
+gateway LocalAPI status at route activation, for each new upstream connection
+and on health probes. Traffic and probes resolve the registered name only
+against that peer list, require its Tailscale IP to pass
 `UseNetstackForIP`, and call `NetstackDialTCP` directly. They do not call tsnet
 `Dial`/`UserDial`, the host resolver, or a host-network dialer. A disappearing
 peer fails in netstack without host fallback. TLS verifies the registered
-hostname. Per-request
-checks also cover pooled upstream connections after tag removal. Remote hosts
+hostname. The tag and tailnet suffix are rechecked on every request, including
+requests that reuse an upstream connection. Remote hosts
 must explicitly trust the gateway tag. Visitor Tailscale identity and IP headers
 are stripped and are not replaced with human claims; signed assertions are not
 implemented. Local upstreams continue receiving verified visitor identity.

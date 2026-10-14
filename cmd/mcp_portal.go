@@ -25,6 +25,6 @@ func init() {
 			"admins":        stringArraySchema(),
 			"funnel":        map[string]any{"type": "boolean", "default": false, "description": "Always refused when true."},
 		}, "owner"), OutputSchema: view},
-		mcpToolDefinition{Name: "portal_disable", Description: "Disable the home portal. App services, grants, retained owner/admin identities and enrolled local node state remain. The running daemon closes the portal and route listeners. No remote device deletion or invites.", InputSchema: objectSchema(map[string]any{}), OutputSchema: view},
+		mcpToolDefinition{Name: "portal_disable", Description: "Disable the home portal. With gateway mode on, HTTP MCP also requires the current portal owner, checked in the registry write transaction; other callers receive access_request_owner_required. App services, grants, retained owner/admin identities and enrolled local node state remain. The running daemon closes the portal and route listeners. No remote device deletion or invites.", InputSchema: objectSchema(map[string]any{}), OutputSchema: view},
 	)
 }

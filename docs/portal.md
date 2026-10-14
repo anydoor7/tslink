@@ -55,7 +55,7 @@ The response uses TSLink's normal versioned envelope:
 {"type":"tslink.result","ok":true,"schema_version":1,"command":"portal apps","code":0,"data":{"apps":[{"name":"photos","url":"https://photos.example.ts.net","health":"healthy","expires_at":"2030-01-02T12:00:00Z","expiry":"Access ends January 2, 2030 at 12:00 UTC."}]}}
 ```
 
-MCP tools `portal_enable` (required `owner`; optional `hostname`, `admins`, `funnel`, `gateway`, `gateway_ports`, `gateway_tag`) and `portal_disable` use the same command implementation. Over HTTP MCP, only the current portal owner can enable or replace portal settings, including owner and admin identities. The check uses the same exact, untagged, non-revoked WhoIs owner identity as the request tools and is repeated under the registry write lock. Other callers receive `access_request_owner_required`, including attempts to set, clear or replace the owner or change admins. An unset owner cannot be claimed remotely. Use local `tslink portal enable --owner <login>` or stdio MCP to set the first owner or recover a lost owner identity. Disable retains owner/admin identities. `funnel: true` and `tslink portal enable --funnel` fail explicitly with `portal_funnel_refused`. Persisted `portal.funnel: true` also refuses admission. The only production listener is tsnet `ListenTLS`; there is no public Funnel or host-interface listener.
+MCP tools `portal_enable` (required `owner`; optional `hostname`, `admins`, `funnel`, `gateway`, `gateway_ports`, `gateway_tag`) and `portal_disable` use the same command implementation. Over HTTP MCP, only the current portal owner can enable or replace portal settings, including owner and admin identities. The check uses the same exact, untagged, non-revoked WhoIs owner identity as the request tools and is repeated under the registry write lock. Other callers receive `access_request_owner_required`, including attempts to set, clear or replace the owner or change admins. An unset owner cannot be claimed remotely. Use local `tslink portal enable --owner <login>` or stdio MCP to set the first owner or recover a lost owner identity. With gateway mode on, HTTP MCP `portal_disable` also requires the current portal owner, checked in the registry write transaction; other callers receive `access_request_owner_required`. Disable retains owner/admin identities. `funnel: true` and `tslink portal enable --funnel` fail explicitly with `portal_funnel_refused`. Persisted `portal.funnel: true` also refuses admission. The only production listener is tsnet `ListenTLS`; there is no public Funnel or host-interface listener.
 
 HTTP MCP checks request listing and approval/denial against the current, untagged, non-revoked portal owner inside the registry write transaction. Any person add, update, removal, restoration or grant change targeting the current owner or a portal admin requires that same owner, checked under the lock before mutation; a revoked owner cannot restore itself remotely. Refusals use `access_request_owner_required`. Local CLI and stdio MCP remain trusted recovery paths, and ordinary-person restoration is unchanged.
 
@@ -116,7 +116,10 @@ URLs, fragments and hosts outside the gateway's observed MagicDNS tailnet suffix
 are refused. Registration requires a `<node>.<tailnet>.ts.net` name; custom
 control-server domains outside `.ts.net` are not supported by `--remote`. Port
 443 is the default. The hostname must match a peer DNSName in this gateway
-node's LocalAPI status (case-insensitive, ignoring a trailing dot). Traffic and
+node's LocalAPI status (case-insensitive, ignoring a trailing dot), checked at
+route activation, for each new upstream connection and on health probes. The
+tag and tailnet suffix are rechecked on every request, including requests that
+reuse an upstream connection. Traffic and
 health checks dial that peer's Tailscale IP directly through the gateway netstack,
 only while `UseNetstackForIP` confirms it is a peer. They never use the host
 resolver or host network; a missing or disappearing peer fails closed with
@@ -202,8 +205,8 @@ See [gateway invitation recovery](people.md) for the full procedure.
 The `gateway_node_identity_changed` warning persists after completed recovery:
 retired NodeIDs remain in the ownership ledger as history. It does not mean
 current invitations still target an old device. Check `tslink people list --json`
-for live invitations on retired nodes; `target_gone` history needs no further
-replacement.
+for live gateway invitations whose `node_id` differs from `portal.gateway.node_id`
+in `tslink status --json`; `target_gone` history needs no further replacement.
 Never copy an enrollment marker between nodes or assume a configured flag proves
 persistence. Route add/remove, grants, owner/admin edits and port-range changes
 keep the shared node running. Gateway enable/disable, hostname/tag changes, and
@@ -220,8 +223,8 @@ and a stable reason. The drop counter includes events omitted by the rate limit.
 Gateway registries use schema 3, which older readers refuse. Before downgrading,
 stop the new daemon, back up the registry and portal state, and intentionally
 remove/replace portal-only apps and remote apps, remove all routes, then turn off
-gateway mode using this version. Restore a separately backed-up compatible
-registry if older readers also lack newer people/invite fields. Gateway invite
-history has `target_kind` and must not be silently discarded. Confirm all guest
-network shares and authorization expectations before starting an older daemon;
-swapping just the CLI is not a downgrade procedure.
+gateway mode using this version. Recorded gateway invites keep the registry at
+schema 3 even with gateway mode off; if any remain, restore a registry backup
+taken before gateway mode was enabled (people and invite changes made since
+then are lost). Confirm all guest network shares and authorization expectations
+before starting an older daemon. Replacing only the binary is not a downgrade.

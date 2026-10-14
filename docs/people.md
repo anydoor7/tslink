@@ -124,8 +124,9 @@ the new device invitation; an old accepted share cannot transfer to a new node.
 Doctor's `gateway_node_identity_changed` warning persists after completed
 recovery because the ownership ledger retains retired NodeIDs. It records a
 past identity change, not proof that current invitations are stale. Check
-`tslink people list --json` for live invitations still targeting a retired node;
-recovered `target_gone` history does not need another replacement.
+`tslink people list --json` for live gateway invitations whose `node_id` differs
+from `portal.gateway.node_id` in `tslink status --json`; recovered `target_gone`
+history does not need another replacement.
 
 The message, phone guide and ordinary QR point to the gateway dashboard. An
 explicit bearer invitation QR uses `--invite --print-links --qr-invite @gateway`
