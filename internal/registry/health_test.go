@@ -10,8 +10,23 @@ import (
 func TestHealthDefaultsAndRoundTrip(t *testing.T) {
 	h := HealthConfig{}.Effective()
 	timeout, interval := h.Durations()
-	if h.Path != "/" || h.StatusMin != 200 || h.StatusMax != 299 || timeout != 5*time.Second || interval != time.Minute {
+	if h.Path != "/" || h.StatusMin != 200 || h.StatusMax != 399 || timeout != 5*time.Second || interval != time.Minute {
 		t.Fatalf("%+v %s %s", h, timeout, interval)
+	}
+	// One explicit bound keeps its earlier meaning; the other keeps 200 or 299.
+	for _, tc := range []struct {
+		in       HealthConfig
+		min, max int
+	}{
+		{HealthConfig{StatusMax: 401}, 200, 401},
+		{HealthConfig{StatusMin: 200}, 200, 299},
+		{HealthConfig{StatusMin: 204}, 204, 299},
+		{HealthConfig{StatusMin: 200, StatusMax: 299}, 200, 299},
+		{HealthConfig{StatusMin: 300, StatusMax: 399}, 300, 399},
+	} {
+		if got := tc.in.Effective(); got.StatusMin != tc.min || got.StatusMax != tc.max {
+			t.Fatalf("%+v -> %d..%d", tc.in, got.StatusMin, got.StatusMax)
+		}
 	}
 	s := Service{Name: "app", Type: TypeProxy, Target: "http://localhost:3000", Health: &HealthConfig{Path: "/ready", BodyContains: "ready", Interval: "2m"}}
 	if err := ValidateService(s); err != nil {

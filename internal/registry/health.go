@@ -20,9 +20,17 @@ type HealthConfig struct {
 	Interval     string `json:"interval,omitempty"`
 }
 
+// Effective fills defaults at run time; the registry is never rewritten. With
+// no status bound set, any 2xx or 3xx answer is healthy: probes do not follow
+// redirects, and a redirect proves the backend answers and routes. A single
+// explicit bound keeps its pre-0.2.0 meaning, so the other defaults to 200 or
+// 299 as before.
 func (h HealthConfig) Effective() HealthConfig {
 	if h.Path == "" {
 		h.Path = "/"
+	}
+	if h.StatusMin == 0 && h.StatusMax == 0 {
+		h.StatusMin, h.StatusMax = 200, 399
 	}
 	if h.StatusMin == 0 {
 		h.StatusMin = 200

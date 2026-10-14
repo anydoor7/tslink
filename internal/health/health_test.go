@@ -55,8 +55,13 @@ func TestProbeHTTPBoundedNoRedirects(t *testing.T) {
 		http.Redirect(w, r, "/secret", http.StatusFound)
 	}))
 	defer app.Close()
+	// The default range accepts the redirect itself; it is never followed.
 	svc := registry.Service{Type: registry.TypeProxy, Target: app.URL}
-	if code := Probe(context.Background(), svc); code != "health_status_mismatch" || requests != 1 {
+	if code := Probe(context.Background(), svc); code != "" || requests != 1 {
+		t.Fatalf("%s requests=%d", code, requests)
+	}
+	svc.Health = &registry.HealthConfig{StatusMin: 200, StatusMax: 299}
+	if code := Probe(context.Background(), svc); code != "health_status_mismatch" || requests != 2 {
 		t.Fatalf("%s requests=%d", code, requests)
 	}
 	svc.Health = &registry.HealthConfig{StatusMin: 300, StatusMax: 399}

@@ -57,7 +57,7 @@ func TestHealthCycleBusinessProbeExpiryPersistenceAndInterval(t *testing.T) {
 	s.nodes[svc.Name] = &ServiceNode{service: svc, tsnetSrv: &fakeTSNetServer{localClient: lc}}
 	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
 	var probes atomic.Int32
-	probe := func(context.Context, registry.Service) string { probes.Add(1); return "health_status_mismatch" }
+	probe := func(context.Context, registry.Service) string { probes.Add(1); return "health_request_failed" }
 	s.healthCycle(context.Background(), r, now, probe)
 	s.healthCycle(context.Background(), r, now.Add(10*time.Second), probe)
 	if probes.Load() != 1 || localRequests.Load() != 1 {
@@ -187,7 +187,7 @@ func TestHealthTransitionsArriveOnEventsStream(t *testing.T) {
 	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		s.healthCycle(ctx, r, now.Add(time.Duration(i)*time.Minute), func(context.Context, registry.Service) string { return "health_status_mismatch" })
+		s.healthCycle(ctx, r, now.Add(time.Duration(i)*time.Minute), func(context.Context, registry.Service) string { return "health_request_failed" })
 		frame := readMCPEventFrame(t, reader)
 		// Node expiry and app checks publish independently as they finish.
 		for !strings.Contains(frame.Data, `"consecutive_failures":`+fmt.Sprint(i+1)) {

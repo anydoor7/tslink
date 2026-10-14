@@ -125,7 +125,7 @@ func TestWave1CombinedProjections(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	svc := addStatusTestService(t, path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:2283", PreserveHost: true, RequestLimits: registry.RecommendedUploadLimits()})
 	expiry := now.Add(3 * 24 * time.Hour)
-	h := health.Result(health.State{ConsecutiveFailures: 2}, registry.TypeProxy, "health_status_mismatch", now)
+	h := health.Result(health.State{ConsecutiveFailures: 2}, registry.TypeProxy, "health_request_failed", now)
 	snapshot := tsruntime.NewSnapshot(4242, now.Add(-time.Hour), statusRegistryFingerprint(t, path), now, []tsruntime.ServiceState{{Service: svc, RuntimeHost: "photos.tailnet.ts.net", Health: h, NodeKey: health.ExpiryAt(&expiry, "localclient", now, nil), Warnings: []inspect.WarningView{{Code: registry.CodeRequestBodyLimit, Severity: "warning"}}}})
 	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
 		t.Fatal(err)

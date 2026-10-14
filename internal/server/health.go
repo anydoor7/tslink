@@ -213,7 +213,8 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			jobs++
 			go func() {
 				// Enrollment/policy failures still get backend observations.
-				code, attempted := boundedHealthRead(ctx, probeSlots, target.Service.Name, timeout, "health_timeout", func(ctx context.Context) string {
+				probeCtx, status := health.WithResponseStatus(ctx)
+				code, attempted := boundedHealthRead(probeCtx, probeSlots, target.Service.Name, timeout, "health_timeout", func(ctx context.Context) string {
 					ctx = health.WithCanonicalHost(ctx, target.CanonicalHost)
 					if target.Route != nil {
 						if target.Remote != nil {
@@ -227,7 +228,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 				})
 				var h *health.State
 				if attempted {
-					value := health.Result(previous, target.Service.Type, code, now)
+					value := health.ResultOf(previous, target.Service.Type, health.Outcome{Error: code, StatusCode: status.Code()}, now)
 					h = &value
 				}
 				results <- result{target: target, identity: identity, health: h}

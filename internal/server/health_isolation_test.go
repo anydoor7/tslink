@@ -77,7 +77,7 @@ func TestHealthMonitorProgressWhileNotifierRuns(t *testing.T) {
 	var ticks, probes atomic.Int32
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	serverNowFn = func() time.Time { return now.Add(time.Duration(ticks.Add(1)) * time.Minute) }
-	healthProbeFn = func(context.Context, registry.Service) string { probes.Add(1); return "health_status_mismatch" }
+	healthProbeFn = func(context.Context, registry.Service) string { probes.Add(1); return "health_request_failed" }
 	healthCredentialInventoryFn = func(time.Time) credentials.Inventory { return credentials.Inventory{} }
 	healthTickInterval = 5 * time.Millisecond
 	synctest.Test(t, func(t *testing.T) {
@@ -145,7 +145,7 @@ func TestHealthMonitorShutdownJoinBound(t *testing.T) {
 	var ticks atomic.Int32
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	serverNowFn = func() time.Time { return now.Add(time.Duration(ticks.Add(1)) * time.Minute) }
-	healthProbeFn = func(context.Context, registry.Service) string { return "health_status_mismatch" }
+	healthProbeFn = func(context.Context, registry.Service) string { return "health_request_failed" }
 	healthCredentialInventoryFn = func(time.Time) credentials.Inventory { return credentials.Inventory{} }
 	healthTickInterval = 5 * time.Millisecond
 	synctest.Test(t, func(t *testing.T) {
