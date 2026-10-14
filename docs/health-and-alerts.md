@@ -107,7 +107,10 @@ becomes `degraded` without `app_recovered`, which is reserved for `healthy`. A
 success clears the failure count. `health` includes `last_checked`,
 `last_error` (a stable code), `consecutive_failures` and, when the backend
 answered, `status_code` (the HTTP status; omitted when no response arrived) in
-CLI JSON, MCP `status`/`list`, and `/events` state. Response bodies and
+CLI JSON, MCP `status`/`list`, and `/events` state. A check that times out
+after the response headers arrived, for example while the body stalls, keeps
+the status it received before the deadline; a status that would arrive after
+the deadline is dropped. Response bodies and
 redirect targets are never recorded. `doctor` reports an unexpected response as
 `app_probe_unexpected_response` (warning, area `app_probe`; the reduced MCP
 doctor uses area `health`) with `status_code` and a `next` command that changes

@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -39,12 +39,40 @@ func Unchecked(kind string) State { return State{State: Unknown, Kind: kind} }
 type canonicalHostKey struct{}
 type responseStatusKey struct{}
 
-// ResponseStatus receives the HTTP status of a probe's backend response. It is
-// atomic because a timed-out read can still finish after its caller moved on.
-type ResponseStatus struct{ code atomic.Int32 }
+// ResponseStatus receives the HTTP status of a probe's backend response. Only
+// a status observed before the probe's deadline counts: a timed-out read can
+// still finish after its caller moved on, and its late status is dropped.
+type ResponseStatus struct {
+	mu     sync.Mutex
+	code   int
+	frozen bool
+}
 
-// Code returns the observed status, or 0 when no response arrived.
-func (s *ResponseStatus) Code() int { return int(s.code.Load()) }
+// Code returns the status observed so far, or 0 when no response arrived.
+func (s *ResponseStatus) Code() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.code
+}
+
+// Snapshot returns the observed status and ignores every later observation.
+// A caller takes it once the probe has returned or its deadline has passed.
+func (s *ResponseStatus) Snapshot() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frozen = true
+	return s.code
+}
+
+// observe records code unless the probe context has already ended or the
+// caller has taken its snapshot.
+func (s *ResponseStatus) observe(ctx context.Context, code int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.frozen && ctx.Err() == nil {
+		s.code = code
+	}
+}
 
 // WithResponseStatus lets a caller learn what the backend answered while Probe
 // keeps returning only a stable error code.
@@ -143,7 +171,7 @@ func ProbeWithDialer(ctx context.Context, svc registry.Service, dialer Dialer) s
 		}
 		defer resp.Body.Close()
 		if s, ok := ctx.Value(responseStatusKey{}).(*ResponseStatus); ok {
-			s.code.Store(int32(resp.StatusCode))
+			s.observe(ctx, resp.StatusCode)
 		}
 		if resp.StatusCode < c.StatusMin || resp.StatusCode > c.StatusMax {
 			return "health_status_mismatch"
@@ -217,7 +245,9 @@ func Result(previous State, kind, errorCode string, now time.Time) State {
 func ResultOf(previous State, kind string, o Outcome, now time.Time) State {
 	now = now.UTC()
 	r := State{State: Healthy, Kind: kind, LastChecked: &now}
-	if o.Error != "health_timeout" && o.StatusCode >= 100 && o.StatusCode <= 999 {
+	// A timeout keeps a status whose headers arrived before the deadline, as
+	// when a body stalls; ResponseStatus already dropped later ones.
+	if o.StatusCode >= 100 && o.StatusCode <= 999 {
 		r.StatusCode = o.StatusCode
 	}
 	if o.Error == "" {

@@ -199,8 +199,10 @@ func TestUnexpectedResponseClasses(t *testing.T) {
 			t.Fatal(code)
 		}
 	}
-	// A timed-out outcome never carries a late status.
-	if h := ResultOf(State{}, registry.TypeProxy, Outcome{Error: "health_timeout", StatusCode: 200}, time.Now()); h.StatusCode != 0 {
+	// A timeout keeps a status observed before the deadline, as when headers
+	// arrived and the body stalled. ResponseStatus drops late ones
+	// (TestResponseStatusDropsObservationsAfterDeadline).
+	if h := ResultOf(State{}, registry.TypeProxy, Outcome{Error: "health_timeout", StatusCode: 200}, time.Now()); h.StatusCode != 200 || h.LastError != "health_timeout" {
 		t.Fatalf("%+v", h)
 	}
 }
@@ -225,4 +227,39 @@ func TestProbeDefaultAndExplicitStatusRanges(t *testing.T) {
 			t.Fatalf("%s %+v: %q want %q", tc.target, tc.health, code, tc.code)
 		}
 	}
+}
+
+// A status observed before the probe deadline survives the timeout; one that
+// would arrive after the deadline, or after the caller took its snapshot, is
+// dropped. Each order is driven explicitly rather than by timing.
+func TestResponseStatusDropsObservationsAfterDeadline(t *testing.T) {
+	t.Run("before deadline", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		ctx, status := WithResponseStatus(ctx)
+		status.observe(ctx, 200)
+		cancel()
+		if got := status.Snapshot(); got != 200 {
+			t.Fatalf("status observed before the deadline: %d", got)
+		}
+	})
+	t.Run("after deadline", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		ctx, status := WithResponseStatus(ctx)
+		cancel()
+		status.observe(ctx, 200)
+		if got := status.Snapshot(); got != 0 {
+			t.Fatalf("status observed after the deadline kept: %d", got)
+		}
+	})
+	t.Run("after snapshot", func(t *testing.T) {
+		ctx, status := WithResponseStatus(context.Background())
+		status.observe(ctx, 302)
+		if got := status.Snapshot(); got != 302 {
+			t.Fatalf("snapshot %d", got)
+		}
+		status.observe(ctx, 500)
+		if got := status.Snapshot(); got != 302 {
+			t.Fatalf("observation after the snapshot changed it to %d", got)
+		}
+	})
 }

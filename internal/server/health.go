@@ -228,7 +228,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 				})
 				var h *health.State
 				if attempted {
-					value := health.ResultOf(previous, target.Service.Type, health.Outcome{Error: code, StatusCode: status.Code()}, now)
+					value := health.ResultOf(previous, target.Service.Type, health.Outcome{Error: code, StatusCode: status.Snapshot()}, now)
 					h = &value
 				}
 				results <- result{target: target, identity: identity, health: h}

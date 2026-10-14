@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -194,4 +196,71 @@ func TestHealthMonitorShutdownJoinBound(t *testing.T) {
 			t.Fatal("cancellation not journaled", r.State.Events)
 		}
 	})
+}
+
+// A probe whose backend sent its headers and then stalled the body times out
+// with the status it observed before the deadline. A backend that has not
+// answered by the deadline leaves no status. The deadline is the cancellation
+// of the bounded read's parent, so neither order depends on timing.
+func TestHealthTimeoutKeepsOnlyStatusObservedBeforeDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		headersFirst  bool
+		wantStatus    int
+		wantAttempted bool
+	}{{"headers before deadline", true, 200, true}, {"no headers before deadline", false, 0, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.headersFirst {
+					w.Header().Set("Content-Length", "100")
+					w.WriteHeader(http.StatusOK)
+					w.(http.Flusher).Flush()
+				}
+				close(entered)
+				select {
+				case <-release:
+				case <-r.Context().Done():
+				}
+				if !tc.headersFirst {
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+			defer backend.Close()
+			defer close(release)
+			svc := registry.Service{Name: "app", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{BodyContains: "ready", Timeout: "30s"}}
+			parent, deadline := context.WithCancel(context.Background())
+			defer deadline()
+			probeCtx, status := health.WithResponseStatus(parent)
+			// The read stays blocked past the deadline, as a stalled body read does.
+			held := make(chan struct{})
+			defer close(held)
+			type outcome struct {
+				code      string
+				attempted bool
+			}
+			result := make(chan outcome, 1)
+			go func() {
+				code, attempted := boundedHealthRead(probeCtx, newHealthReadPool(), svc.Name, time.Minute, "health_timeout", func(ctx context.Context) string {
+					code := health.Probe(ctx, svc)
+					<-held
+					return code
+				})
+				result <- outcome{code, attempted}
+			}()
+			testwait.Recv(t, entered, "backend entered")
+			if tc.headersFirst {
+				testwait.Until(t, "status observed", func() bool { return status.Code() == 200 })
+			}
+			deadline()
+			got := testwait.Recv(t, result, "bounded read")
+			if got.code != "health_timeout" || got.attempted != tc.wantAttempted {
+				t.Fatalf("outcome %+v", got)
+			}
+			h := health.ResultOf(health.State{}, registry.TypeProxy, health.Outcome{Error: got.code, StatusCode: status.Snapshot()}, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+			if h.LastError != "health_timeout" || h.State != health.Degraded || h.StatusCode != tc.wantStatus {
+				t.Fatalf("state %+v, want status %d", h, tc.wantStatus)
+			}
+		})
+	}
 }

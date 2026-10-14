@@ -1029,7 +1029,7 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 	if svc.Type == registry.TypeProxy {
 		ctx, status := health.WithResponseStatus(health.WithCanonicalHost(context.Background(), result.canonicalHosts[svc.Name]))
 		if code := doctorHTTPProbeFn(ctx, svc); health.UnexpectedResponse(code) {
-			message, evidence := healthMismatchFinding(svc.Name, code, status.Code())
+			message, evidence := healthMismatchFinding(svc.Name, code, status.Snapshot())
 			result.addFinding(inspect.WarningCodeAppProbeUnexpected, svc.Name, "app_probe", message, evidence)
 		} else if code != "" {
 			result.addFinding(inspect.WarningCodeAppProbeFailed, svc.Name, "app_probe", "", map[string]string{"error_code": code})
