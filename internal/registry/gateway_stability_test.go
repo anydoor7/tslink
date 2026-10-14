@@ -1,7 +1,9 @@
 package registry
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -32,5 +34,15 @@ func TestGatewayRouteReAddKeepsPort(t *testing.T) {
 		if s.Name == "b" && s.PortalRoute.Port != 8444 {
 			t.Fatalf("b moved from 8444 to %d", s.PortalRoute.Port)
 		}
+	}
+}
+
+func TestGatewayServiceFieldsFollowExistingFields(t *testing.T) {
+	data, err := json.Marshal(Service{Name: "app", Type: TypeProxy, Target: "http://localhost:9", PortalOnly: true, PortalRoute: &PortalRoute{Port: 8443}, Upstream: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Index(data, []byte(`"name"`)) > bytes.Index(data, []byte(`"portal_route"`)) || bytes.Index(data, []byte(`"created_at"`)) > bytes.Index(data, []byte(`"upstream"`)) {
+		t.Fatalf("new fields precede existing fields: %s", data)
 	}
 }

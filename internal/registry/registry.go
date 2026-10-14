@@ -491,13 +491,10 @@ var (
 )
 
 type Service struct {
-	PortalRoute       *PortalRoute `json:"portal_route,omitempty"`
-	PortalOnly        bool         `json:"portal_only,omitempty"`
-	Upstream          string       `json:"upstream,omitempty"`
-	RestartGeneration uint64       `json:"restart_generation,omitempty"`
-	Name              string       `json:"name"`
-	Type              string       `json:"type"`
-	Target            string       `json:"target,omitempty"`
+	RestartGeneration uint64 `json:"restart_generation,omitempty"`
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	Target            string `json:"target,omitempty"`
 	// PreserveHost forwards the node's canonical external name as Host instead of the target's host.
 	// Absent or false retains the behaviour of existing services and templates.
 	AccessLogPathMode string        `json:"access_log_path_mode,omitempty"`
@@ -525,6 +522,10 @@ type Service struct {
 	CreatedAt       time.Time  `json:"created_at"`
 
 	RequestLimits *RequestLimits `json:"request_limits,omitempty"`
+
+	PortalRoute *PortalRoute `json:"portal_route,omitempty"`
+	PortalOnly  bool         `json:"portal_only,omitempty"`
+	Upstream    string       `json:"upstream,omitempty"`
 
 	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
 	// whose stored funnel_expires_at is absent or null. In memory a nil

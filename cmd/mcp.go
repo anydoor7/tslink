@@ -537,6 +537,9 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "add",
 		Description: "Setting funnel true on this tool publishes the service to the entire public internet, so ask the user before doing that; otherwise it writes a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Without allow, every member of the user's tailnet can reach an HTTP service. Use this instead of share when the user wants a named, configured service rather than a one-shot share; it installs the background service when absent unless no_daemon_install is true. Installation announcements go to stderr. After setup it returns current URL/enrollment evidence without an additional URL wait; use url to poll pending endpoints.",
 		InputSchema: objectSchema(map[string]any{
+			"portal_only":       map[string]any{"type": "boolean", "description": "Create no app node; assign a route on the enabled gateway. App becomes people-scoped."},
+			"remote":            map[string]any{"type": "string", "description": "HTTPS MagicDNS upstream in the gateway tailnet. Replaces target for type proxy and implies portal_only; requires an observed tagged gateway."},
+			"portal_port":       map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "Stable port for portal_only or remote."},
 			"health":            healthInputSchema(),
 			"request_limits":    mcpRequestLimitsInputSchema,
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
@@ -706,51 +709,56 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls. Reduced single-app mutations call the shared
 // registry operations; their refusals also stay in the domain layer.
 type mcpActions struct {
-	extend         func(context.Context, extendArguments) (any, error)
-	accessLog      func(accessLogArguments) (accesslog.Result, error)
-	accessSummary  func(accessLogArguments) (accesslog.Summary, error)
-	portalChange   func(context.Context, portalArguments, bool) (any, error)
-	session        *mcpscope.Session
-	nowFn          func() time.Time
-	audit          func(context.Context, mcpaudit.Entry) error
-	auditRead      func() ([]mcpaudit.Entry, error)
-	registryPath   string
-	personApp      func(context.Context, string, string, string, bool) (any, error)
-	appRestart     func(context.Context, string) (any, error)
-	guest          func(context.Context, string, guestArguments) (any, error)
-	peopleChange   func(context.Context, peopleArguments, bool) (any, error)
-	peopleList     func() (any, error)
-	peopleRemove   func(context.Context, string, map[string]string) (any, error)
-	share          func(context.Context, shareRequest) (ShareResult, error)
-	add            func(context.Context, AddParams, bool) (any, error)
-	list           func(context.Context) (any, error)
-	unshare        func(context.Context, string) (any, error)
-	status         func(context.Context) (any, error)
-	url            func(context.Context, string, time.Duration) (any, error)
-	tagsList       func() (any, error)
-	tagsSet        func(context.Context, string, string) (any, error)
-	accessExplain  func(string) (any, error)
-	doctor         func(context.Context, bool) (any, error)
-	logs           func(mcpLogsArguments) (any, error)
-	inviteUser     func(context.Context, string, string, bool) (any, error)
-	inviteDevice   func(context.Context, mcpInviteDeviceArguments) (any, error)
-	inviteList     func(context.Context, bool) (any, error)
-	inviteRevoke   func(context.Context, string, string) (any, error)
-	inviteResend   func(context.Context, string, string) (any, error)
-	appsDetect     func(context.Context) (any, error)
-	recipeList     func() (any, error)
-	recipeApply    func(context.Context, recipeRequest, bool) (any, error)
-	templateList   func() (any, error)
-	templatePlan   func(string) (any, error)
-	templateApply  func(context.Context, string, bool) (any, error)
-	requestsList   func(context.Context) (any, error)
-	requestEvents  func() ([]registry.RequestEvent, error)
-	requestsDecide func(context.Context, requestDecisionArguments, bool) (any, error)
-	portalCheck    func(context.Context) error
+	portalRouteChange func(context.Context, portalRouteArguments, bool) (any, error)
+	portalRouteList   func() (any, error)
+	extend            func(context.Context, extendArguments) (any, error)
+	accessLog         func(accessLogArguments) (accesslog.Result, error)
+	accessSummary     func(accessLogArguments) (accesslog.Summary, error)
+	portalChange      func(context.Context, portalArguments, bool) (any, error)
+	session           *mcpscope.Session
+	nowFn             func() time.Time
+	audit             func(context.Context, mcpaudit.Entry) error
+	auditRead         func() ([]mcpaudit.Entry, error)
+	registryPath      string
+	personApp         func(context.Context, string, string, string, bool) (any, error)
+	appRestart        func(context.Context, string) (any, error)
+	guest             func(context.Context, string, guestArguments) (any, error)
+	peopleChange      func(context.Context, peopleArguments, bool) (any, error)
+	peopleList        func() (any, error)
+	peopleRemove      func(context.Context, string, map[string]string) (any, error)
+	share             func(context.Context, shareRequest) (ShareResult, error)
+	add               func(context.Context, AddParams, bool) (any, error)
+	list              func(context.Context) (any, error)
+	unshare           func(context.Context, string) (any, error)
+	status            func(context.Context) (any, error)
+	url               func(context.Context, string, time.Duration) (any, error)
+	tagsList          func() (any, error)
+	tagsSet           func(context.Context, string, string) (any, error)
+	accessExplain     func(string) (any, error)
+	doctor            func(context.Context, bool) (any, error)
+	logs              func(mcpLogsArguments) (any, error)
+	inviteUser        func(context.Context, string, string, bool) (any, error)
+	inviteDevice      func(context.Context, mcpInviteDeviceArguments) (any, error)
+	inviteList        func(context.Context, bool) (any, error)
+	inviteRevoke      func(context.Context, string, string) (any, error)
+	inviteResend      func(context.Context, string, string) (any, error)
+	appsDetect        func(context.Context) (any, error)
+	recipeList        func() (any, error)
+	recipeApply       func(context.Context, recipeRequest, bool) (any, error)
+	templateList      func() (any, error)
+	templatePlan      func(string) (any, error)
+	templateApply     func(context.Context, string, bool) (any, error)
+	requestsList      func(context.Context) (any, error)
+	requestEvents     func() ([]registry.RequestEvent, error)
+	requestsDecide    func(context.Context, requestDecisionArguments, bool) (any, error)
+	portalCheck       func(context.Context) error
 }
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
 type mcpAddArguments struct {
+	PortalOnly      bool                    `json:"portal_only,omitempty"`
+	Remote          string                  `json:"remote,omitempty"`
+	PortalPort      int                     `json:"portal_port,omitempty"`
 	RequestLimits   *registry.RequestLimits `json:"request_limits,omitempty"`
 	Health          *registry.HealthConfig  `json:"health,omitempty"`
 	Name            string                  `json:"name"`
@@ -788,6 +796,7 @@ type mcpInviteDeviceArguments struct {
 // --funnel-ttl does.
 func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	params := AddParams{
+		PortalOnly: args.PortalOnly, PortalPort: args.PortalPort, Remote: args.Remote,
 		Health:          args.Health,
 		RequestLimits:   args.RequestLimits,
 		Name:            args.Name,
@@ -806,9 +815,12 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 		params.FunnelTTL = *args.FunnelTTL
 		params.FunnelTTLSet = true
 	}
+	if args.Remote != "" && (args.Type != registry.TypeProxy || args.Target != "") {
+		return AddParams{}, false, output.ErrUsage("remote requires type proxy and replaces target")
+	}
 	switch args.Type {
 	case registry.TypeProxy:
-		if args.Target == "" {
+		if args.Target == "" && args.Remote == "" {
 			return AddParams{}, false, output.ErrUsage("target is required for proxy type")
 		}
 		if args.Dir != "" {
@@ -967,6 +979,10 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return extendLifetimeContext(ctx, paths.Registry, args, durationClock())
 		},
 		portalCheck: func(ctx context.Context) error { return requireRequestOwner(ctx, paths.Registry) },
+		portalRouteChange: func(ctx context.Context, args portalRouteArguments, remove bool) (any, error) {
+			return changePortalRoute(ctx, paths, args, remove)
+		},
+		portalRouteList: func() (any, error) { return portalRoutes(paths) },
 		portalChange: func(ctx context.Context, args portalArguments, enable bool) (any, error) {
 			return changePortalContext(ctx, paths, args, enable)
 		},
@@ -1742,7 +1758,27 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"owner", args.Owner}); refusal != nil {
 			return refusal, nil
 		}
+		var present map[string]json.RawMessage
+		_ = json.Unmarshal(arguments, &present)
+		_, args.GatewaySet = present["gateway"]
+		_, args.GatewayPortsSet = present["gateway_ports"]
+		_, args.GatewayTagSet = present["gateway_tag"]
 		data, err = actions.portalChange(ctx, args, true)
+	case "portal_route_add", "portal_route_remove":
+		var args portalRouteArguments
+		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"app", args.App}); refusal != nil {
+			return refusal, nil
+		}
+		if name == "portal_route_remove" && (args.Port != 0 || args.AllowCrossOrigin) {
+			return makeMCPToolErrorResult(output.ErrUsage("remove does not accept route options")), nil
+		}
+		data, err = actions.portalRouteChange(ctx, args, name == "portal_route_remove")
+	case "portal_route_list":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.portalRouteList()
 	case "portal_disable":
 		var args struct{}
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {

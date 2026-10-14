@@ -292,3 +292,16 @@ func TestGatewayPeerIdentityByRemoteAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayDashboardOfflineTime(t *testing.T) {
+	f := newGatewayFixture(t, nil)
+	f.waitRoute(t, "photos", "running")
+	f.s.portalRun.routesMu.Lock()
+	route := f.s.portalRun.routes["photos"]
+	f.s.portalRun.routesMu.Unlock()
+	f.s.observeGatewayUpstream(f.s.portalRun, route, false)
+	code, body, _ := gatewayGet(t, f.client(t), "443", "/", nil)
+	if code != 200 || !strings.Contains(body, "Offline since 2 Jan 2030, 03:04 UTC") {
+		t.Fatalf("offline time not formatted: %d %s", code, body)
+	}
+}

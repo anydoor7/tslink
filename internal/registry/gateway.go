@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	"fmt"
-	"net/url"
 )
 
 type GatewayPorts struct {
@@ -70,9 +69,11 @@ func validateGatewayService(svc Service) error {
 		return gatewayError("portal_upstream_invalid", "upstream must be host or tailnet")
 	}
 	if svc.Upstream == "tailnet" {
-		u, err := url.Parse(svc.Target)
-		if !svc.PortalOnly || svc.Type != TypeProxy || err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		if !svc.PortalOnly || svc.Type != TypeProxy {
 			return gatewayError("portal_upstream_invalid", "tailnet upstream requires a portal-only HTTPS proxy")
+		}
+		if err := ValidateRemoteTarget(svc.Target); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -176,10 +177,19 @@ func AllocateGatewayPort(reg *Registry, app string, requested int) (int, error) 
 }
 
 func SetPortalRoute(ctx context.Context, path, app string, route *PortalRoute) error {
+	return SetPortalRouteAuthorized(ctx, path, app, route, nil)
+}
+
+func SetPortalRouteAuthorized(ctx context.Context, path, app string, route *PortalRoute, authorize func(*Registry) error) error {
 	return withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if authorize != nil {
+			if err := authorize(reg); err != nil {
+				return err
+			}
 		}
 		for i := range reg.Services {
 			svc := &reg.Services[i]

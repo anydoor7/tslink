@@ -154,7 +154,12 @@ func TestGatewayLegacyRoundTrip(t *testing.T) {
 func TestGatewayStrictDecode(t *testing.T) {
 	path, _ := gatewayRegistry(t)
 	data, _ := os.ReadFile(path)
-	data = bytes.Replace(data, []byte(`"enabled": true`), []byte(`"unknown_gateway": true, "enabled": true`), 1)
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["portal"].(map[string]any)["gateway"].(map[string]any)["unknown_gateway"] = true
+	data, _ = json.Marshal(doc)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}

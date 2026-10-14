@@ -555,6 +555,13 @@ func (s statusRead) getPollableStatus(ctx context.Context, pidPath, regPath, sna
 
 	portalUp := r.DaemonRunning && r.Portal.Enabled && r.Portal.State == "running" && r.Portal.URL != ""
 	if portalUp {
+		for _, svc := range r.Services {
+			current, present := currentByName[svc.Name]
+			if route, ok := gatewayRouteView(r.Portal, svc.Name); present && current.PortalOnly && current.PortalRoute != nil && ok && route.Port == current.PortalRoute.Port && route.State == "running" && route.URL != "" {
+				up[svc.Name] = struct{}{}
+			}
+		}
+		r.AuthorizedServiceCount = len(up)
 		r.NodeAuthorized, r.Authenticated = true, true
 		r.AuthStatus = authStatusAuthenticated
 	}

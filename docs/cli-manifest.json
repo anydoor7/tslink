@@ -730,6 +730,12 @@
           "usage": "Use an app recipe; preview by default, apply with --yes"
         },
         {
+          "name": "remote",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTPS MagicDNS upstream in the gateway tailnet; implies --portal-only"
+        },
+        {
           "name": "request-header-timeout",
           "type": "string",
           "scope": "local",
@@ -2794,19 +2800,19 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Use one persistent portal node for routed apps"
+          "usage": "Use a persistent gateway; --gateway=false removes gateway mode when no routes remain"
         },
         {
           "name": "gateway-ports",
           "type": "string",
           "scope": "local",
-          "usage": "Gateway TLS port range (default 8443-8499; requires --gateway)"
+          "usage": "Gateway TLS port range (initial default 8443-8499; requires --gateway)"
         },
         {
           "name": "gateway-tag",
           "type": "string",
           "scope": "local",
-          "usage": "Gateway tag on the credentialed path (requires --gateway)"
+          "usage": "Gateway tag on the credentialed path (requires --gateway); empty restores the default tag"
         },
         {
           "name": "hostname",
@@ -3890,6 +3896,10 @@
       "exit_code": 4,
       "description": "Funnel requires a proxy service"
     },
+    "gateway_ephemeral_refused": {
+      "exit_code": 4,
+      "description": "gateway persistent enrollment is not proven"
+    },
     "gateway_ports_invalid": {
       "exit_code": 2,
       "description": "gateway port range must be within 1-65535"
@@ -3897,6 +3907,10 @@
     "gateway_required": {
       "exit_code": 2,
       "description": "enable portal gateway mode before assigning routes"
+    },
+    "gateway_tag_requires_credentials": {
+      "exit_code": 2,
+      "description": "gateway tags require a credentialed enrollment"
     },
     "internal_error": {
       "exit_code": 1,
@@ -4137,6 +4151,10 @@
     "registry_unavailable": {
       "exit_code": 1,
       "description": "access denied because current registry state cannot be read or expiry persisted"
+    },
+    "remote_upstream_outside_tailnet": {
+      "exit_code": 2,
+      "description": "remote upstream is outside the gateway tailnet suffix"
     },
     "runtime_snapshot_missing": {
       "exit_code": 1,

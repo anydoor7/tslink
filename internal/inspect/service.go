@@ -179,6 +179,9 @@ func exposureFor(svc registry.Service) ExposureView {
 }
 
 func allowSummary(svc registry.Service) SummaryView {
+	if svc.PeopleScoped {
+		return redactedEntriesSummary("people", svc.AllowedUsers)
+	}
 	if len(svc.AllowedUsers) > 0 {
 		return redactedEntriesSummary("restricted", svc.AllowedUsers)
 	}

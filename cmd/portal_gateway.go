@@ -84,7 +84,7 @@ func diagnoseGateway(result *DoctorResult) {
 	if g.IdentityChanged {
 		result.addFinding("gateway_node_identity_changed", "", "portal", "Gateway NodeID changed; accepted shares still target the previous device.", nil)
 	}
-	if result.Portal.State == "running" && !g.Persistent {
+	if (result.Portal.State == "running" || result.Portal.Error == "gateway_ephemeral_refused") && !g.Persistent {
 		result.addFinding("gateway_ephemeral_refused", "", "portal", "Gateway must use a persistent node.", nil)
 	}
 	for _, route := range g.Routes {
@@ -97,22 +97,48 @@ func diagnoseGateway(result *DoctorResult) {
 	}
 }
 
-func parseGatewayArguments(args portalArguments) (*registry.GatewayConfig, error) {
-	if !args.Gateway {
-		if args.GatewayPorts != "" || args.GatewayTag != "" {
-			return nil, registry.CodedError{Code: "gateway_required", Message: "gateway options require --gateway"}
-		}
-		return nil, nil
+func parseGatewayArguments(args portalArguments, prior ...*registry.GatewayConfig) (*registry.GatewayConfig, error) {
+	if !args.Gateway && (args.GatewayPortsSet || args.GatewayTagSet || args.GatewayPorts != "" || args.GatewayTag != "") {
+		return nil, registry.CodedError{Code: "gateway_required", Message: "gateway options require --gateway"}
 	}
-	g := &registry.GatewayConfig{Enabled: true, Ports: registry.DefaultGatewayPorts(), Tag: args.GatewayTag}
-	if args.GatewayPorts != "" {
-		from, to, ok := strings.Cut(args.GatewayPorts, "-")
-		var e1, e2 error
-		g.Ports.From, e1 = strconv.Atoi(from)
-		g.Ports.To, e2 = strconv.Atoi(to)
-		if !ok || e1 != nil || e2 != nil {
-			return nil, registry.CodedError{Code: "gateway_ports_invalid", Message: "use a range such as 8443-8499"}
+	var g *registry.GatewayConfig
+	if len(prior) > 0 && prior[0] != nil {
+		copy := *prior[0]
+		g = &copy
+	}
+	if args.GatewaySet && !args.Gateway {
+		if args.GatewayPorts != "" || args.GatewayTag != "" {
+			return nil, registry.CodedError{Code: "gateway_required", Message: "gateway options require gateway mode"}
 		}
+		return nil, nil // final registry validation refuses this while routes exist
+	}
+	if args.Gateway {
+		if g == nil {
+			g = &registry.GatewayConfig{Ports: registry.DefaultGatewayPorts()}
+		}
+		g.Enabled = true
+	}
+	if g == nil || !g.Enabled {
+		if args.GatewayPorts != "" || args.GatewayTag != "" || args.GatewayPortsSet || args.GatewayTagSet {
+			return nil, registry.CodedError{Code: "gateway_required", Message: "gateway options require gateway mode"}
+		}
+		return g, nil
+	}
+	if args.GatewayPortsSet || args.GatewayPorts != "" {
+		if args.GatewayPorts == "" {
+			g.Ports = registry.DefaultGatewayPorts()
+		} else {
+			from, to, ok := strings.Cut(args.GatewayPorts, "-")
+			var e1, e2 error
+			g.Ports.From, e1 = strconv.Atoi(from)
+			g.Ports.To, e2 = strconv.Atoi(to)
+			if !ok || e1 != nil || e2 != nil {
+				return nil, registry.CodedError{Code: "gateway_ports_invalid", Message: "use a range such as 8443-8499"}
+			}
+		}
+	}
+	if args.GatewayTagSet || args.GatewayTag != "" {
+		g.Tag = args.GatewayTag
 	}
 	return g, registry.ValidateGatewayConfig(g)
 }

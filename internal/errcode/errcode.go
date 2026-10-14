@@ -56,6 +56,7 @@ type Code struct {
 }
 
 var table = []Code{
+	{"remote_upstream_outside_tailnet", ExitUsage, Service, "remote upstream is outside the gateway tailnet suffix"},
 	{"gateway_tag_requires_credentials", ExitUsage, Command, "gateway tags require a credentialed enrollment"},
 	{"gateway_ephemeral_refused", ExitConflict, Command, "gateway persistent enrollment is not proven"},
 	{"gateway_ports_invalid", ExitUsage, Command, "gateway port range must be within 1-65535"},
