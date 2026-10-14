@@ -35,7 +35,7 @@ func gatewayDropPeople(t *testing.T, path string) {
 	}
 }
 
-// Survivor M04: no people + empty allow must still deny a known visitor.
+// no people + empty allow must still deny a known visitor.
 func TestGatewayNoPeopleKnownVisitorDenied(t *testing.T) {
 	f := newGatewayFixture(t, nil)
 	f.waitRoute(t, "photos", "running")
@@ -68,7 +68,7 @@ func TestGatewayNoPeopleKnownVisitorDenied(t *testing.T) {
 	}
 }
 
-// Survivor M29: X-Forwarded-Host must come from the route authority, not the client Host.
+// X-Forwarded-Host must come from the route authority, not the client Host.
 func TestGatewayForwardedHostIgnoresClientHost(t *testing.T) {
 	f := newGatewayFixture(t, nil)
 	f.waitRoute(t, "photos", "running")
@@ -85,7 +85,7 @@ func TestGatewayForwardedHostIgnoresClientHost(t *testing.T) {
 	}
 }
 
-// Survivors M30/M31: absolute URLs that are not the upstream origin stay unchanged.
+// absolute URLs that are not the upstream origin stay unchanged.
 func TestGatewayForeignLocationUntouched(t *testing.T) {
 	f := newGatewayFixture(t, nil)
 	f.waitRoute(t, "photos", "running")
@@ -106,7 +106,7 @@ func TestGatewayForeignLocationUntouched(t *testing.T) {
 	}
 }
 
-// Survivor M18: the per-route opt-out must let cross-origin requests through.
+// the per-route opt-out must let cross-origin requests through.
 func TestGatewayCrossOriginOptOut(t *testing.T) {
 	f := newGatewayFixture(t, nil)
 	f.waitRoute(t, "photos", "running")
@@ -123,7 +123,7 @@ func TestGatewayCrossOriginOptOut(t *testing.T) {
 	}
 }
 
-// Survivors M08/M09: dropped connections are logged once per second with conn_gate_drop.
+// dropped connections are logged once per second with conn_gate_drop.
 func TestGatewayConnGateDropLoggedAndRateLimited(t *testing.T) {
 	f := newGatewayFixture(t, nil)
 	f.waitRoute(t, "photos", "running")

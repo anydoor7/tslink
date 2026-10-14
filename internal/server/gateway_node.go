@@ -238,7 +238,7 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 	run.routesMu.Lock()
 	r.dialer, r.remote = dialer, remote
 	if remote != nil {
-		r.state.HostLabel = "remote host"
+		r.state.HostLabel = remote.hostLabel()
 	}
 	run.routesMu.Unlock()
 	host := canonicalHostFor(run.node.tsnetSrv, run.runtimeHost)

@@ -289,7 +289,7 @@ func sanitize(e Event) Event {
 		}
 	}
 	switch e.Reason {
-	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_cancelled":
+	case "", "acl", "people", "expired", "limits", "preserve_host_unavailable", "backend_unavailable", "granted", "owner", "admin", "revoked", "no_grant", "whois_failed", "registry_unavailable", "cross_origin_blocked", "upstream_down", "conn_gate_drop", "route_changed", "client_cancelled", "remote_upstream_requires_tag", "remote_upstream_outside_tailnet", "remote_upstream_unavailable":
 	default:
 		e.Reason = "unavailable"
 	}

@@ -79,3 +79,15 @@ func (s *Server) remoteGatewayUpstream(run *portalRun, svc registry.Service) *ga
 		}
 	}}
 }
+
+func (d *gatewayRemoteUpstream) hostLabel() string {
+	u, err := url.Parse(d.target)
+	if err != nil {
+		return "remote host"
+	}
+	label, _, _ := strings.Cut(u.Hostname(), ".")
+	if label == "" {
+		return "remote host"
+	}
+	return label
+}
