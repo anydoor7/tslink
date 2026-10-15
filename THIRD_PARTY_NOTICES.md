@@ -56,20 +56,20 @@ Linked third-party modules: 55
 | `github.com/zalando/go-keyring` | v0.2.8 | MIT | `LICENSE`, `Linked source copyright and license headers`, `internal/shellescape/LICENSE` |
 | `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
 | `go4.org/netipx` | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/crypto` | v0.58.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/exp` | v0.0.0-20260908205506-85c1c2202aba | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/net` | v0.60.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/oauth2` | v0.37.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/sync` | v0.23.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/sys` | v0.48.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/term` | v0.46.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/text` | v0.42.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/sync` | v0.24.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/sys` | v0.49.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/term` | v0.47.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/text` | v0.43.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/time` | v0.16.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.zx2c4.com/wireguard/windows` | v1.0.1 | MIT | `COPYING`, `Linked source copyright and license headers` |
 | `gvisor.dev/gvisor` | v0.0.0-20260915211658-a6f909f08a72 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
 | `tailscale.com` | v1.104.1 | BSD-3-Clause | `Embedded HTMX WebSocket license`, `Embedded HTMX license`, `LICENSE`, `Linked source copyright and license headers` |
-| `tailscale.com/client/tailscale/v2` | v2.11.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `tailscale.com/client/tailscale/v2` | v2.12.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 
 ## Included License And Notice Text
 
@@ -4835,10 +4835,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/crypto` v0.57.0
+### `golang.org/x/crypto` v0.58.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/crypto@v0.57.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/crypto@v0.58.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -4905,6 +4905,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 
 // Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2026 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 ~~~~
@@ -5103,10 +5107,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/sync` v0.23.0
+### `golang.org/x/sync` v0.24.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/sync@v0.23.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/sync@v0.24.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5149,10 +5153,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/sys` v0.48.0
+### `golang.org/x/sys` v0.49.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/sys@v0.48.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/sys@v0.49.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5279,10 +5283,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/term` v0.46.0
+### `golang.org/x/term` v0.47.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/term@v0.46.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/term@v0.47.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -5337,10 +5341,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/text` v0.42.0
+### `golang.org/x/text` v0.43.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/text@v0.42.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/text@v0.43.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
@@ -6136,10 +6140,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Package licenses provides utilities for working with open source licenses.
 ~~~~
 
-### `tailscale.com/client/tailscale/v2` v2.11.0
+### `tailscale.com/client/tailscale/v2` v2.12.0
 
 - Module-root license: MIT (nested and embedded components may differ)
-- Evidence source: `tailscale.com/client/tailscale/v2@v2.11.0` from the resolved Go module graph
+- Evidence source: `tailscale.com/client/tailscale/v2@v2.12.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
