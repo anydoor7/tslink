@@ -7,6 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center"><strong>Private addresses for your apps, on your Tailscale network.</strong></p>
 <p align="center">Open them from your own devices. Share one with a person or a link, until a date you pick.</p>
+<p align="center">Docs and guides: <a href="https://tslink.md">tslink.md</a></p>
 <p align="center"><strong>English</strong> · <a href="docs/README.zh-CN.md">简体中文</a> · <a href="docs/README.ja.md">日本語</a> · <a href="docs/README.ko.md">한국어</a> · <a href="docs/README.es.md">Español</a> · <a href="docs/INDEX.md#translated-homepages">More languages</a></p>
 
 ```sh
