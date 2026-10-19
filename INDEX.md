@@ -11,3 +11,6 @@
 - [glama.json](glama.json): Glama directory maintainer claim for the listing at glama.ai/mcp/servers/anydoor7/tslink.
 - [server.json](server.json): MCP Registry preparation metadata; source-only installation is not publishable through the documented package types.
 - [Scoped third-party source](third_party/INDEX.md): pinned local dependency repairs and provenance.
+- [Agent skills](skills/INDEX.md): private preview workflow shared with the Claude Code plugin.
+- [Claude Code plugin](.claude-plugin/INDEX.md): plugin manifest and marketplace catalog.
+- [Coding agent integrations](docs/agent-integrations.md): setup, enrollment and isolated plugin validation.

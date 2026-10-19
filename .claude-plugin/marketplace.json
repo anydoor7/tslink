@@ -1,0 +1,14 @@
+{
+  "name": "tslink",
+  "description": "TSLink integration for private local app previews.",
+  "owner": {
+    "name": "anydoor7"
+  },
+  "plugins": [
+    {
+      "name": "tslink",
+      "source": "./",
+      "description": "Share a running dev server privately with TSLink."
+    }
+  ]
+}

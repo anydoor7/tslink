@@ -2,7 +2,7 @@
 
 TSLink speaks MCP over two transports. Both serve the same tool registry, so a
 client written against either works against the other. An owner session lists
-44 tools and scoped roles list fewer; the live `tools/list` is authoritative.
+48 tools and scoped roles list fewer; the live `tools/list` is authoritative.
 
 | | `tslink mcp` | `tslink serve --mcp` |
 |---|---|---|
@@ -140,6 +140,7 @@ Daemon lifecycle, install, login and logout, and configuration stay CLI-only.
 Refused calls return `isError: true` with a JSON failure object (`code`,
 `message`, `next`, optional `data`) as one text item and no
 `structuredContent`. Invalid arguments return `usage_error` tool results.
+Every tool has a human-readable `title` at the top level and in `annotations`.
 Every tool declares `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint`. `share`, `add`, and `template_apply` add `daemon_installed`
 (`manager`, `path`, `undo`) to a successful result if they installed the daemon;

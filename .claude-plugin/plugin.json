@@ -1,0 +1,19 @@
+{
+  "name": "tslink",
+  "description": "Private HTTPS previews for local apps with TSLink.",
+  "author": {
+    "name": "anydoor7"
+  },
+  "homepage": "https://tslink.md",
+  "repository": "https://github.com/anydoor7/tslink",
+  "privacyPolicyUrl": "https://github.com/anydoor7/tslink/blob/main/README.md#privacy-policy",
+  "supportUrl": "https://github.com/anydoor7/tslink/issues",
+  "documentationUrl": "https://github.com/anydoor7/tslink/blob/main/docs/agent-integrations.md",
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "tslink": {
+      "command": "tslink",
+      "args": ["mcp"]
+    }
+  }
+}

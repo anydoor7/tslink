@@ -65,11 +65,38 @@ var mcpWantHints = map[string][4]bool{
 	"template_apply": {false, false, true, true},
 }
 
-// TestMCPToolsDeclareEveryBehaviourHint is A3-6: no tool carried annotations,
-// so a client applied the specification's defaults to all nineteen -- every
-// read-only tool looked destructive and open-world, and nothing marked unshare
-// apart from list. Every tool now states all four hints explicitly, over the
-// protocol a client reads.
+// Check the serialized registry so titles and explicit safety hints reach
+// clients, including tools appended by other files during initialization.
+func TestMCPToolsDeclareTitlesAndSafetyHints(t *testing.T) {
+	stdout := runMCPSession(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`), fakeMCPActions())
+	frame := mcpFrameByID(t, decodeMCPResponses(t, stdout), float64(2))
+	result, _ := frame["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	if len(tools) == 0 || len(tools) != len(mcpToolDefinitions) {
+		t.Fatalf("tools/list returned %d tools, registry has %d", len(tools), len(mcpToolDefinitions))
+	}
+	for _, raw := range tools {
+		tool := raw.(map[string]any)
+		t.Run(tool["name"].(string), func(t *testing.T) {
+			title, _ := tool["title"].(string)
+			if strings.TrimSpace(title) == "" {
+				t.Error("top-level title must be non-empty")
+			}
+			annotations, _ := tool["annotations"].(map[string]any)
+			annotationTitle, _ := annotations["title"].(string)
+			if strings.TrimSpace(annotationTitle) == "" || annotationTitle != title {
+				t.Errorf("annotations.title = %q, want the same non-empty title %q", annotationTitle, title)
+			}
+			for _, hint := range []string{"readOnlyHint", "destructiveHint"} {
+				if _, ok := annotations[hint].(bool); !ok {
+					t.Errorf("%s must be explicitly declared", hint)
+				}
+			}
+		})
+	}
+}
+
+// Every tool states all four hints explicitly over the protocol a client reads.
 func TestMCPToolsDeclareEveryBehaviourHint(t *testing.T) {
 	stdout := runMCPSession(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`), fakeMCPActions())
 	frame := mcpFrameByID(t, decodeMCPResponses(t, stdout), float64(2))

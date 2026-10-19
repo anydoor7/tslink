@@ -38,6 +38,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 |---|---|
 | Access log | [access-log.md](access-log.md) |
 | Agent quickstart | [agent-quickstart.md](agent-quickstart.md) |
+| Coding agent integrations | [agent-integrations.md](agent-integrations.md) |
 | Agents | [agents.md](agents.md) |
 | App recipes | [apps.md](apps.md) |
 | Architecture | [architecture.md](architecture.md) |

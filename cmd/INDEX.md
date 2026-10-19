@@ -141,3 +141,8 @@ This index records the app recipe additions; the CLI manifest describes the comp
 # macOS LaunchAgent startup
 
 - `install_kickstart_darwin_test.go`: pending-job startup, GUI/user-domain ordering, previous-job restoration and kickstart failure diagnostics with fake launchctl calls.
+
+# MCP display metadata
+
+- [mcp_titles.go](mcp_titles.go): shared human-readable titles for every registered tool.
+- [mcp_tool_annotations_test.go](mcp_tool_annotations_test.go): wire-level title and safety-hint coverage and behavior checks.
