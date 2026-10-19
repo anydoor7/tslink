@@ -141,7 +141,9 @@ which covers the website.
   to route requests and enforce access. Optional people, invitation, guest
   and access-request features store their associated records locally.
   Enabled access history records identities, timestamps, app names, methods,
-  statuses, byte counts, durations and access decisions. The default path
+  statuses, byte counts, durations and access decisions, plus coarse IP
+  prefixes for unidentified tailnet callers, node names and tags, and MCP/guest
+  audit receipts (including guest link IDs, not bearer tokens). The default path
   mode retains the first path segment with token-shaped segments redacted;
   full-path and no-path modes are configurable. Access history excludes
   query strings, request headers and bodies. Diagnostic logs are a separate
@@ -167,8 +169,11 @@ which covers the website.
 - **Retention and deletion.** Local access history defaults to 30 UTC calendar
   days including today and a 64 MiB data cap, configurable or disableable;
   oldest segments are evicted while the daemon runs. The mutation journal is
-  separately bounded to 1,024 entries or 1 MiB. Ordinary daemon logs have no
-  TSLink age or size retention limit; supervisor policies may differ.
+  separately bounded to 1,024 entries or 1 MiB. The daemon's stderr log
+  (`tslink.err.log`) rotates at 8 MiB and keeps one previous file when TSLink
+  can confirm the descriptor is append-only. `tslink.out.log` and
+  supervisor-managed copies have no TSLink retention limit; supervisor
+  policies may differ.
   Configuration and node state persist until removed. `tslink remove <name>`
   removes a service and performs ownership-safe cleanup; it does not erase
   historical logs. `tslink logout` clears credentials and node authentication

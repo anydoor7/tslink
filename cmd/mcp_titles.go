@@ -3,7 +3,7 @@ package cmd
 // mcpToolTitles is shared by the top-level title and the legacy annotation
 // title, so clients using either display field see the same label.
 var mcpToolTitles = map[string]string{
-	"share":               "Share a local app or file",
+	"share":               "Share a local app, file or folder",
 	"add":                 "Configure a service",
 	"list":                "List services",
 	"unshare":             "Remove a shared service",
@@ -33,12 +33,12 @@ var mcpToolTitles = map[string]string{
 	"people_grant":        "Grant access to one app",
 	"people_revoke":       "Revoke access to one app",
 	"app_restart":         "Restart an app's gateway node",
-	"health":              "Check app health",
+	"health":              "Read app health",
 	"health_set":          "Configure app health checks",
 	"mcp_audit":           "Read the mutation journal",
 	"access_log":          "Read access logs",
 	"access_summary":      "Summarize access logs",
-	"extend":              "Extend an access deadline",
+	"extend":              "Set an access deadline",
 	"portal_enable":       "Enable the app portal",
 	"portal_disable":      "Disable the app portal",
 	"portal_route_add":    "Add a gateway route",
