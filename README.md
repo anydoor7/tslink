@@ -90,8 +90,12 @@ For Claude Code, install the CLI first, then run:
 ```
 
 The plugin includes a [preview skill](skills/tslink-preview/SKILL.md) and the
-MCP connection below. Other agents can use the same skill or connect MCP
-directly. [Setup and enrollment](docs/agent-integrations.md)
+MCP connection below. The marketplace stays in this repository and fetches
+the plugin from [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin).
+The canonical skill stays here; the plugin carries a CI-checked copy. Other
+agents can use the same skill or connect MCP directly. This integration
+requires the local CLI and does not run in claude.ai chat.
+[Setup and enrollment](docs/agent-integrations.md)
 
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}

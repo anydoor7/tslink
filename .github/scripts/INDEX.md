@@ -1,5 +1,7 @@
 # CI policy scripts
 
+- [check-plugin-sync.py](check-plugin-sync.py): fetches the marketplace's pinned plugin SHA, compares the canonical skill byte for byte, and checks the MCP command and description.
+- [test_plugin_sync.py](test_plugin_sync.py): hermetic success, drift, command, pin, description and network failure controls.
 - [ci-tier.py](ci-tier.py): trusted-base PR classification from Git data, with release/embed/symlink exclusions and CI_PR_TIER_MODE. Chinese duplicate document paths require the full documentation contract gate.
 - [test_ci_tier.py](test_ci_tier.py): hermetic classification, aggregation, workflow wiring and target-loop tests.
 - `convergence-diagnostic.py`: exact-tree diagnostic command runner and mandatory collector; records nonzero exits with available Go counts and continues independent commands.

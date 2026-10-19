@@ -1,10 +1,11 @@
-# Claude Code integration
+# Claude Code marketplace
 
-- [plugin.json](plugin.json): `tslink` plugin, using the repository's default
-  `skills/` directory and launching `tslink mcp`.
-- [marketplace.json](marketplace.json): `tslink` marketplace, listing the
-  repository root as the single plugin source.
+- [marketplace.json](marketplace.json): `tslink` marketplace, fetching its
+  single plugin from the GitHub source `anydoor7/tslink-claude-plugin`.
+- [Plugin repository](https://github.com/anydoor7/tslink-claude-plugin): the
+  plugin root, its only `plugin.json`, and the `tslink mcp` connection.
 
-Because the plugin source is the repository root, root-level `bin/`, `hooks/`,
-`agents/`, `commands/` and `.mcp.json` become plugin components if added.
-Review new root components as plugin changes too.
+The canonical [preview skill](../skills/tslink-preview/SKILL.md) stays here.
+The plugin repository carries a CI-checked copy; edit the skill here first.
+See [isolated validation](../docs/agent-integrations.md#local-plugin-validation)
+for separate marketplace and plugin checks.
