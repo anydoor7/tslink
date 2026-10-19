@@ -82,6 +82,17 @@ Guest links and new public URLs expire and work for web apps only; folders, file
 
 A dev server an agent starts on `localhost` is out of reach from your phone. TSLink lets the agent give it a private address, report the exact URL and remove it when done.
 
+For Claude Code, install the CLI first, then run:
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+The plugin includes a [preview skill](skills/tslink-preview/SKILL.md) and the
+MCP connection below. Other agents can use the same skill or connect MCP
+directly. [Setup and enrollment](docs/agent-integrations.md)
+
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
@@ -117,6 +128,57 @@ One background process runs a separate Tailscale node for each app. Tailscale pr
 | Guests | A browser |
 
 Names of HTTPS apps appear in public certificate logs, so pick names you are happy for others to see.
+
+## Privacy Policy
+
+This section covers the local TSLink CLI, MCP server and agent plugin.
+Its [HTTPS policy URL](https://github.com/anydoor7/tslink/blob/main/README.md#privacy-policy)
+is separate from the [website privacy policy](https://tslink.md/privacy-policy),
+which covers the website.
+
+- **Data and use.** TSLink processes the app traffic you choose to proxy or
+  serve, plus service configuration, Tailscale identities and access rules,
+  to route requests and enforce access. Optional people, invitation, guest
+  and access-request features store their associated records locally.
+  Enabled access history records identities, timestamps, app names, methods,
+  statuses, byte counts, durations and access decisions. The default path
+  mode retains the first path segment with token-shaped segments redacted;
+  full-path and no-path modes are configurable. Access history excludes
+  query strings, request headers and bodies. Diagnostic logs are a separate
+  surface and can contain sensitive details, including enrollment links.
+- **Local storage.** Configuration, registry, runtime state, node keys and
+  logs live in TSLink's configuration directory, normally
+  `~/.config/tslink` on macOS/Linux or `%AppData%\tslink` on Windows
+  ([platform details](docs/platforms.md)). `TSLINK_CONFIG_DIR` can override it.
+  Optional administrative credentials use the system credential store;
+  macOS/Linux have a conditional file fallback, while Windows has none.
+  See [credential storage](docs/credentials-and-tags.md).
+- **Third parties.** Embedded Tailscale contacts the coordination service,
+  uses encrypted peer or relay transport and obtains HTTPS certificates.
+  Its SDK uploads diagnostic logs to Tailscale by default. HTTPS names appear
+  in public certificate transparency logs. Administrative operations can send
+  device, policy and invitation data to the Tailscale API. Custom coordination
+  servers and configured alert webhooks or commands receive the data needed
+  for those features. TSLink has no separate maintainer analytics collector.
+  Your MCP client receives tool arguments and results, which may include
+  identities, URLs and requested logs; the client's model provider and
+  retention policy also apply. Publishing through Funnel or guest links
+  exposes the selected app through public infrastructure.
+- **Retention and deletion.** Local access history defaults to 30 UTC calendar
+  days including today and a 64 MiB data cap, configurable or disableable;
+  oldest segments are evicted while the daemon runs. The mutation journal is
+  separately bounded to 1,024 entries or 1 MiB. Ordinary daemon logs have no
+  TSLink age or size retention limit; supervisor policies may differ.
+  Configuration and node state persist until removed. `tslink remove <name>`
+  removes a service and performs ownership-safe cleanup; it does not erase
+  historical logs. `tslink logout` clears credentials and node authentication
+  state, not all configuration or logs. See [access history](docs/access-log.md)
+  and [access-request retention](docs/requests.md). Third-party retention is
+  governed by those providers, including [Tailscale](https://tailscale.com/privacy-policy).
+- **Contact.** Use the [issue tracker](https://github.com/anydoor7/tslink/issues)
+  for non-sensitive privacy questions. Never post credentials, private links,
+  logs or personal data in public issues. For sensitive security reports,
+  follow [SECURITY.md](SECURITY.md).
 
 <a id="documentation"></a>
 

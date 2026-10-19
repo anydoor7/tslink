@@ -1,0 +1,17 @@
+{
+  "name": "tslink",
+  "version": "1.0.0",
+  "description": "Private HTTPS previews for local apps with TSLink.",
+  "author": {
+    "name": "anydoor7"
+  },
+  "homepage": "https://tslink.md",
+  "repository": "https://github.com/anydoor7/tslink",
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "tslink": {
+      "command": "tslink",
+      "args": ["mcp"]
+    }
+  }
+}

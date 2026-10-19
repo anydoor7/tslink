@@ -1225,12 +1225,19 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 		if !mcpSession(actions).Scope.ToolAllowed(definition.Name) {
 			continue
 		}
+		title := mcpToolTitles[definition.Name]
+		annotations := &mcp.ToolAnnotations{}
+		if hints := mcpToolHints[definition.Name]; hints != nil {
+			*annotations = *hints
+		}
+		annotations.Title = title
 		server.AddTool(&mcp.Tool{
 			Name:         definition.Name,
+			Title:        title,
 			Description:  definition.Description,
 			InputSchema:  definition.InputSchema,
 			OutputSchema: definition.OutputSchema,
-			Annotations:  mcpToolHints[definition.Name],
+			Annotations:  annotations,
 		}, mcpToolHandler(definition.Name, actions))
 	}
 	return server
