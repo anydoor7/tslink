@@ -47,9 +47,9 @@ From a checkout, use an isolated configuration directory and local marketplace:
 ```sh
 preview_test_config=$(mktemp -d)
 # Plugin manifest
-CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate --strict .claude-plugin/plugin.json
+CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate .claude-plugin/plugin.json
 # Marketplace manifest (validating . also selects this manifest)
-CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate --strict .claude-plugin/marketplace.json
+CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate .claude-plugin/marketplace.json
 CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin marketplace add "$PWD"
 CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin install tslink@tslink
 CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin list
@@ -60,5 +60,7 @@ These commands validate and install the plugin without sharing a port or
 enrolling a Tailscale node. The installed plugin should resolve one
 `skills/tslink-preview/SKILL.md` and the MCP configuration from `plugin.json`.
 The plugin intentionally omits `version` so updates follow the git commit.
-Claude Code 2.1.302 reports this as a missing-version warning and exits nonzero
-under `--strict`; inspect the output for any additional errors or warnings.
+Each validate command should print `Validation passed with warnings` with
+exactly one warning, for the missing `version`; any other warning or error
+is a regression. `--strict` turns that expected warning into a failure, so
+it cannot gate this manifest.
