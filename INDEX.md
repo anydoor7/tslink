@@ -12,5 +12,5 @@
 - [server.json](server.json): MCP Registry preparation metadata; source-only installation is not publishable through the documented package types.
 - [Scoped third-party source](third_party/INDEX.md): pinned local dependency repairs and provenance.
 - [Agent skills](skills/INDEX.md): private preview workflow shared with the Claude Code plugin.
-- [Claude Code plugin](.claude-plugin/INDEX.md): plugin manifest and marketplace catalog.
+- [Claude Code marketplace](.claude-plugin/INDEX.md): catalog pointing to the standalone plugin repository.
 - [Coding agent integrations](docs/agent-integrations.md): setup, enrollment and isolated plugin validation.

@@ -7,7 +7,10 @@
   "plugins": [
     {
       "name": "tslink",
-      "source": "./",
+      "source": {
+        "source": "github",
+        "repo": "anydoor7/tslink-claude-plugin"
+      },
       "description": "Share a running dev server privately with TSLink."
     }
   ]

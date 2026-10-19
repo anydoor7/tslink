@@ -19,13 +19,21 @@ open your running dev server on your phone, or invoke
 server launching `tslink mcp`. Avoid configuring a second TSLink MCP server
 in the same client.
 
+This repository hosts the marketplace. Its GitHub source fetches the plugin
+from [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin),
+which owns the plugin manifest. The installation commands above stay the
+same. The integration needs a local TSLink binary and does not work on
+surfaces without one, such as claude.ai chat.
+
 ## Other agents
 
 Use [skills/tslink-preview/SKILL.md](../skills/tslink-preview/SKILL.md) with an
 agent that supports Agent Skills. Copy the `tslink-preview` directory into
-that agent's supported skills location. The same file ships in the Claude
-Code plugin through the repository's default `skills/` directory; there is
-no second copy to maintain.
+that agent's supported skills location. This repository is the canonical
+source. The Claude Code plugin repository ships a byte-identical copy;
+its CI compares that copy with this repository's `main` on pushes, pull
+requests and a daily schedule. Land skill edits here first, then update
+the plugin copy.
 
 If the agent supports MCP, [connect TSLink](mcp-clients.md#stdio) for direct
 tool calls. Otherwise the skill uses the CLI's versioned JSON results.
@@ -42,14 +50,14 @@ persistent background service. Remove the preview with
 
 ## Local plugin validation
 
-From a checkout, use an isolated configuration directory and local marketplace:
+From this repository's root, use an isolated configuration directory and
+local marketplace. Installation fetches the plugin from GitHub, so push any
+plugin repository changes before testing this path:
 
 ```sh
 preview_test_config=$(mktemp -d)
-# Plugin manifest
-CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate .claude-plugin/plugin.json
-# Marketplace manifest (validating . also selects this manifest)
-CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate .claude-plugin/marketplace.json
+# Marketplace only; there is no plugin manifest in this repository
+CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate .
 CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin marketplace add "$PWD"
 CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin install tslink@tslink
 CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin list
@@ -58,9 +66,22 @@ CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin details tslink
 
 These commands validate and install the plugin without sharing a port or
 enrolling a Tailscale node. The installed plugin should resolve one
-`skills/tslink-preview/SKILL.md` and the MCP configuration from `plugin.json`.
+`skills/tslink-preview/SKILL.md` and one MCP server (`tslink`, running
+`tslink mcp`) from the GitHub plugin repository. `details` lists the source
+as `tslink@tslink`; the marketplace entry specifies the GitHub repository,
+and `list` shows the installed commit-derived version. Marketplace
+validation should pass without warnings; it does not validate the remote
+plugin's files.
+
+To validate the plugin itself, clone its repository separately:
+
+```sh
+git clone https://github.com/anydoor7/tslink-claude-plugin.git
+CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate ./tslink-claude-plugin
+```
+
 The plugin intentionally omits `version` so updates follow the git commit.
-Each validate command should print `Validation passed with warnings` with
+Plugin validation should print `Validation passed with warnings` with
 exactly one warning, for the missing `version`; any other warning or error
 is a regression. `--strict` turns that expected warning into a failure, so
-it cannot gate this manifest.
+it cannot gate the plugin manifest.
