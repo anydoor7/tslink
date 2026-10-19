@@ -788,7 +788,11 @@ class GateTests(unittest.TestCase):
             self.assertIn(f"name: tslink-{target.replace('/', '-')}\n", WORKFLOW)
             self.assertIn(f"name: govulncheck-repo-{target.replace('/', '-')}\n", WORKFLOW)
         # A normal Go PR skips only the three-native-manifest proof.
-        for name in names - {"gate", "tier"}:
+        plugin_section = jobs.split("  plugin-sync:\n", 1)[1].split("\n  native:\n", 1)[0]
+        self.assertNotIn("    if:", plugin_section)
+        self.assertIn("python3 -I .github/scripts/check-plugin-sync.py", plugin_section)
+        self.assertIn("test_plugin_sync.py", plugin_section)
+        for name in names - {"gate", "tier", "plugin-sync"}:
             section = re.split(r"\n  [a-z][a-z-]*:\n", jobs.split(f"  {name}:\n", 1)[1], maxsplit=1)[0]
             expected = "needs.tier.outputs.tier == 'full'"
             if name != "manifest-platform-diff":
@@ -808,6 +812,7 @@ class GateTests(unittest.TestCase):
         for selected in ("full", "go", "docs", "draft"):
             needs = {name: {"result": "success" if selected in {"full", "go"} else "skipped"} for name in core}
             needs["tier"] = {"result": "success", "outputs": {"tier": selected}}
+            needs["plugin-sync"] = {"result": "success"}
             needs["manifest-platform-diff"] = {"result": "success" if selected == "full" else "skipped"}
             with self.subTest(tier=selected, result="success/legitimate skip"):
                 result = execute(needs)

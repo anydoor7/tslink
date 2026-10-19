@@ -85,6 +85,20 @@ jobs:
       - name: Test CI policy without Go or network
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_tier.py' -v
 
+  plugin-sync:
+    name: Check pinned Claude Code plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Test pinned plugin check without network
+        run: python3 -m unittest discover -s .github/scripts -p 'test_plugin_sync.py' -v
+      - name: Compare pinned plugin skill and MCP command
+        run: python3 -I .github/scripts/check-plugin-sync.py
+
   native:
     name: Native build/vet/test/race (${{ matrix.os }})
     needs: tier
@@ -611,7 +625,7 @@ jobs:
     name: gate
     if: always()
     runs-on: ubuntu-latest
-    needs: [tier, policy-tests, native, manifest-platform-diff, machine-contract, staticcheck, govulncheck-main, govulncheck-repo, reproducible-source, cross-build, artifact-verify, release-config]
+    needs: [tier, plugin-sync, policy-tests, native, manifest-platform-diff, machine-contract, staticcheck, govulncheck-main, govulncheck-repo, reproducible-source, cross-build, artifact-verify, release-config]
     steps:
       # Inline and checkout-free: a failed/cancelled classification or checkout
       # must still produce a failing aggregate, not suppress the required check.
@@ -628,12 +642,12 @@ jobs:
           core = {"policy-tests", "native", "machine-contract", "staticcheck", "govulncheck-main",
                   "govulncheck-repo", "reproducible-source", "cross-build",
                   "artifact-verify", "release-config"}
-          expected = core | {"tier", "manifest-platform-diff"}
+          expected = core | {"tier", "plugin-sync", "manifest-platform-diff"}
           tier = needs.get("tier", {}).get("outputs", {}).get("tier")
           bad = []
           if set(needs) != expected or tier not in {"draft", "docs", "go", "full"}:
               bad.append("invalid/missing tier or job results")
-          required = {"tier"}
+          required = {"tier", "plugin-sync"}
           if tier in {"go", "full"}:
               required |= core
           if tier == "full":

@@ -21,7 +21,9 @@ in the same client.
 
 This repository hosts the marketplace. Its GitHub source fetches the plugin
 from [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin),
-which owns the plugin manifest. The installation commands above stay the
+which owns the plugin manifest. The marketplace's `source.sha` pins an exact
+reviewed plugin commit. Pushing to the plugin repository alone does not ship
+an update through this marketplace. The installation commands above stay the
 same. The integration needs a local TSLink binary and does not work on
 surfaces without one, such as claude.ai chat.
 
@@ -31,9 +33,12 @@ Use [skills/tslink-preview/SKILL.md](../skills/tslink-preview/SKILL.md) with an
 agent that supports Agent Skills. Copy the `tslink-preview` directory into
 that agent's supported skills location. This repository is the canonical
 source. The Claude Code plugin repository ships a byte-identical copy;
-its CI compares that copy with this repository's `main` on pushes, pull
-requests and a daily schedule. Land skill edits here first, then update
-the plugin copy.
+its CI compares that copy with this repository's `main` on pushes to main and
+pull requests, plus a best-effort daily schedule that GitHub can disable on
+inactive repositories. This repository's required `plugin-sync` CI job fetches
+the pinned plugin commit and compares its skill with the proposed canonical
+skill on every CI tier. It also checks the plugin's `tslink mcp` command.
+Update both copies and the marketplace pin together as described below.
 
 If the agent supports MCP, [connect TSLink](mcp-clients.md#stdio) for direct
 tool calls. Otherwise the skill uses the CLI's versioned JSON results.
@@ -73,15 +78,35 @@ and `list` shows the installed commit-derived version. Marketplace
 validation should pass without warnings; it does not validate the remote
 plugin's files.
 
-To validate the plugin itself, clone its repository separately:
+To validate the plugin itself, clone it into the temporary directory and
+check out the marketplace's pinned commit:
 
 ```sh
-git clone https://github.com/anydoor7/tslink-claude-plugin.git
-CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate ./tslink-claude-plugin
+preview_plugin_sha=$(python3 -c 'import json; print(next(p["source"]["sha"] for p in json.load(open(".claude-plugin/marketplace.json"))["plugins"] if p["name"] == "tslink"))')
+git clone https://github.com/anydoor7/tslink-claude-plugin.git "$preview_test_config/tslink-claude-plugin"
+git -C "$preview_test_config/tslink-claude-plugin" checkout --detach "$preview_plugin_sha"
+CLAUDE_CONFIG_DIR="$preview_test_config" claude plugin validate "$preview_test_config/tslink-claude-plugin"
 ```
 
-The plugin intentionally omits `version` so updates follow the git commit.
+The plugin intentionally omits `version` so its version follows the pinned git commit.
 Plugin validation should print `Validation passed with warnings` with
 exactly one warning, for the missing `version`; any other warning or error
 is a regression. `--strict` turns that expected warning into a failure, so
 it cannot gate the plugin manifest.
+
+## Shipping a plugin update
+
+1. Prepare canonical skill edits in this repository, copy them byte for byte
+   into the plugin repository, and commit and push the plugin changes first.
+   For manifest-only or README edits, the skill can remain unchanged.
+2. Open a reviewed PR in this protected repository with the canonical skill
+   changes (if any) and update `.claude-plugin/marketplace.json`'s `source.sha`
+   to the plugin commit's full 40-character lowercase SHA. Keep the marketplace
+   description identical to `plugin.json`.
+3. Run `python3 -I .github/scripts/check-plugin-sync.py` and the isolated
+   installation above. The check fails on skill drift, an unavailable commit,
+   a changed MCP launch command, or mismatched descriptions. Review the whole
+   plugin commit before approving the pin update.
+4. After that PR is reviewed and merged, users run `/plugin marketplace update
+   tslink` and `/plugin update tslink@tslink`, then reload plugins or restart
+   Claude Code. Plugin repository pushes alone leave the installed pin unchanged.
