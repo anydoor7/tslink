@@ -682,13 +682,13 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:         "template_list",
-		Description:  "List the built-in service templates. Use this to offer the user a ready-made private stack; templates only write registry entries and never install or start third-party applications.",
+		Description:  "Return built-in multi-service template names, summaries and service counts. Use template_list to choose a fixed private stack before template_plan; recipe_list offers app-specific recipes and configuration advice instead. Reads the built-in catalog only, without registry writes; templates never install or start third-party applications.",
 		InputSchema:  objectSchema(map[string]any{}),
 		OutputSchema: mcpTemplateListOutputSchema,
 	},
 	{
 		Name:        "template_plan",
-		Description: "Preview which services a built-in template would create, without writing the registry. Use this before template_apply so the user can see what will be created and what already exists.",
+		Description: "Preview a fixed built-in multi-service stack against the local registry; return each service configuration and create-or-skip action, with created/skipped counts. Use template_plan before template_apply to review without registry writes; recipe_plan previews one app-specific recipe with overrides instead.",
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "description": "Template name from template_list."},
 		}, "name"),
@@ -696,7 +696,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:        "template_apply",
-		Description: "Write a built-in template's missing services into the local registry. Existing entries with the same names are left untouched, and the background service is installed when absent unless no_daemon_install is true; call template_plan first so the user has seen the plan.",
+		Description: "Write a fixed built-in multi-service stack's missing services into the local registry; return per-service created-or-skipped actions and counts. Use template_apply after reviewing template_plan; recipe_apply registers one app-specific recipe with overrides instead. Existing names stay untouched. Installs the background service when absent unless no_daemon_install is true; never installs or starts third-party applications.",
 		InputSchema: objectSchema(map[string]any{
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Save configuration without installing the background service."},
 			"name":              map[string]any{"type": "string", "description": "Template name from template_list."},

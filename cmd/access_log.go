@@ -148,7 +148,10 @@ func init() {
 	accessCmd.AddCommand(command)
 	for _, name := range []string{"access_log", "access_summary"} {
 		mcpToolHints[name] = mcpHints(true, false, true, false)
-		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: name, Description: "Read local app access history. No credentials, network calls or writes. Suitable for viewer scopes. Query strings, headers and bodies are absent. Summaries count all matching events; the event list is limited.", InputSchema: objectSchema(map[string]any{
+		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: name, Description: map[string]string{
+			"access_log":     "Return individual local access events, newest first, with all-match counts and a truncation flag. Use access_log to inspect specific events; use access_summary for counts without event records. The event list is limited; summaries cover all matches. No credentials, network calls or writes; suitable for viewer scopes. Query strings, headers and bodies are absent.",
+			"access_summary": "Aggregate matching local access events into total, allowed and denied counts, per-person and per-app counts with last-seen times, plus per-reason counts when present. Use access_summary for totals and trends; use access_log for individual events. Counts cover all matches regardless of the event limit; denied events do not advance last-seen. No credentials, network calls or writes; suitable for viewer scopes. Query strings, headers and bodies are absent.",
+		}[name], InputSchema: objectSchema(map[string]any{
 			"app": map[string]any{"type": "string"}, "who": map[string]any{"type": "string"}, "since": map[string]any{"type": "string"}, "until": map[string]any{"type": "string"}, "decision": map[string]any{"type": "string", "enum": []string{"allowed", "denied"}}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 10000},
 		}), OutputSchema: accessLogOutputSchema(name)})
 	}
