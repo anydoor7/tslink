@@ -81,11 +81,15 @@ func TestMCPToolDescriptionsDistinct(t *testing.T) {
 	}
 }
 
-// The largest current sibling score is 0.723 (people_add/people_update),
-// whose shared safety rules are intentional. A 0.80 ceiling leaves room for
-// wording changes while rejecting the base guest template (1.0), even with
-// a verb changed. This measures shared vocabulary, not semantic equivalence.
+// A 0.80 ceiling rejects the base guest template (1.0), even with a verb
+// changed, while the template-prone families score at most 0.55. This
+// measures shared vocabulary, not semantic equivalence.
 const mcpSiblingDescriptionSimilarityLimit = 0.80
+
+// people_add and people_update intentionally repeat the same safety rules
+// (about 0.72). Jaccard rises when either side gets shorter, so the default
+// ceiling would fail a cleanup that removes about 14 one-sided words.
+const mcpPeopleDescriptionSimilarityLimit = 0.90
 
 func checkMCPSiblingDescriptionSimilarity(t *testing.T, tools []mcpToolDefinition) {
 	t.Helper()
@@ -129,16 +133,20 @@ func checkMCPSiblingDescriptionSimilarity(t *testing.T, tools []mcpToolDefinitio
 		t.Logf("changed-verb guest template positive control: %.6f", score)
 	}
 	// Glama's named sibling families, plus template and recipe selection pairs.
-	for _, family := range [][]string{
-		{"access_log", "access_summary"},
-		{"people_add", "people_update"},
-		{"people_grant", "people_revoke"},
-		{"guest_create", "guest_list", "guest_show", "guest_revoke"},
-		{"template_list", "template_plan", "template_apply"},
-		{"recipe_list", "recipe_plan", "recipe_apply"},
+	for _, family := range []struct {
+		names []string
+		limit float64
+	}{
+		{[]string{"access_log", "access_summary"}, mcpSiblingDescriptionSimilarityLimit},
+		{[]string{"people_add", "people_update"}, mcpPeopleDescriptionSimilarityLimit},
+		{[]string{"people_grant", "people_revoke"}, mcpSiblingDescriptionSimilarityLimit},
+		{[]string{"guest_create", "guest_list", "guest_show", "guest_revoke"}, mcpSiblingDescriptionSimilarityLimit},
+		{[]string{"template_list", "template_plan", "template_apply"}, mcpSiblingDescriptionSimilarityLimit},
+		{[]string{"recipe_list", "recipe_plan", "recipe_apply"}, mcpSiblingDescriptionSimilarityLimit},
 	} {
-		for i, left := range family {
-			for _, right := range family[i+1:] {
+		limit := family.limit
+		for i, left := range family.names {
+			for _, right := range family.names[i+1:] {
 				a, haveLeft := descriptions[left]
 				b, haveRight := descriptions[right]
 				if !haveLeft || !haveRight || a == "" || b == "" {
@@ -146,9 +154,9 @@ func checkMCPSiblingDescriptionSimilarity(t *testing.T, tools []mcpToolDefinitio
 					continue
 				}
 				score := similarity(a, b)
-				t.Logf("%s / %s Jaccard=%.6f (must be < %.2f)", left, right, score, mcpSiblingDescriptionSimilarityLimit)
-				if score >= mcpSiblingDescriptionSimilarityLimit {
-					t.Errorf("%s and %s have near-duplicate descriptions: %.6f >= %.2f", left, right, score, mcpSiblingDescriptionSimilarityLimit)
+				t.Logf("%s / %s Jaccard=%.6f (must be < %.2f)", left, right, score, limit)
+				if score >= limit {
+					t.Errorf("%s and %s have near-duplicate descriptions: %.6f >= %.2f", left, right, score, limit)
 				}
 			}
 		}
@@ -169,13 +177,22 @@ func TestMCPLiveToolDescriptionsDistinct(t *testing.T) {
 	if err := json.Unmarshal(data, &tools); err != nil {
 		t.Fatal(err)
 	}
-	if len(tools) != 48 {
-		t.Fatalf("tools/list returned %d tools, want 48", len(tools))
+	if len(tools) != len(mcpToolDefinitions) {
+		t.Fatalf("tools/list returned %d tools, want %d", len(tools), len(mcpToolDefinitions))
+	}
+	registered := make(map[string]string, len(mcpToolDefinitions))
+	for _, tool := range mcpToolDefinitions {
+		registered[tool.Name] = tool.Description
 	}
 	seen := map[string]string{}
 	for _, tool := range tools {
 		if tool.Description == "" {
 			t.Errorf("%s has an empty description", tool.Name)
+		}
+		if want, ok := registered[tool.Name]; !ok {
+			t.Errorf("capture has unregistered tool %s", tool.Name)
+		} else if tool.Description != want {
+			t.Errorf("capture description for %s differs from this build; recapture tools/list", tool.Name)
 		}
 		if previous, ok := seen[tool.Description]; ok {
 			t.Errorf("%s and %s share a live description", previous, tool.Name)
