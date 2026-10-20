@@ -385,7 +385,9 @@ func (c *inviteHTTPClient) ListUserInvites(ctx context.Context) ([]userInviteRes
 	err := c.doList(ctx, []string{"tailnet", "-", "user-invites"}, &response)
 	if err == nil && response == nil {
 		// doList has already required HTTP 200, a non-empty body, and valid
-		// JSON. Only the user-invites endpoint defines root null as empty.
+		// JSON. The live API answers a root null, not [], when nothing is
+		// pending; both user-invites and device-invites do, despite the
+		// OpenAPI schema saying array.
 		response = []userInviteResponse{}
 	}
 	return response, err
@@ -415,7 +417,10 @@ func (c *inviteHTTPClient) ListDeviceInvites(ctx context.Context, deviceID strin
 	var response []deviceInviteResponse
 	err := c.doList(ctx, []string{"device", deviceID, "device-invites"}, &response)
 	if err == nil && response == nil {
-		err = invalidInviteListing("device invite listing omitted a non-null array")
+		// Same as ListUserInvites: a device with no invites is answered with
+		// root null (observed 2026-10-20). Return an empty slice so callers
+		// encode [], not null.
+		response = []deviceInviteResponse{}
 	}
 	return response, err
 }
