@@ -43,9 +43,12 @@ func TestGatewayRouteCloseLockOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		// The child's -test.timeout must exceed testwait's 30s reserve, or every
+		// setup guard floors at 1s and slow runners fail before the lock-order
+		// check runs. Deadlock detection uses its own 3s+2s timers below.
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestGatewayRouteCloseLockOrder$", "-test.v", "-test.timeout=20s")
+		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestGatewayRouteCloseLockOrder$", "-test.v", "-test.timeout=90s")
 		cmd.Env = append(os.Environ(), "TSLINK_TEST_ROUTE_LOCK_CHILD=1")
 		out, err := cmd.CombinedOutput()
 		t.Log(string(out))
