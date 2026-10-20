@@ -34,7 +34,7 @@ func lifetimeSchema(public bool) map[string]any {
 func init() {
 	mcpToolHints["extend"] = mcpHints(false, true, false, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
-		Name: "extend", Description: "Set a new person grant or Funnel deadline from the operation time, extending or shortening it. Confirm the target and duration with the owner. who selects a person grant for service; omit for Funnel. Expired grants require explicit regrant; revoked people cannot be revived. Changes local registry only; no invites, live tailnet call or access-log dependency.",
+		Name: "extend", Description: "Reset an existing person-app grant or acknowledged Funnel deadline using for from the operation time or an absolute until, extending or shortening access. Returns previous and new deadlines, audience, change time and whether expired access was regranted. Use extend to change only an existing deadline; use people_grant to create a person-app grant. who selects the person grant for service; omit who for Funnel, which is owner-only. Confirm target and duration with the owner. Expired access requires regrant=true; revoked people cannot be revived. Changes local state only; no invitations, live tailnet calls or access-log dependency.",
 		InputSchema: objectSchema(map[string]any{
 			"service":   map[string]any{"type": "string", "minLength": 1},
 			"who":       map[string]any{"type": "string", "minLength": 1},
