@@ -2,10 +2,13 @@ package tailapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 func TestReview3ListCompleteResponseContract(t *testing.T) {
@@ -21,7 +24,11 @@ func TestReview3ListCompleteResponseContract(t *testing.T) {
 				valid      bool
 			}{
 				{"complete-empty", valid, 200, true},
-				{"null", "null", 200, kind == "user-invites"},
+				// The live API answers root null for a device or tailnet with no
+				// invites (observed 2026-10-20); the devices listing has no such
+				// observation and stays strict.
+				{"null", "null", 200, kind != "devices"},
+				{"null-padded", " \n null \t", 200, kind != "devices"},
 				{"blank", "", 200, false},
 				{"whitespace", " \n\t", 200, false},
 				{"missing-array", "{}", 200, false},
@@ -50,16 +57,30 @@ func TestReview3ListCompleteResponseContract(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					// Every valid invite body above is an empty listing. Callers
+					// JSON-encode the result, so it must be [] and never null.
+					var encoded []byte
 					switch kind {
 					case "devices":
 						_, err = client.ListDevices(context.Background())
 					case "device-invites":
-						_, err = client.ListDeviceInvites(context.Background(), "n1")
+						var got []deviceInviteResponse
+						got, err = client.ListDeviceInvites(context.Background(), "n1")
+						if err == nil {
+							encoded, _ = json.Marshal(got)
+						}
 					case "user-invites":
-						_, err = client.ListUserInvites(context.Background())
+						var got []userInviteResponse
+						got, err = client.ListUserInvites(context.Background())
+						if err == nil {
+							encoded, _ = json.Marshal(got)
+						}
 					}
 					if (err == nil) != tc.valid {
 						t.Fatalf("complete=%v error=%v", tc.valid, err)
+					}
+					if kind != "devices" && tc.valid && string(encoded) != "[]" {
+						t.Fatalf("empty %s listing encodes as %s, want []", kind, encoded)
 					}
 				})
 			}
@@ -120,6 +141,67 @@ func TestUserInviteNullKeepsDeviceInvitesVisible(t *testing.T) {
 			got, err := ListInvites(context.Background(), []DeviceTarget{{Service: "app", Hostname: "app", NodeID: "n1"}})
 			if err != nil || !got.Complete || got.UserInvites == nil || len(got.UserInvites) != 0 || len(got.DeviceInvites) != 1 || got.DeviceInvites[0].ID != "123" {
 				t.Fatalf("null user list hid device invitations: %+v %v", got, err)
+			}
+		})
+	}
+}
+
+// Production 2026-10-20: 18 of 20 services answered device-invites with root
+// null and 2 with arrays, and the whole listing came back incomplete.
+func TestDeviceInviteNullListsAsCheckedEmpty(t *testing.T) {
+	const arrayBody = `[{"id":"123","inviteUrl":"https://fixture.invalid/invite"}]`
+	for _, tc := range []struct {
+		name         string
+		bodies       map[string]string // device-invites body per node ID
+		wantComplete bool
+		wantChecked  map[string]int // service -> invite_count, for checked targets
+		wantInvites  int
+	}{
+		{"null-and-array", map[string]string{"n1": "null", "n2": " \n null \t", "n3": arrayBody}, true, map[string]int{"alpha": 0, "beta": 0, "gamma": 1}, 1},
+		{"all-null", map[string]string{"n1": "null", "n2": "null", "n3": "null"}, true, map[string]int{"alpha": 0, "beta": 0, "gamma": 0}, 0},
+		// Control: a blank 200 body is still unproven absence, so the same
+		// layout with one blank target must stay incomplete.
+		{"blank-control", map[string]string{"n1": "null", "n2": "", "n3": arrayBody}, false, map[string]int{"alpha": 0, "gamma": 1}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withInviteServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" {
+					t.Fatalf("unexpected mutation %s", r.Method)
+				}
+				switch r.URL.Path {
+				case "/api/v2/tailnet/-/user-invites":
+					io.WriteString(w, "[]")
+				case "/api/v2/tailnet/-/devices":
+					io.WriteString(w, `{"devices":[{"nodeId":"n1","hostname":"alpha"},{"nodeId":"n2","hostname":"beta"},{"nodeId":"n3","hostname":"gamma"}]}`)
+				case "/api/v2/device/n1/device-invites", "/api/v2/device/n2/device-invites", "/api/v2/device/n3/device-invites":
+					io.WriteString(w, tc.bodies[r.URL.Path[len("/api/v2/device/"):len("/api/v2/device/n1")]])
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			})
+			got, err := ListInvites(context.Background(), []DeviceTarget{
+				{Service: "alpha", Hostname: "alpha", NodeID: "n1"},
+				{Service: "beta", Hostname: "beta", NodeID: "n2"},
+				{Service: "gamma", Hostname: "gamma", NodeID: "n3"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Complete != tc.wantComplete || got.DeviceInvites == nil || len(got.DeviceInvites) != tc.wantInvites || got.Count != tc.wantInvites {
+				t.Fatalf("complete=%v device_invites=%d count=%d, want complete=%v device_invites=%d: %+v", got.Complete, len(got.DeviceInvites), got.Count, tc.wantComplete, tc.wantInvites, got)
+			}
+			if len(got.DeviceTargets) != 3 {
+				t.Fatalf("device_targets = %+v, want one entry per service", got.DeviceTargets)
+			}
+			for _, target := range got.DeviceTargets {
+				count, wantChecked := tc.wantChecked[target.Service]
+				if target.Checked != wantChecked || target.InviteCount != count || (target.Error != nil) == wantChecked {
+					t.Errorf("target %s = %+v, want checked=%v invite_count=%d", target.Service, target, wantChecked, count)
+				}
+				if !wantChecked && (target.Error == nil || target.Error.Code != registry.CodeInviteResponseInvalid) {
+					t.Errorf("blank target %s = %+v, want %s", target.Service, target, registry.CodeInviteResponseInvalid)
+				}
 			}
 		})
 	}

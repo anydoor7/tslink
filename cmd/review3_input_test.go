@@ -127,7 +127,7 @@ func TestReview3NoneRequiresCompleteListing(t *testing.T) {
 				name, endpoint, body string
 				status               int
 			}{
-				{"null-invites", "/device-invites", "null", 200},
+				// Root null is not here: see TestReview3NullDeviceInvitesIsAbsenceEvidence.
 				{"blank-invites", "/device-invites", "", 200},
 				{"no-content-invites", "/device-invites", "", 204},
 				{"partial-invites", "/device-invites", "[]", 206},

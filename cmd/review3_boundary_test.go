@@ -47,7 +47,9 @@ func TestReview3ReplacementRequiresCompleteListing(t *testing.T) {
 		body string
 	}{
 		{"live-control", 200, `[{"id":"1001","deviceId":123,"accepted":false}]`},
-		{"null", 200, `null`}, {"blank", 200, ``}, {"no-content", 204, ``}, {"partial-array", 206, `[]`},
+		// Root null is not here: the API answers it for a device with no invites,
+		// see TestReview3NullDeviceInvitesIsAbsenceEvidence.
+		{"blank", 200, ``}, {"no-content", 204, ``}, {"partial-array", 206, `[]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := peopleTestPaths(t)
@@ -82,7 +84,7 @@ func TestReview3CleanupRequiresCompleteListing(t *testing.T) {
 		name, endpoint, body string
 		code                 int
 	}{
-		{"null-invites", "/device-invites", "null", 200},
+		// Root null is not here: see TestReview3NullDeviceInvitesIsAbsenceEvidence.
 		{"blank-invites", "/device-invites", "", 200},
 		{"partial-devices", "/devices", `{"devices":[]}`, 206},
 	} {
@@ -145,7 +147,8 @@ func TestReview3BadReplacementOrphansOldInvite(t *testing.T) {
 		t.Fatal(first, err)
 	}
 	goodAPI := os.Getenv(tailapi.APIBaseURLEnv)
-	r3ListingOverlay(t, "/device-invites", http.StatusOK, "null")
+	// A blank 200 body is the bad listing: root null is a valid empty one.
+	r3ListingOverlay(t, "/device-invites", http.StatusOK, "")
 	reviewRefreshProof(t, paths)
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": "1001"}}, true)
 	if err != nil {
@@ -161,5 +164,89 @@ func TestReview3BadReplacementOrphansOldInvite(t *testing.T) {
 	t.Logf("replacement complete=%v removed=%+v posts=%v remaining=%v DELETEs=%d", result.Complete, removed, api.posts, api.pending, api.deletes)
 	if removed.Complete && len(api.pending) != 0 {
 		t.Error("successful later cleanup skipped live old attempt forever")
+	}
+}
+
+// A device with no invites is answered with root null, not [] (observed
+// 2026-10-20), so null is the same proof of absence as []. Every people flow
+// that waits for that proof must end identically for both encodings; the []
+// run is the control that keeps "both fail the same way" from passing.
+func TestReview3NullDeviceInvitesIsAbsenceEvidence(t *testing.T) {
+	type outcome struct {
+		complete bool
+		invites  []registry.PersonInvite
+		posts    int
+		deletes  int
+		live     int
+	}
+	finish := func(t *testing.T, paths sharePaths, api *reviewInviteAPI, complete bool) outcome {
+		t.Helper()
+		p, err := readPerson(paths.Registry, "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		return outcome{complete, p.Invites, api.posts["photos"], api.deletes, len(api.pending)}
+	}
+	created := func(t *testing.T, body string) (sharePaths, *reviewInviteAPI) {
+		t.Helper()
+		paths := peopleTestPaths(t)
+		api := reviewPeopleAPI(t, paths)
+		first, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
+		if err != nil || !first.Complete || first.Invites[0].ID != "1001" {
+			t.Fatal("create control", first, err)
+		}
+		api.mu.Lock()
+		delete(api.pending, "1001")
+		api.mu.Unlock()
+		r3ListingOverlay(t, "/device-invites", http.StatusOK, body)
+		reviewRefreshProof(t, paths)
+		return paths, api
+	}
+	flows := map[string]func(t *testing.T, body string) outcome{
+		"replace": func(t *testing.T, body string) outcome {
+			paths, api := created(t, body)
+			result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": "1001"}}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return finish(t, paths, api, result.Complete)
+		},
+		"cleanup": func(t *testing.T, body string) outcome {
+			paths, api := created(t, body)
+			result, err := removePeople(paths.Registry, "alice")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return finish(t, paths, api, result.Complete)
+		},
+		"none-update": func(t *testing.T, body string) outcome {
+			paths, api := created(t, body)
+			result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Reconcile: map[string]string{"photos": "none"}}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return finish(t, paths, api, result.Complete)
+		},
+		"none-remove": func(t *testing.T, body string) outcome {
+			paths, api := created(t, body)
+			result, err := removePeopleContext(context.Background(), paths.Registry, "alice", map[string]string{"photos": "none"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return finish(t, paths, api, result.Complete)
+		},
+	}
+	for name, flow := range flows {
+		t.Run(name, func(t *testing.T) {
+			empty := flow(t, "[]")
+			if !empty.complete {
+				t.Fatalf("control: an empty array did not complete: %+v", empty)
+			}
+			if got := flow(t, "null"); !reflect.DeepEqual(got, empty) {
+				t.Errorf("null listing = %+v, want the same as the empty array %+v", got, empty)
+			}
+		})
 	}
 }
