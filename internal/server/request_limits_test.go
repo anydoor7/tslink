@@ -185,9 +185,81 @@ func (l *uploadJoinedAcceptListener) Accept() (net.Conn, error) {
 	return l.headerBudgetListener.Accept()
 }
 
+// The handshake budget of the lookup-stop table is a precondition of the test,
+// not the variable under test. headerBudgetListener.prepare creates the
+// HandshakeContext deadline from the service's header timeout; if that deadline
+// expires before the ClientHello is read, the server closes the connection and
+// GetCertificate is never called, so the test waits out its hang guard
+// (run 39929145527). Keep the budget far above the hang guard so a loaded host
+// cannot expire it. The deadline itself is pinned by
+// TestRequestLimitsTLSHandshakeLifecycle (stalled peer, no callback). This table
+// does not cover the budget expiring while the certificate callback is blocked;
+// that combination has no deterministic regression test here.
+//
+// To keep the budget from silently shrinking back to a value a slow peer can
+// outlast, the client sends its ClientHello only lookupStopHelloDelay after the
+// server has started reading from the connection. prepare creates the
+// deadline before HandshakeContext first reads, so the clock is already running
+// at that point and a budget shorter than the delay fails every run.
+const (
+	lookupStopHandshakeBudget = "1h"
+	lookupStopHelloDelay      = 150 * time.Millisecond
+)
+
+// firstReadListener wraps accepted connections below TLS so a test can see when
+// the server first reads from the transport. It leaves the *tls.Conn above it
+// untouched.
+type firstReadListener struct {
+	net.Listener
+	once  sync.Once
+	first chan struct{}
+}
+
+func (l *firstReadListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &firstReadConn{Conn: c, l: l}, nil
+}
+
+type firstReadConn struct {
+	net.Conn
+	l *firstReadListener
+}
+
+func (c *firstReadConn) Read(p []byte) (int, error) {
+	c.l.once.Do(func() { close(c.l.first) })
+	return c.Conn.Read(p)
+}
+
+// lookupStopClientHandshake dials, waits until the server has started its
+// handshake read, waits lookupStopHelloDelay more, then sends the ClientHello.
+func lookupStopClientHandshake(ctx context.Context, addr string, serverReading <-chan struct{}, cfg *tls.Config) error {
+	nc, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+	select {
+	case <-serverReading:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-time.After(lookupStopHelloDelay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return tls.Client(nc, cfg).HandshakeContext(ctx)
+}
+
 // Port the review's stop controls through the actual pinned SDK callback and a
 // loopback LocalAPI. GetCertificate owns a background context, so closing the
-// TLS connection and expiring HandshakeContext cannot release this dependency.
+// TLS connection cannot release this dependency. The test asserts the callback
+// is still running both before stop and when stop returns; the SDK gives the
+// callback its own one-minute deadline, so a stop that merely waits for the
+// callback to finish would otherwise look like a fast one.
 func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 	for _, capped := range []bool{false, true} {
 		for _, stop := range []string{"listener_close", "server_close", "shutdown_100ms", "shutdown_production_budget"} {
@@ -218,14 +290,15 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var transport net.Listener = tls.NewListener(raw, cfg)
+				serverReading := make(chan struct{})
+				var transport net.Listener = tls.NewListener(&firstReadListener{Listener: raw, first: serverReading}, cfg)
 				var limited *limitedListener
 				if capped {
 					limited = newLimitedListener(transport, 1, "http", "certificate").(*limitedListener)
 					transport = limited
 				}
 				srv := newHTTPServerFn(http.NotFoundHandler())
-				ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "100ms"}}, transport, nil).(*headerBudgetListener)
+				ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: lookupStopHandshakeBudget}}, transport, nil).(*headerBudgetListener)
 				acceptDone := make(chan struct{})
 				served := make(chan error, 1)
 				go func() {
@@ -235,11 +308,9 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				connectedDone := make(chan struct{})
 				go func() {
 					defer close(connectedDone)
-					c, err := tls.DialWithDialer(&net.Dialer{Timeout: testwait.Budget(t)}, "tcp", raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
-					if c != nil {
-						_ = c.Close()
-					}
-					connected <- err
+					ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
+					defer cancel()
+					connected <- lookupStopClientHandshake(ctx, raw.Addr().String(), serverReading, &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
 				}()
 				defer func() {
 					unblock()
@@ -259,6 +330,13 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				uploadWait(t, entered, "actual GetCertificate was not reached")
 				if capped && len(limited.sem) != 1 {
 					t.Fatal("handshake did not acquire cap")
+				}
+				// The contract is stop completing while the provider is still
+				// running, so first prove it is.
+				select {
+				case <-lookupDone:
+					t.Fatal("certificate provider returned before stop")
+				default:
 				}
 				// Completion while the provider is still blocked is the contract.
 				// Socket scheduling is bounded only by the testwait hang guard.
@@ -288,7 +366,12 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 					if err != nil {
 						t.Errorf("stop returned %v", err)
 					}
-					t.Logf("stop returned in %s with provider still blocked (budget %s)", time.Since(start), budget)
+					select {
+					case <-lookupDone:
+						t.Errorf("stop returned after %s only once the certificate provider had finished", time.Since(start))
+					default:
+						t.Logf("stop returned in %s with provider still blocked (budget %s)", time.Since(start), budget)
+					}
 				case <-time.After(testwait.Budget(t)):
 					t.Errorf("stop blocked for %s behind GetCertificate; shutdown context=%v", time.Since(start), ctx.Err())
 					unblock()
