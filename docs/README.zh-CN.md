@@ -20,7 +20,7 @@
 对 agent 说：把 dev server 分享出来，我要在手机上打开。
 ```
 
-手动做同样的事，前提是 dev server 已在 5173 端口监听。后面的命令要用 share 报告的名字，它和 `--name` 不一定相同，名字被占用时会是 web-2 这样的名字。
+手动做同样的事，前提是 dev server 已在 5173 端口监听。后面的命令要用 share 报告的名字，它和 `--name` 不一定相同，别的服务已经用了 web 时，会是 web-2 这样的名字。
 
 ```sh
 tslink share 5173 --name web   # 打印 Tailscale 登录链接（needs_login）或确切的 URL
