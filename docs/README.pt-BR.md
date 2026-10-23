@@ -5,14 +5,27 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Endereços privados para seus apps, na sua rede Tailscale.</strong></p>
-<p align="center">Abra-os nos seus próprios dispositivos. Compartilhe um com uma pessoa ou por link, até a data que você escolher.</p>
+<p align="center">O TSLink é uma CLI e um servidor MCP de código aberto que dá a cada app do seu computador um endereço privado <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, para que você ou seu coding agent possam abrir no celular um servidor de desenvolvimento em execução. Projeto independente, não feito pela Tailscale.</p>
+<p align="center">Seu celular precisa do app Tailscale, conectado à mesma tailnet.</p>
 <p align="center"><strong>Português (Brasil)</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Mais idiomas</a></p>
 
+```text
+# Claude Code, depois de instalar a CLI (veja Instalação abaixo)
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# Clientes MCP locais que usam JSON com mcpServers (outros: veja a configuração de MCP do seu cliente)
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+Peça ao seu agente: "Compartilhe o servidor de desenvolvimento para eu abrir no celular."
+```
+
+A mesma coisa, feita à mão, com o servidor de desenvolvimento já escutando na porta 5173. Com `--json`, o `share` informa o nome registrado em `data.name`. Use esse nome nos comandos seguintes: ele difere de `--name` quando esse nome já estava em uso, por exemplo `web-2`.
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web --json   # data.name; data.url, ou data.auth_url (um link de login do Tailscale) quando status é needs_login
+tslink url <name> --wait              # depois de concluir o login: a URL exata
+tslink remove <name>                  # quando terminar; pule se o share falhou. O servidor de desenvolvimento continua rodando
 ```
 
 <a id="installation"></a>
@@ -37,16 +50,50 @@ Para atualizar, execute `brew upgrade --cask tslink` ou `scoop update; scoop upd
 
 Pacotes Linux `.deb` e `.rpm` e builds para Windows estão na [versão mais recente](https://github.com/anydoor7/tslink/releases/latest). Na primeira vez que você compartilha um app, o TSLink mostra um link de login do Tailscale para ele. [Primeiros passos](getting-started.md)
 
+<a id="agents"></a>
+
+## Para agentes de IA
+
+Um servidor de desenvolvimento que um agente inicia em `localhost` fica fora do alcance do seu celular. O TSLink deixa o agente dar a ele um endereço privado, entregar a você a URL exata e remover o compartilhamento ao terminar. Seu celular precisa do app Tailscale, conectado à mesma tailnet.
+
+Testado em 2026-10-22 com Vite 8.3.5 e um iPhone 15 Pro: o agente compartilhou o servidor de desenvolvimento por MCP, o celular abriu a URL privada e a página foi atualizada ao salvar, sem recarregar manualmente.
+
+Para o Claude Code, instale primeiro a CLI e depois execute:
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+O plugin inclui uma [skill de pré-visualização](../skills/tslink-preview/SKILL.md) e a conexão MCP abaixo. O marketplace fica neste repositório e busca o plugin em [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin). A skill de referência fica aqui; o plugin leva uma cópia verificada pela CI. Outros agentes podem usar a mesma skill ou conectar o MCP diretamente. Esta integração exige a CLI local e não funciona no chat do claude.ai. [Configuração e cadastro](agent-integrations.md)
+
+Para um cliente MCP local que usa JSON com `mcpServers` (outros clientes: veja as instruções de configuração de MCP deles e o [guia de clientes MCP](mcp-clients.md)):
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **Um nome por servidor de desenvolvimento.** Cada compartilhamento recebe seu próprio endereço privado `https://<name>.<tailnet>.ts.net`, no caminho raiz e na porta 443. Se o nome já estiver em uso, ganha um sufixo numérico; por isso, use a URL que o agente recebe de volta.
+- **Cada app novo precisa de uma pessoa.** Na configuração padrão, cada novo nó de app exige que uma pessoa conclua o cadastro no Tailscale. Se o resultado for `needs_login`, conclua o login e depois execute `tslink url <name> --wait` para obter a URL exata. À parte, um nome novo pode levar um tempo para ficar acessível: de 36 a 38 segundos nas nossas duas execuções de teste.
+- **Quem pode abrir.** Por padrão, os dispositivos da tailnet que a sua política permite. O `share` do MCP aceita `allow` para limitar ao seu login; pela CLI, use `tslink add web --proxy localhost:5173 --allow you@example.com`. Os nomes aparecem nos registros públicos de certificados, então não são secretos.
+- **Edita, salva, vê.** Ao salvar o código, a página é atualizada no seu celular. As regras de Host e Origin do seu próprio app ainda podem bloquear requisições: no nosso teste o Vite não precisou mudar `allowedHosts`; o Next.js não foi testado e ainda exige `allowedDevOrigins`.
+- **Limpeza.** O agente chama `unshare`, ou você executa `tslink remove <name>`, sempre com o nome que o resultado do share devolveu. A remoção cancela o registro do compartilhamento e tenta excluir o nó dele na tailnet quando o TSLink consegue provar que é o dono; por isso, confira no resultado os campos de limpeza ou de estado retido. Ela não para o servidor de desenvolvimento.
+- **CLI ou MCP.** Os comandos de gerenciamento aceitam `--json` e retornam resultados versionados; `tslink mcp` oferece operações de apps e acesso via MCP.
+- **Um arquivo, não a pasta.** Um agente pode compartilhar só o próprio relatório HTML autocontido com `tslink share ./report.html`; os outros arquivos da pasta continuam inacessíveis.
+- **Papéis limitados.** `viewer`, `app-operator` ou `people-manager`, restritos aos apps que você indicar; compartilhar um app novo exige o papel `owner`. `tslink mcp-audit` mostra o que um agente mudou. Os papéis limitam as ferramentas do TSLink, não o próprio shell do agente.
+
+[Guia de agentes](agent-quickstart.md) · [Permissões MCP](mcp-scopes.md) · [MCP remoto](remote-mcp.md)
+
 <a id="why"></a>
 
 ## Quando você precisa do TSLink
 
-Para um app nos seus próprios dispositivos, o Serve basta. O TSLink junta endereços de apps, prazos e mudanças de acesso em um só fluxo.
+O Serve basta para um app que você mesmo inicia e abre no seu celular. O TSLink é para os servidores de desenvolvimento que um agente inicia, muitas vezes vários, quando cada um deve ter seu próprio nome privado e os passos de compartilhar, obter a URL e limpar já vêm prontos na CLI, no MCP e em uma skill do Claude Code.
 
 | Tarefa | Só Tailscale | TSLink |
 |---|---|---|
-| Um app web no celular | `tailscale serve 3000` basta | `tslink share 3000` |
-| Vários apps, cada um com seu nome | Configurar Services, ou nós separados | Um `share`/`add` por app; registrar cada nó |
+| Vários servidores de desenvolvimento que seu agente inicia, um nome para cada | O Serve define rotas no nível do dispositivo sob um nome por máquina; o Services exige, para cada nome, uma definição, uma aprovação e um host com tags | Um nó por app, com compartilhamento, consulta da URL e limpeza prontos na CLI (`share`, `url`, `remove`), no MCP (`share`, `url`, `unshare`) e em uma skill |
+| Um app que você mesmo inicia, no celular | `tailscale serve 3000` basta | `tslink share 3000` |
 | Uma pessoa, um app, sete dias | Regras de política, depois uma ferramenta JIT ou remoção manual | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/arquivos) |
 | Link no navegador, três dias | Funnel público; adicionar um controle de acesso e um desligamento agendado | `tslink guest create photos --for 3d --public --print-link` (só HTTP) |
 
@@ -74,22 +121,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 Links de convidado e novas URLs públicas expiram e só funcionam para apps web; pastas, arquivos e portas TCP continuam privados. [Pessoas](people.md) · [Links de convidado](guest-links.md) · [Acesso público](funnel.md)
-
-<a id="agents"></a>
-
-## Para agentes de IA
-
-Um servidor de desenvolvimento que um agente inicia em `localhost` fica fora do alcance do seu celular. O TSLink deixa o agente dar a ele um endereço privado, informar a URL exata e removê-lo ao terminar.
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI ou MCP.** Os comandos de gerenciamento aceitam `--json` e retornam resultados versionados; `tslink mcp` oferece operações de apps e acesso via MCP.
-- **Um arquivo, não a pasta.** Um agente pode compartilhar só o próprio relatório HTML com `tslink share ./report.html`; os outros arquivos da pasta continuam inacessíveis.
-- **Papéis limitados.** `viewer`, `app-operator` ou `people-manager`, restritos aos apps que você indicar. `tslink mcp-audit` mostra o que um agente mudou. Os papéis limitam as ferramentas do TSLink, não o próprio shell do agente.
-
-[Guia de agentes](agent-quickstart.md) · [Permissões MCP](mcp-scopes.md) · [MCP remoto](remote-mcp.md)
 
 <a id="architecture"></a>
 

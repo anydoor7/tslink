@@ -5,14 +5,27 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Uygulamalarınız için Tailscale ağınızda özel adresler.</strong></p>
-<p align="center">Kendi cihazlarınızdan açın. Birini bir kişiyle ya da bir bağlantıyla, seçtiğiniz tarihe kadar paylaşın.</p>
+<p align="center">TSLink, bilgisayarınızdaki her uygulamaya <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> biçiminde özel bir adres veren açık kaynaklı bir CLI ve MCP sunucusudur; böylece siz ya da coding agent'ınız çalışan bir geliştirme sunucusunu telefonunuzda açabilirsiniz. Bağımsız bir projedir, Tailscale tarafından yapılmamıştır.</p>
+<p align="center">Telefonunuzda Tailscale uygulaması olmalı ve aynı tailnet'e giriş yapılmış olmalı.</p>
 <p align="center"><strong>Türkçe</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Diğer diller</a></p>
 
+```text
+# Claude Code, CLI'ı kurduktan sonra (aşağıdaki Kurulum bölümüne bakın)
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# mcpServers JSON'u kullanan yerel MCP istemcileri (diğerleri için istemcinizin MCP kurulumuna bakın)
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+Ajanınıza söyleyin: "Geliştirme sunucusunu paylaş, telefonumda açabileyim."
+```
+
+Aynı işlemin elle yapılışı; geliştirme sunucusunun 5173 numaralı bağlantı noktasını zaten dinlediği varsayılır. `--json` ile `share`, kaydedilen adı `data.name` içinde bildirir. Sonraki komutlarda bu adı kullanın: `--name` ile verdiğiniz ad alınmışsa, örneğin `web-2` gibi farklı olur.
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web --json   # data.name; data.url, status needs_login ise data.auth_url (bir Tailscale giriş bağlantısı)
+tslink url <name> --wait              # girişi bitirdikten sonra: tam URL
+tslink remove <name>                  # işiniz bitince; share başarısız olduysa atlayın. Geliştirme sunucusu çalışmaya devam eder
 ```
 
 <a id="installation"></a>
@@ -37,16 +50,50 @@ Yükseltmek için `brew upgrade --cask tslink` veya `scoop update; scoop update 
 
 Linux `.deb` ve `.rpm` paketleri ile Windows sürümleri [son sürüm](https://github.com/anydoor7/tslink/releases/latest) sayfasında. Bir uygulamayı ilk kez paylaştığınızda TSLink onun için bir Tailscale oturum açma bağlantısı gösterir. [Başlarken](getting-started.md)
 
+<a id="agents"></a>
+
+## Yapay zekâ ajanları için
+
+Bir ajanın `localhost` üzerinde başlattığı geliştirme sunucusuna telefonunuzdan ulaşamazsınız. TSLink, ajanın ona özel bir adres vermesini, tam URL'yi size iletmesini ve iş bitince paylaşımı kaldırmasını sağlar. Telefonunuzda Tailscale uygulaması olmalı ve aynı tailnet'e giriş yapılmış olmalı.
+
+2026-10-22 tarihinde Vite 8.3.5 ve bir iPhone 15 Pro ile denendi: ajan geliştirme sunucusunu MCP ile paylaştı, telefon özel URL'yi açtı ve sayfa kaydedince elle yenilemeye gerek kalmadan güncellendi.
+
+Claude Code için önce CLI'ı kurun, sonra şunu çalıştırın:
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+Eklenti, bir [önizleme skill'i](../skills/tslink-preview/SKILL.md) ve aşağıdaki MCP bağlantısını içerir. Marketplace bu depoda kalır ve eklentiyi [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin) deposundan alır. Esas skill burada durur; eklentide CI ile denetlenen bir kopya bulunur. Diğer ajanlar aynı skill'i kullanabilir ya da MCP'ye doğrudan bağlanabilir. Bu entegrasyon yerel CLI gerektirir ve claude.ai sohbetinde çalışmaz. [Kurulum ve kayıt](agent-integrations.md)
+
+`mcpServers` JSON'u kullanan yerel bir MCP istemcisi için (diğer istemciler için kendi MCP kurulum yönergelerine ve [MCP istemcileri rehberine](mcp-clients.md) bakın):
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **Geliştirme sunucusu başına bir ad.** Her paylaşım, kök yolda ve 443 numaralı bağlantı noktasında kendi özel adresini `https://<name>.<tailnet>.ts.net` alır. Alınmış bir ada sayı eki eklenir; bu yüzden ajanın geri aldığı URL'yi kullanın.
+- **Her yeni uygulama için bir kişi gerekir.** Varsayılan kurulumda her yeni uygulama düğümü için bir kişinin Tailscale kaydını tamamlaması gerekir. Sonuç `needs_login` ise girişi tamamlayın, ardından tam URL için `tslink url <name> --wait` komutunu çalıştırın. Ayrıca yeni bir adın erişilebilir olması biraz sürebilir: iki test çalıştırmamızda 36 ile 38 saniye.
+- **Kimler açabilir.** Varsayılan olarak politikanızın izin verdiği tailnet cihazları. MCP `share`, erişimi yalnızca kendi girişinizle sınırlamak için `allow` kabul eder; CLI'dan `tslink add web --proxy localhost:5173 --allow you@example.com` kullanın. Adlar herkese açık sertifika günlüklerinde görünür, yani gizli değildir.
+- **Düzenle, kaydet, gör.** Kodu kaydetmek telefonunuzdaki sayfayı günceller. Uygulamanızın kendi Host ve Origin kuralları istekleri yine de engelleyebilir: testimizde Vite için `allowedHosts` değişikliği gerekmedi; Next.js denenmedi ve hâlâ `allowedDevOrigins` gerektiriyor.
+- **Temizlik.** Ajan `unshare` çağırır ya da siz `tslink remove <name>` çalıştırırsınız; her zaman share sonucunun döndürdüğü adla. Kaldırma, paylaşımın kaydını siler ve TSLink düğümün kendisine ait olduğunu kanıtlayabildiğinde tailnet düğümünü silmeyi dener; bu yüzden sonuçtaki temizlik veya korunan durum alanlarına bakın. Geliştirme sunucusunu durdurmaz.
+- **CLI veya MCP.** Yönetim komutları `--json` alır ve sürümlü sonuçlar döndürür; `tslink mcp` uygulama ve erişim işlemlerini MCP üzerinden sunar.
+- **Klasör değil, tek dosya.** Bir ajan `tslink share ./report.html` ile yalnızca kendi içinde tamamlanmış HTML raporunu paylaşabilir; o klasördeki diğer dosyalara erişilemez.
+- **Sınırlı roller.** `viewer`, `app-operator` veya `people-manager`; yalnızca belirttiğiniz uygulamalarla sınırlıdır. Yeni bir uygulamayı paylaşmak için `owner` rolü gerekir. `tslink mcp-audit` bir ajanın neleri değiştirdiğini gösterir. Roller TSLink'in araçlarını sınırlar, ajanın kendi kabuğunu değil.
+
+[Ajan kılavuzu](agent-quickstart.md) · [MCP yetkileri](mcp-scopes.md) · [Uzak MCP](remote-mcp.md)
+
 <a id="why"></a>
 
 ## TSLink'e ne zaman ihtiyaç duyarsınız
 
-Kendi cihazlarınızda tek bir uygulama için Serve yeterli. TSLink uygulama adreslerini, süreleri ve erişim değişikliklerini tek bir akışta toplar.
+Kendi başlattığınız ve kendi telefonunuzda açtığınız tek bir uygulama için Serve yeterli. TSLink, bir ajanın başlattığı, çoğu zaman birden fazla olan geliştirme sunucuları içindir: her birine kendi özel adı verilmesi ve paylaşma, URL alma ve temizleme adımlarının CLI'da, MCP'de ve bir Claude Code skill'inde hazır gelmesi istendiğinde.
 
 | İş | Yalnızca Tailscale | TSLink |
 |---|---|---|
-| Telefonda tek bir web uygulaması | `tailscale serve 3000` yeterli | `tslink share 3000` |
-| Birden çok uygulama, her birine ayrı ad | Services kurulumu veya ayrı düğümler | Her uygulama için bir `share`/`add`; her düğümü kaydedin |
+| Ajanınızın başlattığı birden fazla geliştirme sunucusu, her birine bir ad | Serve, makine başına tek ad altında cihaz düzeyinde rotalar tanımlar; Services her ad için bir tanım, onay ve etiketli bir ana makine ister | Uygulama başına bir düğüm; paylaşma, URL alma ve temizleme CLI'da (`share`, `url`, `remove`), MCP'de (`share`, `url`, `unshare`) ve bir skill'de hazır |
+| Kendi başlattığınız tek bir uygulama, telefonunuzda | `tailscale serve 3000` yeterli | `tslink share 3000` |
 | Bir kişi, bir uygulama, yedi gün | Politika kuralları, ardından bir JIT aracı veya elle kaldırma | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/dosyalar) |
 | Tarayıcı bağlantısı, üç gün | Herkese açık Funnel; erişim kapısını ve zamanlanmış kapatmayı siz ekleyin | `tslink guest create photos --for 3d --public --print-link` (yalnızca HTTP) |
 
@@ -74,22 +121,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 Konuk bağlantılarının ve yeni herkese açık URL'lerin süresi dolar ve yalnızca web uygulamalarında çalışır; klasörler, dosyalar ve TCP portları özel kalır. [Kişiler](people.md) · [Konuk bağlantıları](guest-links.md) · [Herkese açık erişim](funnel.md)
-
-<a id="agents"></a>
-
-## Yapay zekâ ajanları için
-
-Bir ajanın `localhost` üzerinde başlattığı geliştirme sunucusuna telefonunuzdan ulaşamazsınız. TSLink, ajanın ona özel bir adres vermesini, tam URL'yi bildirmesini ve iş bitince kaldırmasını sağlar.
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI veya MCP.** Yönetim komutları `--json` alır ve sürümlü sonuçlar döndürür; `tslink mcp` uygulama ve erişim işlemlerini MCP üzerinden sunar.
-- **Klasör değil, tek bir dosya.** Bir ajan `tslink share ./report.html` ile yalnızca HTML raporunu paylaşabilir; o klasördeki diğer dosyalara erişilemez.
-- **Sınırlı roller.** `viewer`, `app-operator` veya `people-manager`, belirttiğiniz uygulamalarla sınırlı. `tslink mcp-audit` bir ajanın neyi değiştirdiğini gösterir. Roller TSLink'in araçlarını sınırlar, ajanın kendi kabuğunu değil.
-
-[Ajan kılavuzu](agent-quickstart.md) · [MCP yetkileri](mcp-scopes.md) · [Uzak MCP](remote-mcp.md)
 
 <a id="architecture"></a>
 

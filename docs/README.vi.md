@@ -5,14 +5,27 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Địa chỉ riêng cho ứng dụng của bạn, trên mạng Tailscale của bạn.</strong></p>
-<p align="center">Mở chúng từ thiết bị của chính bạn. Chia sẻ cho một người hoặc qua một liên kết, đến ngày bạn chọn.</p>
+<p align="center">TSLink là một CLI và máy chủ MCP mã nguồn mở, cấp cho mỗi ứng dụng trên máy tính của bạn một địa chỉ riêng <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, để bạn hoặc coding agent của bạn có thể dùng điện thoại truy cập máy chủ phát triển đang chạy trên máy tính. Dự án độc lập, không do Tailscale tạo ra.</p>
+<p align="center">Điện thoại của bạn cần có ứng dụng Tailscale, đã đăng nhập vào cùng tailnet.</p>
 <p align="center"><strong>Tiếng Việt</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Ngôn ngữ khác</a></p>
 
+```text
+# Claude Code, sau khi cài CLI (xem Cài đặt bên dưới)
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# Các MCP client cục bộ dùng JSON mcpServers (client khác: xem phần thiết lập MCP của client đó)
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+Hãy nói với tác tử: "Chia sẻ máy chủ phát triển để tôi mở được trên điện thoại."
+```
+
+Làm cùng việc đó thủ công, khi máy chủ phát triển đã lắng nghe ở cổng 5173. Với `--json`, `share` báo tên đã đăng ký trong `data.name`. Hãy dùng tên đó trong các lệnh sau: nó khác `--name` khi tên đó đã bị dùng, ví dụ `web-2`.
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web --json   # data.name; data.url, hoặc data.auth_url (liên kết đăng nhập Tailscale) khi status là needs_login
+tslink url <name> --wait              # sau khi đăng nhập xong: URL chính xác
+tslink remove <name>                  # khi xong việc; bỏ qua nếu share thất bại. Máy chủ phát triển vẫn chạy
 ```
 
 <a id="installation"></a>
@@ -37,16 +50,50 @@ scoop install anydoor7/tslink
 
 Gói `.deb` và `.rpm` cho Linux cùng bản dựng cho Windows có trong [bản phát hành mới nhất](https://github.com/anydoor7/tslink/releases/latest). Lần đầu bạn chia sẻ một ứng dụng, TSLink sẽ hiện một liên kết đăng nhập Tailscale cho ứng dụng đó. [Bắt đầu](getting-started.md)
 
+<a id="agents"></a>
+
+## Dành cho tác tử AI
+
+Máy chủ phát triển mà tác tử khởi động trên `localhost` thì điện thoại của bạn không với tới được. TSLink cho phép tác tử cấp cho nó một địa chỉ riêng, đưa bạn URL chính xác và gỡ bỏ phần chia sẻ khi xong. Điện thoại của bạn cần có ứng dụng Tailscale, đã đăng nhập vào cùng tailnet.
+
+Đã thử ngày 2026-10-22 với Vite 8.3.5 và iPhone 15 Pro: tác tử chia sẻ máy chủ phát triển qua MCP, điện thoại mở URL riêng, và trang tự cập nhật khi lưu mà không cần tải lại thủ công.
+
+Với Claude Code, hãy cài CLI trước, rồi chạy:
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+Plugin gồm một [skill xem trước](../skills/tslink-preview/SKILL.md) và kết nối MCP bên dưới. Marketplace nằm trong kho này và lấy plugin từ [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin). Skill gốc nằm ở đây; plugin mang theo một bản sao được CI kiểm tra. Các tác tử khác có thể dùng cùng skill này hoặc kết nối MCP trực tiếp. Tích hợp này cần CLI cục bộ và không chạy trong trò chuyện trên claude.ai. [Thiết lập và đăng ký](agent-integrations.md)
+
+Với MCP client cục bộ dùng JSON `mcpServers` (client khác: xem hướng dẫn thiết lập MCP của họ và [hướng dẫn MCP client](mcp-clients.md)):
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **Mỗi máy chủ phát triển một tên.** Mỗi lần chia sẻ có địa chỉ riêng `https://<name>.<tailnet>.ts.net` ở đường dẫn gốc, cổng 443. Nếu tên đã bị dùng, hệ thống thêm hậu tố số, nên hãy dùng URL mà tác tử nhận lại.
+- **Mỗi ứng dụng mới cần một người.** Ở thiết lập mặc định, mỗi nút ứng dụng mới cần một người hoàn tất việc đăng ký với Tailscale. Nếu kết quả là `needs_login`, hãy đăng nhập xong rồi chạy `tslink url <name> --wait` để lấy URL chính xác. Ngoài ra, một tên mới có thể mất một lúc mới truy cập được: từ 36 đến 38 giây trong hai lần chạy thử của chúng tôi.
+- **Ai mở được.** Mặc định là các thiết bị trong tailnet mà chính sách của bạn cho phép. `share` của MCP nhận `allow` để giới hạn ở tài khoản của bạn; từ CLI, dùng `tslink add web --proxy localhost:5173 --allow you@example.com`. Tên xuất hiện trong nhật ký chứng chỉ công khai nên không phải bí mật.
+- **Sửa, lưu, xem kết quả.** Lưu mã sẽ làm trang trên điện thoại cập nhật. Quy tắc Host và Origin của chính ứng dụng vẫn có thể chặn yêu cầu: trong thử nghiệm của chúng tôi, Vite không cần đổi `allowedHosts`; Next.js chưa được thử và vẫn cần `allowedDevOrigins`.
+- **Dọn dẹp.** Tác tử gọi `unshare`, hoặc bạn chạy `tslink remove <name>`, luôn dùng tên mà kết quả share trả về. Việc gỡ sẽ hủy đăng ký phần chia sẻ và cố xóa nút tailnet của nó khi TSLink chứng minh được mình sở hữu nút đó, nên hãy xem các trường dọn dẹp hoặc trạng thái được giữ lại trong kết quả. Nó không dừng máy chủ phát triển.
+- **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp các thao tác về ứng dụng và quyền truy cập qua MCP.
+- **Một tệp, không phải cả thư mục.** Tác tử có thể chỉ chia sẻ báo cáo HTML tự chứa của nó bằng `tslink share ./report.html`; các tệp khác trong thư mục đó vẫn không truy cập được.
+- **Vai trò giới hạn.** `viewer`, `app-operator` hoặc `people-manager`, giới hạn trong các ứng dụng bạn chỉ định; chia sẻ một ứng dụng mới cần vai trò `owner`. `tslink mcp-audit` cho biết tác tử đã thay đổi gì. Vai trò chỉ giới hạn công cụ của TSLink, không giới hạn shell riêng của tác tử.
+
+[Hướng dẫn tác tử](agent-quickstart.md) · [Quyền MCP](mcp-scopes.md) · [MCP từ xa](remote-mcp.md)
+
 <a id="why"></a>
 
 ## Khi nào bạn cần TSLink
 
-Với một ứng dụng trên thiết bị của bạn, Serve là đủ. TSLink gom địa chỉ ứng dụng, thời hạn và thay đổi quyền truy cập vào một quy trình.
+Với một ứng dụng bạn tự khởi động và mở trên điện thoại của mình, Serve là đủ. TSLink dành cho các máy chủ phát triển do tác tử khởi động, thường là nhiều cái, khi mỗi cái cần một tên riêng và các bước chia sẻ, lấy URL và dọn dẹp được làm sẵn trong CLI, MCP và một skill của Claude Code.
 
 | Việc cần làm | Chỉ Tailscale | TSLink |
 |---|---|---|
-| Một ứng dụng web trên điện thoại | `tailscale serve 3000` là đủ | `tslink share 3000` |
-| Nhiều ứng dụng, mỗi cái một tên | Thiết lập Services, hoặc các nút riêng | Mỗi ứng dụng một lệnh `share`/`add`; đăng ký từng nút |
+| Nhiều máy chủ phát triển do tác tử của bạn khởi động, mỗi cái một tên | Serve đặt các tuyến ở cấp thiết bị dưới một tên cho mỗi máy; Services yêu cầu với mỗi tên một định nghĩa, một bước phê duyệt và một máy chủ có gắn thẻ | Mỗi ứng dụng một nút, với việc chia sẻ, lấy URL và dọn dẹp được làm sẵn trong CLI (`share`, `url`, `remove`), MCP (`share`, `url`, `unshare`) và một skill |
+| Một ứng dụng bạn tự khởi động, trên điện thoại | `tailscale serve 3000` là đủ | `tslink share 3000` |
 | Một người, một ứng dụng, bảy ngày | Quy tắc chính sách, rồi dùng công cụ JIT hoặc tự gỡ | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/tệp) |
 | Liên kết trình duyệt, ba ngày | Funnel công khai; tự thêm lớp kiểm soát truy cập và lịch tắt | `tslink guest create photos --for 3d --public --print-link` (chỉ HTTP) |
 
@@ -74,22 +121,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 Liên kết khách và URL công khai mới sẽ hết hạn và chỉ dùng được cho ứng dụng web; thư mục, tệp và cổng TCP vẫn riêng tư. [Người dùng](people.md) · [Liên kết khách](guest-links.md) · [Truy cập công khai](funnel.md)
-
-<a id="agents"></a>
-
-## Dành cho tác tử AI
-
-Máy chủ phát triển mà tác tử khởi động trên `localhost` thì điện thoại của bạn không với tới được. TSLink cho phép tác tử cấp cho nó một địa chỉ riêng, báo URL chính xác và gỡ bỏ khi xong.
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp các thao tác về ứng dụng và quyền truy cập qua MCP.
-- **Một tệp, không phải cả thư mục.** Tác tử có thể chỉ chia sẻ báo cáo HTML của nó bằng `tslink share ./report.html`; các tệp khác trong thư mục đó vẫn không truy cập được.
-- **Vai trò giới hạn.** `viewer`, `app-operator` hoặc `people-manager`, chỉ trong các ứng dụng bạn chỉ định. `tslink mcp-audit` cho thấy tác tử đã thay đổi gì. Vai trò giới hạn công cụ của TSLink, không giới hạn shell riêng của tác tử.
-
-[Hướng dẫn tác tử](agent-quickstart.md) · [Quyền MCP](mcp-scopes.md) · [MCP từ xa](remote-mcp.md)
 
 <a id="architecture"></a>
 
