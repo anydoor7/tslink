@@ -2188,19 +2188,60 @@ func makeMCPToolErrorResult(err error, installed ...DaemonInstalled) *mcp.CallTo
 	}
 }
 
+// mcpHelpToolsToken marks where `tslink mcp --help` names the registered tools.
+const mcpHelpToolsToken = "@MCP_TOOLS@"
+
+// mcpRegisteredToolNames returns the tool names of the one registry, in
+// registration order.
+func mcpRegisteredToolNames() []string {
+	names := make([]string, 0, len(mcpToolDefinitions))
+	for _, definition := range mcpToolDefinitions {
+		names = append(names, definition.Name)
+	}
+	return names
+}
+
+// mcpRenderHelpTools fills mcpHelpToolsToken in a help template. With no names
+// it points at tools/list instead of listing anything, which is what the
+// command's Long field holds until help is actually printed.
+func mcpRenderHelpTools(template string, names []string) string {
+	var section string
+	if len(names) == 0 {
+		section = `Send a tools/list request to "tslink mcp" to see the current set.`
+	} else {
+		section = fmt.Sprintf("The server exposes %d tools (a reduced --scope lists fewer; a tools/list\nrequest returns the set for the session):\n\n%s", len(names), mcpWrapNames(names, "  ", 78))
+	}
+	return strings.ReplaceAll(template, mcpHelpToolsToken, section)
+}
+
+// mcpWrapNames lays names out comma-separated, wrapped at width columns.
+func mcpWrapNames(names []string, indent string, width int) string {
+	var b strings.Builder
+	line := indent
+	for i, name := range names {
+		word := name
+		if i < len(names)-1 {
+			word += ","
+		}
+		if line != indent && len(line)+1+len(word) > width {
+			b.WriteString(line)
+			b.WriteByte('\n')
+			line = indent
+		}
+		if line != indent {
+			line += " "
+		}
+		line += word
+	}
+	b.WriteString(line)
+	return b.String()
+}
+
 func init() {
 	var scopeRole, scopeApps, scopeMax string
 	var scopeInventory bool
-	mcpCmd := &cobra.Command{
-		Use:   "mcp",
-		Short: "Run the TSLink MCP server over stdio",
-		Long: `Run a local Model Context Protocol server using newline-delimited JSON-RPC
-over stdin/stdout. The server exposes the per-service surface of the CLI:
-share, add, list, unshare, status, url, tags_list, tags_set, access_explain,
-access_log, access_summary,
-doctor, logs, invite_user, invite_device, invite_list, invite_revoke,
-invite_resend, template_list, template_plan, and template_apply. Run
-"tslink mcp" and send a tools/list request to see the current set.
+	mcpLong := `Run a local Model Context Protocol server using newline-delimited JSON-RPC
+over stdin/stdout. ` + mcpHelpToolsToken + `
 
 Protocol handling comes from the official Go SDK, so this server speaks the
 current MCP revision ` + mcpProtocolVersion + ` and negotiates down to any of
@@ -2240,8 +2281,12 @@ waiting for its URL is rolled back; a second signal exits at once.
 Some inputs end the session and drop the answers of calls still in flight,
 and nothing after them is read: malformed JSON, a JSON value that is not a
 JSON-RPC message, a JSON-RPC batch, and a record longer than ` + fmt.Sprint(mcpMaxRecordBytes) + ` bytes.
-A request that reuses the id of a call still in flight gets no answer.`,
-		Args: cobra.NoArgs,
+A request that reuses the id of a call still in flight gets no answer.`
+	mcpCmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Run the TSLink MCP server over stdio",
+		Long:  mcpRenderHelpTools(mcpLong, nil),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOutput(cmd) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Error: --json is not valid with tslink mcp; stdout is reserved for JSON-RPC frames")
@@ -2263,6 +2308,13 @@ A request that reuses the id of a call still in flight gets no answer.`,
 			return runMCPCommand(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), actions)
 		},
 	}
+	// The tool list is read from mcpToolDefinitions when help is printed, not
+	// when this command is built: the registry is filled by init functions in
+	// several files, some of which run after this one.
+	mcpCmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		c.Long = mcpRenderHelpTools(mcpLong, mcpRegisteredToolNames())
+		rootCmd.HelpFunc()(c, args)
+	})
 	mcpCmd.Flags().StringVar(&scopeRole, "scope", "owner", "MCP role: owner, viewer, app-operator or people-manager")
 	mcpCmd.Flags().StringVar(&scopeApps, "apps", "", "Comma-separated apps visible to the reduced MCP session")
 	mcpCmd.Flags().StringVar(&scopeMax, "max-duration", "", "Maximum per-app people grant duration (reduced operator default: 24h)")
