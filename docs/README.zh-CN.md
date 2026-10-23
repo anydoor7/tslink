@@ -5,14 +5,26 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>你的应用，在你的 Tailscale 网络里有私有地址。</strong></p>
-<p align="center">用自己的设备打开。可以把应用分享给某个人，也可以通过链接分享，有效期到你选的日期。</p>
+<p align="center">TSLink 是开源的命令行工具和 MCP 服务，给你电脑上的每个应用一个形如 <code>&lt;名字&gt;.&lt;tailnet&gt;.ts.net</code> 的私有 HTTPS 地址，让你或你的 coding agent 能在手机上打开正在运行的 dev server。TSLink 是独立项目，不是 Tailscale 出品。</p>
+<p align="center">手机需要装 Tailscale，并登录同一个 tailnet。</p>
 <p align="center"><a href="../README.md">English</a> · <strong>简体中文</strong> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">更多语言</a></p>
 
+```text
+# Claude Code，先装好命令行工具（见下面的安装）
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# 其他 MCP 客户端
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+对 agent 说：把 dev server 分享出来，我要在手机上打开。
+```
+
+手动做同样的事，前提是 dev server 已在 5173 端口监听：
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web   # 打印确切的 URL；名字没被占用时是 https://web.<你的 tailnet>.ts.net
+tslink remove web              # 用完移除；dev server 继续运行
 ```
 
 <a id="installation"></a>
