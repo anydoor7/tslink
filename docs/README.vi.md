@@ -5,7 +5,7 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center">TSLink là một CLI và máy chủ MCP mã nguồn mở, cấp cho mỗi ứng dụng trên máy tính của bạn một địa chỉ riêng <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, để bạn hoặc coding agent của bạn mở được máy chủ phát triển đang chạy trên điện thoại. Dự án độc lập, không do Tailscale tạo ra.</p>
+<p align="center">TSLink là một CLI và máy chủ MCP mã nguồn mở, cấp cho mỗi ứng dụng trên máy tính của bạn một địa chỉ riêng <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, để bạn hoặc coding agent của bạn có thể dùng điện thoại truy cập máy chủ phát triển đang chạy trên máy tính. Dự án độc lập, không do Tailscale tạo ra.</p>
 <p align="center">Điện thoại của bạn cần có ứng dụng Tailscale, đã đăng nhập vào cùng tailnet.</p>
 <p align="center"><strong>Tiếng Việt</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Ngôn ngữ khác</a></p>
 
@@ -76,7 +76,7 @@ Với MCP client cục bộ dùng JSON `mcpServers` (client khác: xem hướng 
 - **Mỗi máy chủ phát triển một tên.** Mỗi lần chia sẻ có địa chỉ riêng `https://<name>.<tailnet>.ts.net` ở đường dẫn gốc, cổng 443. Nếu tên đã bị dùng, hệ thống thêm hậu tố số, nên hãy dùng URL mà tác tử nhận lại.
 - **Mỗi ứng dụng mới cần một người.** Ở thiết lập mặc định, mỗi nút ứng dụng mới cần một người hoàn tất việc đăng ký với Tailscale. Nếu kết quả là `needs_login`, hãy đăng nhập xong rồi chạy `tslink url <name> --wait` để lấy URL chính xác. Ngoài ra, một tên mới có thể mất một lúc mới truy cập được: từ 36 đến 38 giây trong hai lần chạy thử của chúng tôi.
 - **Ai mở được.** Mặc định là các thiết bị trong tailnet mà chính sách của bạn cho phép. `share` của MCP nhận `allow` để giới hạn ở tài khoản của bạn; từ CLI, dùng `tslink add web --proxy localhost:5173 --allow you@example.com`. Tên xuất hiện trong nhật ký chứng chỉ công khai nên không phải bí mật.
-- **Sửa, lưu, thấy ngay.** Lưu mã sẽ làm trang trên điện thoại cập nhật. Quy tắc Host và Origin của chính ứng dụng vẫn có thể chặn yêu cầu: trong thử nghiệm của chúng tôi, Vite không cần đổi `allowedHosts`; Next.js chưa được thử và vẫn cần `allowedDevOrigins`.
+- **Sửa, lưu, xem kết quả.** Lưu mã sẽ làm trang trên điện thoại cập nhật. Quy tắc Host và Origin của chính ứng dụng vẫn có thể chặn yêu cầu: trong thử nghiệm của chúng tôi, Vite không cần đổi `allowedHosts`; Next.js chưa được thử và vẫn cần `allowedDevOrigins`.
 - **Dọn dẹp.** Tác tử gọi `unshare`, hoặc bạn chạy `tslink remove <name>`, luôn dùng tên mà kết quả share trả về. Việc gỡ sẽ hủy đăng ký phần chia sẻ và cố xóa nút tailnet của nó khi TSLink chứng minh được mình sở hữu nút đó, nên hãy xem các trường dọn dẹp hoặc trạng thái được giữ lại trong kết quả. Nó không dừng máy chủ phát triển.
 - **CLI hoặc MCP.** Các lệnh quản lý nhận `--json` và trả về kết quả có phiên bản; `tslink mcp` cung cấp các thao tác về ứng dụng và quyền truy cập qua MCP.
 - **Một tệp, không phải cả thư mục.** Tác tử có thể chỉ chia sẻ báo cáo HTML tự chứa của nó bằng `tslink share ./report.html`; các tệp khác trong thư mục đó vẫn không truy cập được.
