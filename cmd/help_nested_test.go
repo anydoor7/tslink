@@ -132,7 +132,12 @@ func mcpHelpToolNames(t *testing.T, help string) (count int, names []string) {
 // naming a hand-kept subset again: the list must equal mcpToolDefinitions,
 // which is also what tools/list serves an owner session.
 func TestCompiledMCPHelpListsTheRegisteredTools(t *testing.T) {
-	want := mcpRegisteredToolNames()
+	// Built straight from the registry, not via mcpRegisteredToolNames, so a
+	// helper that drops a name cannot agree with itself here.
+	want := make([]string, 0, len(mcpToolDefinitions))
+	for _, definition := range mcpToolDefinitions {
+		want = append(want, definition.Name)
+	}
 	if len(want) < 40 {
 		t.Fatalf("registry holds %d tools; expected the full owner set", len(want))
 	}
