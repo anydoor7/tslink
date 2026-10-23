@@ -5,6 +5,10 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ## [Unreleased]
 
+### Security
+
+- Built with Go 1.27.3, which fixes GO-2026-6809 (CVE-2026-111943): `crypto/x509` `Certificate.Verify` now returns an error for certain intermediate certificates that are no longer trusted. `govulncheck ./...` reported the symbol as reachable from TSLink with Go 1.27.2 and reports no vulnerabilities with Go 1.27.3. The module minimum stays Go 1.27.1; only the `toolchain` directive moves, so builds from source pick up the fix automatically. Staticcheck is updated to 2026.2.2 so it reads Go 1.27.3 export data.
+
 ### Fixed
 
 - `tslink invite list` no longer reports `invite_response_invalid` for a service whose device has no invitations. Tailscale answers that listing with JSON `null` instead of an empty array; it is now read as an empty list, so the service shows `checked: true` with `invite_count: 0` and the result is `complete: true` when nothing else fails. Blank, partial and malformed bodies, and a `null` devices listing, are still incomplete. The people flows that wait for proof that an invitation is gone (replacement, removal, `--reconcile-invite app=none`) accept the same `null` as that proof.
