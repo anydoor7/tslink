@@ -5,14 +5,27 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>あなたのアプリに、Tailscale ネットワーク上のプライベートなアドレスを。</strong></p>
-<p align="center">自分のデバイスから開けます。相手を指定するかリンクで共有でき、期限も選べます。</p>
+<p align="center">TSLink は、パソコン上のアプリごとに <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> 形式のプライベートなアドレスを割り当てる、オープンソースの CLI と MCP サーバーです。自分でも coding agent でも、実行中の開発サーバーをスマートフォンで開けます。独立したプロジェクトで、Tailscale 製ではありません。</p>
+<p align="center">スマートフォンには Tailscale アプリが必要で、同じ tailnet にサインインしておきます。</p>
 <p align="center"><a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <strong>日本語</strong> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">他の言語</a></p>
 
+```text
+# Claude Code。先に CLI をインストールしてください（下の「インストール」を参照）
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# mcpServers 形式の JSON を使うローカル MCP クライアント（ほかのクライアントは、そのクライアントの MCP 設定を参照）
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+エージェントに頼む：「開発サーバーを共有して、スマートフォンで開けるようにして」
+```
+
+同じことを手作業で行う手順です。開発サーバーはすでにポート 5173 で待ち受けているものとします。`--json` を付けると、`share` は登録された名前を `data.name` で返します。以降のコマンドにはこの名前を使ってください。`--name` の名前がすでに使われていると、`web-2` のように別の名前になります。
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web --json   # data.name が名前。data.url が正確な URL。status が needs_login のときは data.auth_url が Tailscale のサインインリンク
+tslink url <name> --wait              # サインインを終えたあとに、正確な URL を取得
+tslink remove <name>                  # 使い終わったら削除。share が失敗したなら実行しない。開発サーバーは動いたまま
 ```
 
 <a id="installation"></a>
@@ -37,16 +50,50 @@ scoop install anydoor7/tslink
 
 Linux 向けの `.deb` と `.rpm` パッケージ、Windows 版は[最新リリース](https://github.com/anydoor7/tslink/releases/latest)にあります。初めてアプリを共有するとき、TSLink がそのアプリ用の Tailscale ログインリンクを表示します。[はじめに](getting-started.md)
 
+<a id="agents"></a>
+
+## AI エージェント向け
+
+エージェントが `localhost` で起動した開発サーバーには、スマートフォンから届きません。TSLink を使えば、エージェントはそのサーバーにプライベートなアドレスを付け、正確な URL を渡し、終わったら共有を削除できます。スマートフォンには Tailscale アプリが必要で、同じ tailnet にサインインしておきます。
+
+2026-10-22 に Vite 8.3.5 と iPhone 15 Pro で確認しました。エージェントが MCP で開発サーバーを共有し、スマートフォンでプライベート URL を開くと、保存するだけで手動の再読み込みなしにページが更新されました。
+
+Claude Code では、先に CLI をインストールしてから次を実行します。
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+プラグインには[プレビュー用スキル](../skills/tslink-preview/SKILL.md)と、下の MCP 接続が含まれます。マーケットプレイスはこのリポジトリにあり、プラグイン本体は [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin) から取得します。正本のスキルはここにあり、プラグインには CI で照合されるコピーが入っています。ほかのエージェントも同じスキルを使うか、MCP に直接接続できます。この連携にはローカルの CLI が必要で、claude.ai のチャットでは動きません。[セットアップとサインイン](agent-integrations.md)
+
+`mcpServers` 形式の JSON を使うローカル MCP クライアントの場合（ほかのクライアントは、そのクライアントの MCP 設定手順と [MCP クライアントガイド](mcp-clients.md)を参照）：
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **開発サーバーごとに 1 つの名前。** 共有するたびに、専用のプライベートアドレス `https://<name>.<tailnet>.ts.net` がルートパス、ポート 443 で付きます。名前が使われていると数字の接尾辞が付くので、エージェントが受け取った URL を使ってください。
+- **新しいアプリごとに人の操作が要ります。** 既定の設定では、新しいアプリのノードごとに、人が Tailscale への登録を 1 回完了する必要があります。結果が `needs_login` なら、サインインを済ませてから `tslink url <name> --wait` で正確な URL を取得します。なお、新しい名前に届くようになるまで時間がかかることがあります。2 回のテストでは 36 秒から 38 秒でした。
+- **開ける人。** 既定では、ポリシーで許可された tailnet 内のデバイスです。MCP の `share` は `allow` を受け取り、自分のログインだけに絞れます。CLI では `tslink add web --proxy localhost:5173 --allow you@example.com` を使います。名前は公開の証明書ログに載るため、秘密ではありません。
+- **編集して保存すれば、画面に反映。** コードを保存すると、スマートフォンのページが更新されます。アプリ自身の Host と Origin のルールでリクエストが拒否されることはあります。今回のテストでは Vite は `allowedHosts` の変更が不要でした。Next.js は未検証で、`allowedDevOrigins` が必要です。
+- **後片付け。** エージェントが `unshare` を呼ぶか、自分で `tslink remove <name>` を実行します。名前は必ず share の結果で返されたものを使ってください。削除すると共有の登録が解除され、TSLink が自分のものだと確認できる場合は tailnet 上のノードも削除を試みます。結果のクリーンアップや残存状態のフィールドを確認してください。開発サーバーは止まりません。
+- **CLI または MCP。** 管理コマンドは `--json` に対応し、バージョン付きの結果を返します。`tslink mcp` はアプリとアクセスの操作を MCP で提供します。
+- **フォルダーではなく、ファイル 1 つ。** エージェントは `tslink share ./report.html` で、単体で完結した HTML レポートだけを共有できます。同じフォルダーのほかのファイルには届きません。
+- **限定されたロール。** `viewer`、`app-operator`、`people-manager` から選び、対象を指定したアプリに絞れます。新しいアプリの共有には `owner` ロールが必要です。`tslink mcp-audit` でエージェントの変更を確認できます。ロールが制限するのは TSLink のツールで、エージェント自身のシェルには及びません。
+
+[エージェントの入門](agent-quickstart.md) · [MCP 権限](mcp-scopes.md) · [リモート MCP](remote-mcp.md)
+
 <a id="why"></a>
 
 ## TSLink が必要になるとき
 
-自分のデバイスで 1 つのアプリを開くだけなら Serve で十分です。TSLink は、アプリのアドレス、期限、アクセスの変更を 1 つの流れで扱えます。
+自分で起動した 1 つのアプリを自分のスマートフォンで開くだけなら Serve で十分です。TSLink が向いているのは、エージェントが起動する（たいていは複数の）開発サーバーです。それぞれに専用のプライベートな名前を付け、共有・URL の取得・後片付けを CLI、MCP、Claude Code のスキルで手軽に行えます。
 
 | やりたいこと | Tailscale だけ | TSLink |
 |---|---|---|
-| スマホで Web アプリを 1 つ開く | `tailscale serve 3000` で十分 | `tslink share 3000` |
-| 複数のアプリに別々の名前 | Services の設定、または別々のノード | アプリごとに `share`/`add` を 1 回、ノードごとにサインイン |
+| エージェントが起動する複数の開発サーバー、1 つずつ別の名前 | Serve は 1 台のマシンにつき 1 つの名前のもとで、デバイス単位のルートを設定。Services は名前ごとにサービス定義、承認、タグ付きホストが必要 | アプリごとに 1 つのノード。共有、URL の取得、後片付けを CLI（`share`、`url`、`remove`）、MCP（`share`、`url`、`unshare`）、スキルにまとめて提供 |
+| 自分で起動した 1 つのアプリを、スマートフォンで開く | `tailscale serve 3000` で十分 | `tslink share 3000` |
 | 1 人に 1 つのアプリを 7 日間 | ポリシールールを書き、JIT（一時アクセス）ツールか手動で削除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/ファイル） |
 | ブラウザー用リンクを 3 日間 | 公開の Funnel。アクセス制限と期限での停止は自分で用意 | `tslink guest create photos --for 3d --public --print-link`（HTTP のみ） |
 
@@ -74,22 +121,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 ゲストリンクと新しい公開 URL には期限があり、使えるのは Web アプリだけです。フォルダー、ファイル、TCP ポートは非公開のままです。[ユーザー共有](people.md) · [ゲストリンク](guest-links.md) · [一般公開](funnel.md)
-
-<a id="agents"></a>
-
-## AI エージェント向け
-
-エージェントが `localhost` で起動した開発サーバーには、スマートフォンから届きません。TSLink を使えば、エージェントはそのサーバーにプライベートなアドレスを付け、正確な URL を報告し、終わったら削除できます。
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI または MCP。** 管理コマンドは `--json` に対応し、バージョン付きの結果を返します。`tslink mcp` はアプリとアクセスの操作を MCP で提供します。
-- **フォルダーではなく、ファイル 1 つ。** エージェントは `tslink share ./report.html` で HTML レポートだけを共有できます。同じフォルダーのほかのファイルには届きません。
-- **限定されたロール。** `viewer`、`app-operator`、`people-manager` から選び、対象を指定したアプリに絞れます。`tslink mcp-audit` でエージェントの変更を確認できます。ロールが制限するのは TSLink のツールで、エージェント自身のシェルには及びません。
-
-[エージェントの入門](agent-quickstart.md) · [MCP 権限](mcp-scopes.md) · [リモート MCP](remote-mcp.md)
 
 <a id="architecture"></a>
 

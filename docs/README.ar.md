@@ -7,14 +7,27 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>عناوين خاصة لتطبيقاتك، على شبكة Tailscale الخاصة بك.</strong></p>
-<p align="center">افتحها من أجهزتك. شارك أحدها مع شخص أو عبر رابط، حتى تاريخ تختاره.</p>
+<p align="center">TSLink هو CLI وخادم MCP مفتوحا المصدر يمنح كل تطبيق على حاسوبك عنوانا خاصا بصيغة <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>، فتتمكن أنت أو coding agent الخاص بك من فتح خادم تطوير قيد التشغيل على هاتفك. مشروع مستقل، ولم تصنعه Tailscale.</p>
+<p align="center">يحتاج هاتفك إلى تطبيق Tailscale، مع تسجيل الدخول إلى شبكة tailnet نفسها.</p>
 <p align="center"><strong>العربية</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">لغات أخرى</a></p>
 
+```text
+# Claude Code، بعد تثبيت CLI (انظر التثبيت أدناه)
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# عملاء MCP المحليون الذين يستخدمون JSON بصيغة mcpServers (غيرهم: راجع إعداد MCP في عميلك)
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+قل لوكيلك: "شارك خادم التطوير حتى أتمكن من فتحه على هاتفي."
+```
+
+الأمر نفسه يدويا، مع افتراض أن خادم التطوير يستمع بالفعل على المنفذ 5173. مع `--json`، يبلّغ `share` عن الاسم المسجّل في `data.name`. استخدم هذا الاسم في الأوامر اللاحقة: فهو يختلف عن `--name` إذا كان ذلك الاسم مأخوذا، مثل `web-2`.
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web --json   # data.name؛ وdata.url، أو data.auth_url (رابط تسجيل دخول Tailscale) عندما تكون status هي needs_login
+tslink url <name> --wait              # بعد إكمال تسجيل الدخول: عنوان URL الدقيق
+tslink remove <name>                  # عند الانتهاء؛ تجاوزه إذا فشل share. يستمر خادم التطوير في العمل
 ```
 
 <a id="installation"></a>
@@ -39,16 +52,50 @@ scoop install anydoor7/tslink
 
 حزم Linux بصيغتي `.deb` و`.rpm` وإصدارات Windows متاحة في [أحدث إصدار](https://github.com/anydoor7/tslink/releases/latest). في أول مرة تشارك فيها تطبيقا، يعرض TSLink رابط تسجيل دخول إلى Tailscale خاصا به. [البدء](getting-started.md)
 
+<a id="agents"></a>
+
+## لوكلاء الذكاء الاصطناعي
+
+خادم التطوير الذي يشغّله وكيل على `localhost` لا يمكن الوصول إليه من هاتفك. يتيح TSLink للوكيل أن يمنحه عنوانا خاصا، ويسلّمك عنوان URL الدقيق، ويزيل المشاركة عند الانتهاء. يحتاج هاتفك إلى تطبيق Tailscale، مع تسجيل الدخول إلى شبكة tailnet نفسها.
+
+جرى الاختبار في 2026-10-22 باستخدام Vite 8.3.5 وهاتف iPhone 15 Pro: شارك الوكيل خادم التطوير عبر MCP، وفتح الهاتف عنوان URL الخاص، وتحدّثت الصفحة عند الحفظ دون إعادة تحميل يدوية.
+
+مع Claude Code، ثبّت CLI أولا، ثم شغّل:
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+تتضمن الإضافة [مهارة المعاينة](../skills/tslink-preview/SKILL.md) واتصال MCP الموضح أدناه. يبقى السوق في هذا المستودع ويجلب الإضافة من [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin). تبقى المهارة المرجعية هنا؛ وتحمل الإضافة نسخة تفحصها CI. يمكن لوكلاء آخرين استخدام المهارة نفسها أو الاتصال بـ MCP مباشرة. يتطلب هذا التكامل CLI محليا ولا يعمل داخل دردشة claude.ai. [الإعداد والتسجيل](agent-integrations.md)
+
+لعميل MCP محلي يستخدم JSON بصيغة `mcpServers` (لعملاء آخرين: راجع تعليمات إعداد MCP لديهم و[دليل عملاء MCP](mcp-clients.md)):
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **اسم واحد لكل خادم تطوير.** تحصل كل مشاركة على عنوانها الخاص `https://<name>.<tailnet>.ts.net` عند المسار الجذر وعلى المنفذ 443. إذا كان الاسم مأخوذا يُضاف إليه لاحقة رقمية، فاستخدم عنوان URL الذي يتلقاه الوكيل.
+- **كل تطبيق جديد يحتاج إلى شخص.** في الإعداد الافتراضي، تتطلب كل عقدة تطبيق جديدة أن يُكمل شخص تسجيلها في Tailscale. إذا كانت النتيجة `needs_login`، فأكمل تسجيل الدخول ثم شغّل `tslink url <name> --wait` للحصول على عنوان URL الدقيق. وبصورة منفصلة، قد يستغرق الاسم الجديد بعض الوقت حتى يصبح قابلا للوصول: من 36 إلى 38 ثانية في تشغيلي الاختبار لدينا.
+- **من يستطيع فتحه.** افتراضيا، أجهزة tailnet التي تسمح بها سياستك. يقبل `share` في MCP القيمة `allow` لقصر الوصول على حسابك؛ ومن CLI استخدم `tslink add web --proxy localhost:5173 --allow you@example.com`. تظهر الأسماء في سجلات الشهادات العامة، فهي ليست سرية.
+- **عدّل، احفظ، شاهد.** يؤدي حفظ الشيفرة إلى تحديث الصفحة على هاتفك. قد تحجب قواعد Host وOrigin الخاصة بتطبيقك بعض الطلبات: في اختبارنا لم يحتج Vite إلى تغيير `allowedHosts`؛ أما Next.js فلم يُختبر ولا يزال يتطلب `allowedDevOrigins`.
+- **التنظيف.** يستدعي الوكيل `unshare`، أو تشغّل أنت `tslink remove <name>`، دائما بالاسم الذي أعاده ناتج share. تلغي الإزالة تسجيل المشاركة وتحاول حذف عقدتها في tailnet عندما يستطيع TSLink إثبات ملكيتها، لذا راجع في النتيجة حقول التنظيف أو الحالة المحتفظ بها. ولا توقف خادم التطوير.
+- **CLI أو MCP.** تقبل أوامر الإدارة `--json` وتعيد نتائج ذات إصدار؛ ويوفر `tslink mcp` عمليات التطبيقات والوصول عبر MCP.
+- **ملف واحد، لا المجلد كله.** يمكن للوكيل أن يشارك تقرير HTML المكتفي بذاته وحده باستخدام `tslink share ./report.html`؛ وتبقى الملفات الأخرى في ذلك المجلد غير قابلة للوصول.
+- **أدوار محدودة.** `viewer` أو `app-operator` أو `people-manager`، محصورة في التطبيقات التي تحددها؛ ومشاركة تطبيق جديد تتطلب دور `owner`. يعرض `tslink mcp-audit` ما غيّره الوكيل. تحد الأدوار من أدوات TSLink، لا من shell الوكيل نفسه.
+
+[دليل الوكلاء](agent-quickstart.md) · [صلاحيات MCP](mcp-scopes.md) · [MCP البعيد](remote-mcp.md)
+
 <a id="why"></a>
 
 ## متى تحتاج TSLink
 
-لتطبيق واحد على أجهزتك يكفي Serve. يجمع TSLink عناوين التطبيقات والمهل وتغييرات الوصول في سير عمل واحد.
+يكفي Serve لتطبيق واحد تشغّله بنفسك وتفتحه على هاتفك. أما TSLink فهو لخوادم التطوير التي يشغّلها وكيل، وغالبا تكون عدة خوادم، حين يجب أن يحصل كل منها على اسمه الخاص وتكون خطوات المشاركة والحصول على URL والتنظيف جاهزة في CLI وMCP ومهارة Claude Code.
 
 | المهمة | Tailscale وحده | TSLink |
 |---|---|---|
-| تطبيق ويب واحد على هاتفك | يكفي `tailscale serve 3000` | `tslink share 3000` |
-| عدة تطبيقات، لكل منها اسمه | إعداد Services، أو عقد منفصلة | أمر `share`/`add` واحد لكل تطبيق؛ وسجّل كل عقدة |
+| عدة خوادم تطوير يشغّلها وكيلك، لكل منها اسم | يضبط Serve مسارات على مستوى الجهاز تحت اسم واحد لكل جهاز؛ أما Services فيتطلب لكل اسم تعريفا وموافقة ومضيفا موسوما | عقدة واحدة لكل تطبيق، مع مشاركة والحصول على URL وتنظيف جاهزة في CLI (`share` و`url` و`remove`) وMCP (`share` و`url` و`unshare`) ومهارة |
+| تطبيق واحد تشغّله بنفسك، على هاتفك | يكفي `tailscale serve 3000` | `tslink share 3000` |
 | شخص واحد، تطبيق واحد، سبعة أيام | قواعد سياسة، ثم أداة JIT أو إزالة يدوية | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/ملفات) |
 | رابط للمتصفح، ثلاثة أيام | Funnel عام؛ أضف بنفسك بوابة وصول وإيقافًا مجدولًا | `tslink guest create photos --for 3d --public --print-link` (HTTP فقط) |
 
@@ -76,22 +123,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 تنتهي صلاحية روابط الضيوف وعناوين URL العامة الجديدة، وتعمل لتطبيقات الويب فقط؛ أما المجلدات والملفات ومنافذ TCP فتبقى خاصة. [الأشخاص](people.md) · [روابط الضيوف](guest-links.md) · [الوصول العام](funnel.md)
-
-<a id="agents"></a>
-
-## لوكلاء الذكاء الاصطناعي
-
-خادم التطوير الذي يشغّله وكيل على `localhost` لا يمكن الوصول إليه من هاتفك. يتيح TSLink للوكيل أن يمنحه عنوانا خاصا، ويبلغ عن عنوان URL الدقيق، ويزيله عند الانتهاء.
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI أو MCP.** تقبل أوامر الإدارة `--json` وتعيد نتائج ذات إصدار؛ ويوفر `tslink mcp` عمليات التطبيقات والوصول عبر MCP.
-- **ملف واحد، لا المجلد كله.** يمكن للوكيل أن يشارك تقرير HTML الخاص به وحده باستخدام `tslink share ./report.html`؛ وتبقى الملفات الأخرى في ذلك المجلد غير قابلة للوصول.
-- **أدوار محدودة.** `viewer` أو `app-operator` أو `people-manager`، محصورة في التطبيقات التي تحددها. يعرض `tslink mcp-audit` ما غيّره الوكيل. تحد الأدوار من أدوات TSLink، لا من shell الوكيل نفسه.
-
-[دليل الوكلاء](agent-quickstart.md) · [صلاحيات MCP](mcp-scopes.md) · [MCP البعيد](remote-mcp.md)
 
 <a id="architecture"></a>
 

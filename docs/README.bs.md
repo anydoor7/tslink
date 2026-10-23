@@ -5,14 +5,27 @@
   </picture>
 </p>
 <h1 align="center">TSLink</h1>
-<p align="center"><strong>Privatne adrese za vaše aplikacije, na vašoj Tailscale mreži.</strong></p>
-<p align="center">Otvarajte ih sa svojih uređaja. Podijelite jednu s osobom ili putem linka, do datuma koji odaberete.</p>
+<p align="center">TSLink je CLI i MCP server otvorenog koda koji svakoj aplikaciji na vašem računaru daje privatnu adresu <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, tako da vi ili vaš coding agent možete na telefonu otvoriti pokrenuti razvojni server. Nezavisan projekat, nije proizvod kompanije Tailscale.</p>
+<p align="center">Vaš telefon treba aplikaciju Tailscale, prijavljenu na isti tailnet.</p>
 <p align="center"><strong>Bosanski</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Više jezika</a></p>
 
+```text
+# Claude Code, nakon instalacije CLI-ja (vidi Instalacija ispod)
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+
+# Lokalni MCP klijenti koji koriste JSON s mcpServers (ostali: pogledajte MCP postavke svog klijenta)
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+
+Recite svom agentu: „Podijeli razvojni server da ga mogu otvoriti na telefonu."
+```
+
+Isto ručno, s razvojnim serverom koji već sluša na portu 5173. Uz `--json`, `share` prijavljuje registrovano ime u `data.name`. Koristite to ime u narednim komandama: razlikuje se od `--name` kad je to ime bilo zauzeto, na primjer `web-2`.
+
 ```sh
-tslink share 3000 --name notes       # a web app → https://notes.<your-tailnet>.ts.net
-tslink share ./photos                # a folder or a single file
-tslink add db --tcp localhost:5432   # any TCP port
+tslink share 5173 --name web --json   # data.name; data.url, ili data.auth_url (Tailscale link za prijavu) kad je status needs_login
+tslink url <name> --wait              # kad završite prijavu: tačan URL
+tslink remove <name>                  # kad završite; preskočite ako share nije uspio. Razvojni server nastavlja raditi
 ```
 
 <a id="installation"></a>
@@ -37,16 +50,50 @@ Za nadogradnju pokrenite `brew upgrade --cask tslink` ili `scoop update; scoop u
 
 Linux paketi `.deb` i `.rpm` te Windows verzije nalaze se u [najnovijem izdanju](https://github.com/anydoor7/tslink/releases/latest). Kada prvi put podijelite aplikaciju, TSLink prikaže Tailscale link za prijavu za nju. [Prvi koraci](getting-started.md)
 
+<a id="agents"></a>
+
+## Za AI agente
+
+Razvojni server koji agent pokrene na `localhost` nije dostupan s vašeg telefona. TSLink omogućava agentu da mu dodijeli privatnu adresu, preda vam tačan URL i ukloni dijeljenje kad završi. Vaš telefon treba aplikaciju Tailscale, prijavljenu na isti tailnet.
+
+Testirano 2026-10-22 s Vite 8.3.5 i iPhoneom 15 Pro: agent je podijelio razvojni server preko MCP-a, telefon je otvorio privatni URL, a stranica se osvježila pri spremanju bez ručnog ponovnog učitavanja.
+
+Za Claude Code prvo instalirajte CLI, zatim pokrenite:
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+Dodatak uključuje [skill za pregled](../skills/tslink-preview/SKILL.md) i MCP vezu ispod. Marketplace ostaje u ovom repozitoriju i preuzima dodatak iz [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin). Glavni skill ostaje ovdje; dodatak sadrži kopiju koju provjerava CI. Drugi agenti mogu koristiti isti skill ili se direktno povezati preko MCP-a. Ova integracija zahtijeva lokalni CLI i ne radi u claude.ai chatu. [Postavljanje i registracija](agent-integrations.md)
+
+Za lokalnog MCP klijenta koji koristi JSON s `mcpServers` (ostali klijenti: pogledajte njihove upute za MCP postavke i [vodič za MCP klijente](mcp-clients.md)):
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **Jedno ime po razvojnom serveru.** Svako dijeljenje dobija vlastitu privatnu adresu `https://<name>.<tailnet>.ts.net` na korijenskoj putanji, na portu 443. Zauzeto ime dobija brojčani sufiks, pa koristite URL koji agent dobije nazad.
+- **Svaka nova aplikacija traži osobu.** U zadanoj postavci, za svaki novi čvor aplikacije osoba mora završiti Tailscale registraciju. Ako je rezultat `needs_login`, završite prijavu, a zatim pokrenite `tslink url <name> --wait` da dobijete tačan URL. Odvojeno, novom imenu može trebati neko vrijeme da postane dostupno: od 36 do 38 sekundi u naša dva testa.
+- **Ko može otvoriti.** Prema zadanim postavkama, uređaji na tailnetu koje vaša politika dozvoljava. `share` u MCP-u prima `allow` da ograniči pristup na vašu prijavu; iz CLI-ja koristite `tslink add web --proxy localhost:5173 --allow you@example.com`. Imena se pojavljuju u javnim zapisima certifikata, pa nisu tajna.
+- **Uredite, spremite, vidite.** Spremanje koda osvježava stranicu na telefonu. Pravila Host i Origin same aplikacije i dalje mogu blokirati zahtjeve: u našem testu Vite nije trebao promjenu `allowedHosts`; Next.js nije testiran i i dalje traži `allowedDevOrigins`.
+- **Čišćenje.** Agent poziva `unshare`, ili vi pokrenete `tslink remove <name>`, uvijek s imenom koje je vratio rezultat share. Uklanjanje poništava registraciju dijeljenja i pokušava obrisati njegov čvor na tailnetu kad TSLink može dokazati da je njegov vlasnik, zato u rezultatu provjerite polja o čišćenju ili zadržanom stanju. Ne zaustavlja razvojni server.
+- **CLI ili MCP.** Komande za upravljanje primaju `--json` i vraćaju verzionisane rezultate; `tslink mcp` nudi operacije za aplikacije i pristup preko MCP-a.
+- **Jedna datoteka, ne folder.** Agent može podijeliti samo svoj samostalni HTML izvještaj komandom `tslink share ./report.html`; ostale datoteke u tom folderu ostaju nedostupne.
+- **Ograničene uloge.** `viewer`, `app-operator` ili `people-manager`, ograničene na aplikacije koje navedete; dijeljenje nove aplikacije traži ulogu `owner`. `tslink mcp-audit` pokazuje šta je agent promijenio. Uloge ograničavaju TSLink alate, a ne agentov vlastiti shell.
+
+[Vodič za agente](agent-quickstart.md) · [MCP ovlasti](mcp-scopes.md) · [Udaljeni MCP](remote-mcp.md)
+
 <a id="why"></a>
 
 ## Kada vam treba TSLink
 
-Za jednu aplikaciju na vlastitim uređajima dovoljan je Serve. TSLink objedinjuje adrese aplikacija, rokove i promjene pristupa u jednom toku rada.
+Za jednu aplikaciju koju sami pokrenete i otvorite na vlastitom telefonu dovoljan je Serve. TSLink je za razvojne servere koje pokreće agent, često više njih, kad svaki treba dobiti vlastito privatno ime, a dijeljenje, URL i čišćenje trebaju biti gotovi koraci u CLI-ju, MCP-u i skillu za Claude Code.
 
 | Zadatak | Samo Tailscale | TSLink |
 |---|---|---|
-| Jedna web aplikacija na telefonu | Dovoljno je `tailscale serve 3000` | `tslink share 3000` |
-| Više aplikacija, svaka sa svojim imenom | Podešavanje Services ili zasebni čvorovi | Jedan `share`/`add` po aplikaciji; prijavite svaki čvor |
+| Više razvojnih servera koje pokreće vaš agent, po jedno ime za svaki | Serve postavlja rute na nivou uređaja pod jednim imenom po mašini; Services za svako ime traži definiciju, odobrenje i host s oznakama | Jedan čvor po aplikaciji, s dijeljenjem, traženjem URL-a i čišćenjem spremnim u CLI-ju (`share`, `url`, `remove`), MCP-u (`share`, `url`, `unshare`) i skillu |
+| Jedna aplikacija koju sami pokrenete, na telefonu | Dovoljno je `tailscale serve 3000` | `tslink share 3000` |
 | Jedna osoba, jedna aplikacija, sedam dana | Pravila politike, pa JIT alat ili ručno uklanjanje | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/fajlovi) |
 | Link za preglednik, tri dana | Javni Funnel; sami dodajte kontrolu pristupa i zakazano gašenje | `tslink guest create photos --for 3d --public --print-link` (samo HTTP) |
 
@@ -74,22 +121,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 Linkovi za goste i novi javni URL-ovi ističu i rade samo za web aplikacije; folderi, fajlovi i TCP portovi ostaju privatni. [Osobe](people.md) · [Linkovi za goste](guest-links.md) · [Javni pristup](funnel.md)
-
-<a id="agents"></a>
-
-## Za AI agente
-
-Razvojni server koji agent pokrene na `localhost` nije dostupan s vašeg telefona. TSLink omogućava agentu da mu dodijeli privatnu adresu, javi tačan URL i ukloni ga kad završi.
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI ili MCP.** Komande za upravljanje primaju `--json` i vraćaju verzionisane rezultate; `tslink mcp` nudi operacije za aplikacije i pristup preko MCP-a.
-- **Jedan fajl, ne cijeli folder.** Agent može podijeliti samo svoj HTML izvještaj komandom `tslink share ./report.html`; ostali fajlovi u tom folderu ostaju nedostupni.
-- **Ograničene uloge.** `viewer`, `app-operator` ili `people-manager`, ograničene na aplikacije koje navedete. `tslink mcp-audit` pokazuje šta je agent promijenio. Uloge ograničavaju TSLink alate, a ne agentov vlastiti shell.
-
-[Vodič za agente](agent-quickstart.md) · [MCP ovlasti](mcp-scopes.md) · [Udaljeni MCP](remote-mcp.md)
 
 <a id="architecture"></a>
 

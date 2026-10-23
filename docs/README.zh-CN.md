@@ -24,8 +24,8 @@
 
 ```sh
 tslink share 5173 --name web --json   # data.name 是名字；data.url 是确切的 URL，status 为 needs_login 时 data.auth_url 是 Tailscale 登录链接
-tslink url <名字> --wait              # 完成登录后，取得确切的 URL
-tslink remove <名字>                  # 用完移除；share 失败就不要执行。dev server 继续运行
+tslink url <name> --wait              # 完成登录后，取得确切的 URL
+tslink remove <name>                  # 用完移除；share 失败就不要执行。dev server 继续运行
 ```
 
 <a id="installation"></a>
@@ -50,16 +50,50 @@ scoop install anydoor7/tslink
 
 Linux 的 `.deb`、`.rpm` 安装包和 Windows 版本在[最新发布](https://github.com/anydoor7/tslink/releases/latest)页面。第一次分享应用时，TSLink 会给出这个应用的 Tailscale 登录链接。[上手指南](getting-started.md)
 
+<a id="agents"></a>
+
+## 面向 AI 智能体
+
+智能体在 `localhost` 上启动的 dev server，你的手机访问不到。有了 TSLink，智能体可以给它一个私有地址，把确切的 URL 交给你，用完再移除这次分享。手机需要装 Tailscale，并登录同一个 tailnet。
+
+实测于 2026-10-22：Vite 8.3.5，iPhone 15 Pro。智能体通过 MCP 分享了 dev server，手机打开了这个私有 URL，保存代码后页面自动更新，无需手动刷新。
+
+Claude Code 用户请先安装命令行工具，再运行：
+
+```text
+/plugin marketplace add anydoor7/tslink
+/plugin install tslink@tslink
+```
+
+插件包含一个[预览 skill](../skills/tslink-preview/SKILL.md)和下面的 MCP 连接。插件市场仍在本仓库，插件本身取自 [anydoor7/tslink-claude-plugin](https://github.com/anydoor7/tslink-claude-plugin)。规范的 skill 保留在本仓库，插件里带有一份经 CI 检查的副本。其他智能体可以使用同一个 skill，也可以直接连接 MCP。这个集成需要本地命令行工具，不能在 claude.ai 聊天中运行。[设置与登录](agent-integrations.md)
+
+使用 `mcpServers` JSON 的本地 MCP 客户端（其他客户端请看它们各自的 MCP 配置说明和 [MCP 客户端指南](mcp-clients.md)）：
+
+```json
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
+```
+
+- **每个 dev server 一个名字。** 每次分享都有自己的私有地址 `https://<name>.<tailnet>.ts.net`，位于根路径，端口 443。名字被占用时会加数字后缀，所以以智能体拿回的 URL 为准。
+- **每个新应用都需要人来操作。** 默认设置下，每个新的应用节点都需要人完成一次 Tailscale 入网。如果结果是 `needs_login`，先完成登录，再运行 `tslink url <name> --wait` 取得确切的 URL。另外，新名字要过一会儿才能访问：我们两次测试用了 36 到 38 秒。
+- **谁能打开。** 默认是你的策略允许的 tailnet 设备。MCP `share` 接受 `allow`，可限制为只有你的登录身份；在命令行中使用 `tslink add web --proxy localhost:5173 --allow you@example.com`。名字会出现在公开的证书日志里，所以并不保密。
+- **改代码，保存，就能看到。** 保存代码后，手机上的页面会更新。应用自己的 Host 和 Origin 规则仍可能拦截请求：我们的测试里 Vite 不需要修改 `allowedHosts`，Next.js 未测试，仍需要 `allowedDevOrigins`。
+- **清理。** 智能体调用 `unshare`，或者你运行 `tslink remove <name>`，始终使用 share 结果返回的名字。移除会注销这次分享，并在 TSLink 能证明节点归自己所有时尝试删除它在 tailnet 里的节点，所以请查看结果里的清理或保留状态字段。它不会停止 dev server。
+- **CLI 或 MCP。** 管理命令支持 `--json`，返回带版本号的结果；`tslink mcp` 通过 MCP 提供应用和访问管理操作。
+- **只分享一个文件。** 智能体可以用 `tslink share ./report.html` 只分享自包含的 HTML 报告；同一文件夹里的其他文件仍然访问不到。
+- **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，权限范围限于你指定的应用；分享新应用需要 `owner` 角色。`tslink mcp-audit` 显示智能体改了什么。角色只限制 TSLink 的工具，管不到智能体自己的 shell。
+
+[智能体快速开始](agent-quickstart.md) · [MCP 权限](mcp-scopes.md) · [远程 MCP](remote-mcp.md)
+
 <a id="why"></a>
 
 ## 什么时候需要 TSLink
 
-只在自己的设备上打开一个应用，用 Serve 就够了。TSLink 把应用地址、期限和访问变更放进同一套流程。
+Serve 足够应付你自己启动、在自己手机上打开的一个应用。TSLink 面向智能体启动的 dev server（往往不止一个）：每个都应有自己的私有名字，分享、取 URL 和清理这几步由命令行、MCP 和 Claude Code skill 现成提供。
 
 | 场景 | 只用 Tailscale | TSLink |
 |---|---|---|
-| 在手机上打开一个 Web 应用 | `tailscale serve 3000` 就够了 | `tslink share 3000` |
-| 多个应用，各用各的名字 | 配置 Services，或分别运行节点 | 每个应用一次 `share`/`add`，每个节点分别登录 |
+| 智能体启动的多个 dev server，各用一个名字 | Serve 在一台机器的一个名字下设置设备级路由；Services 为每个名字要求服务定义、审批和带标签的主机 | 每个应用一个节点，分享、取 URL 和清理都打包在命令行（`share`、`url`、`remove`）、MCP（`share`、`url`、`unshare`）和 skill 里 |
+| 你自己启动的一个应用，在手机上打开 | `tailscale serve 3000` 就够了 | `tslink share 3000` |
 | 一个人，一个应用，七天 | 先写策略规则，再用 JIT 临时授权工具或手动移除 | `tslink people add alice@example.com --apps photos --for 7d`（HTTP/文件） |
 | 浏览器链接，三天 | 公开的 Funnel；自己加访问关卡，并安排到期关闭 | `tslink guest create photos --for 3d --public --print-link`（仅 HTTP） |
 
@@ -87,22 +121,6 @@ tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # a
 ```
 
 访客链接和新建的公网 URL 会过期，而且只适用于 Web 应用；文件夹、文件和 TCP 端口始终保持私有。[人员授权](people.md) · [访客链接](guest-links.md) · [公网访问](funnel.md)
-
-<a id="agents"></a>
-
-## 面向 AI 智能体
-
-智能体在 `localhost` 上启动的开发服务器，你的手机访问不到。有了 TSLink，智能体可以给它一个私有地址，报告准确的 URL，用完再移除。
-
-```json
-{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
-```
-
-- **CLI 或 MCP。** 管理命令支持 `--json`，返回带版本号的结果；`tslink mcp` 通过 MCP 提供应用和访问管理操作。
-- **只分享一个文件。** 智能体可以用 `tslink share ./report.html` 只分享它的 HTML 报告；同一文件夹里的其他文件仍然访问不到。
-- **有限的角色。** `viewer`、`app-operator` 或 `people-manager`，权限范围限于你指定的应用。`tslink mcp-audit` 显示智能体改了什么。角色只限制 TSLink 的工具，管不到智能体自己的 shell。
-
-[智能体快速开始](agent-quickstart.md) · [MCP 权限](mcp-scopes.md) · [远程 MCP](remote-mcp.md)
 
 <a id="architecture"></a>
 
