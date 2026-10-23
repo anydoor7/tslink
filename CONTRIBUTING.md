@@ -21,6 +21,8 @@ Builds and CI use Go 1.27.3, which fixes
 `golang.org/x/net v0.60.0` to fix
 [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617). Keep Go's default automatic
 toolchain selection enabled for local builds, or select Go 1.27.3 explicitly.
+With `GOTOOLCHAIN=local`, install Go 1.27.3 or newer yourself: Go 1.27.1 and
+1.27.2 still compile TSLink but keep the vulnerable standard-library code.
 `go.mod` is the build-version source: `setup-go v7.0.0` prefers its `toolchain`
 directive when using `go-version-file`, and every CI job uses it.
 

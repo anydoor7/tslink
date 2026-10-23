@@ -4,7 +4,7 @@
 
 - [Tailscale account](https://tailscale.com) (free for personal use)
 - Tailscale installed on the devices you want to access from (phone, tablet, etc.)
-- Go 1.27.1+ (if building from source); `go.mod` selects Go 1.27.3 for patched builds
+- Go 1.27.1+ (if building from source); `go.mod` selects Go 1.27.3 for patched builds. With `GOTOOLCHAIN=local`, use Go 1.27.3 or newer ([toolchain notes](../CONTRIBUTING.md))
 
 The module minimum remains Go 1.27.1. Builds and CI use Go 1.27.3, which fixes
 [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), with
