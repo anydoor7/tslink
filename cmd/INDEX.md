@@ -67,6 +67,10 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `duration_public_default_test.go`: compiled CLI private-to-public default and legacy controls.
 - `duration_guest_atomic_test.go`: deterministic first-invitation interleaving through hermetic REST.
 - `duration_entrypaths_test.go`: compiled dry-run, MCP add and share/recipe/extend posture controls.
+# Help output
+
+- `help_nested_test.go`: compiled-binary help for every command in three spellings (`--help`, `-h`, `help <cmd>`), and `tslink mcp --help` tool list equal to the `mcpToolDefinitions` registry.
+
 # Access history commands
 
 - `access_log.go`: access log/path CLI, read-only access_log/access_summary MCP tools and schemas, health formatting.
