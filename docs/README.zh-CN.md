@@ -20,12 +20,12 @@
 对 agent 说：把 dev server 分享出来，我要在手机上打开。
 ```
 
-手动做同样的事，前提是 dev server 已在 5173 端口监听。后面的命令要用 share 报告的名字，它和 `--name` 不一定相同，别的服务已经用了 web 时，会是 web-2 这样的名字。
+手动做同样的事，前提是 dev server 已在 5173 端口监听。加上 `--json` 后，share 会在 `data.name` 里报告注册的名字。后面的命令要用这个名字，它和 `--name` 不一定相同，别的服务已经用了 web 时，会是 web-2 这样的名字。
 
 ```sh
-tslink share 5173 --name web   # 打印 Tailscale 登录链接（needs_login）或确切的 URL
-tslink url <名字> --wait       # 完成登录后，取得确切的 URL
-tslink remove <名字>           # 用完移除；share 失败就不要执行。dev server 继续运行
+tslink share 5173 --name web --json   # data.name 是名字；data.url 是确切的 URL，status 为 needs_login 时 data.auth_url 是 Tailscale 登录链接
+tslink url <名字> --wait              # 完成登录后，取得确切的 URL
+tslink remove <名字>                  # 用完移除；share 失败就不要执行。dev server 继续运行
 ```
 
 <a id="installation"></a>

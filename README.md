@@ -24,12 +24,12 @@
 Ask your agent: "Share the dev server so I can open it on my phone."
 ```
 
-The same thing by hand, with the dev server already listening on port 5173. Use the name that `share` reports in the later commands: it differs from `--name` when that name was taken, for example `web-2`.
+The same thing by hand, with the dev server already listening on port 5173. With `--json`, `share` reports the registered name as `data.name`. Use that name in the later commands: it differs from `--name` when that name was taken, for example `web-2`.
 
 ```sh
-tslink share 5173 --name web   # prints a Tailscale sign-in link (needs_login) or the exact URL
-tslink url <name> --wait       # after you finish sign-in: the exact URL
-tslink remove <name>           # when you are done; skip it if share failed. The dev server keeps running
+tslink share 5173 --name web --json   # data.name; data.url, or data.auth_url (a Tailscale sign-in link) when status is needs_login
+tslink url <name> --wait              # after you finish sign-in: the exact URL
+tslink remove <name>                  # when you are done; skip it if share failed. The dev server keeps running
 ```
 
 <a id="installation"></a>
@@ -98,11 +98,11 @@ For a local MCP client that uses `mcpServers` JSON (other clients: see their MCP
 
 ## When you need TSLink
 
-Serve is enough for one app you start yourself and open on your own phone. TSLink is for the dev servers an agent starts, often several, when each should get its own private name and the share, URL and unshare steps should come ready-made in the CLI, MCP and a Claude Code skill.
+Serve is enough for one app you start yourself and open on your own phone. TSLink is for the dev servers an agent starts, often several, when each should get its own private name and the share, URL and cleanup steps should come ready-made in the CLI, MCP and a Claude Code skill.
 
 | Job | Tailscale alone | TSLink |
 |---|---|---|
-| Several dev servers your agent starts, one name each | Serve sets device-level routes under one name per machine; Services gives each name a definition, approval and a tagged host | One node per app, with `share`, `url` and `unshare` packaged in the CLI, MCP and a skill |
+| Several dev servers your agent starts, one name each | Serve sets device-level routes under one name per machine; Services gives each name a definition, approval and a tagged host | One node per app, with sharing, URL lookup and cleanup packaged in the CLI (`share`, `url`, `remove`), MCP (`share`, `url`, `unshare`) and a skill |
 | One app you start yourself, on your phone | `tailscale serve 3000` is enough | `tslink share 3000` |
 | One person, one app, seven days | Policy rules, then a JIT tool or manual removal | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/files) |
 | Browser link, three days | Public Funnel; add a gate and scheduled shutdown | `tslink guest create photos --for 3d --public --print-link` (HTTP only) |
@@ -162,7 +162,7 @@ Names of HTTPS apps appear in public certificate logs, so pick names you are hap
 
 This section covers the local TSLink CLI, MCP server and agent plugin.
 Its [HTTPS policy URL](https://github.com/anydoor7/tslink/blob/main/README.md#privacy-policy)
-is separate from the [website privacy policy](https://tslink.md/privacy-policy),
+is separate from the [website privacy policy](https://tslink.md/privacy),
 which covers the website.
 
 - **Data and use.** TSLink processes the app traffic you choose to proxy or

@@ -86,7 +86,8 @@ allowed through.
 Only a client running on a machine inside your tailnet can connect. Claude
 Desktop and claude.ai cannot: their remote MCP connections originate from
 Anthropic's cloud rather than from your device, so they never reach a private
-tailnet address. Use the stdio transport for those.
+tailnet address. Claude Desktop can use the stdio transport instead; claude.ai
+chat cannot run a local MCP server.
 
 ## Event stream
 
