@@ -2,7 +2,7 @@
 
 Use TSLink when the owner wants to open a dev server you started on their phone:
 it gives each app on their computer a private `https://<name>.<tailnet>.ts.net`
-address, you hand the owner the exact URL, and you remove it when they are done.
+address, you hand the owner the exact URL, and you remove the share when they are done.
 The owner's phone needs the Tailscale app, signed in to the same tailnet. TSLink
 also manages other apps on a computer or cloud server and shares selected apps
 with others. This guide is for operating an installed TSLink;

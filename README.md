@@ -18,17 +18,18 @@
 /plugin marketplace add anydoor7/tslink
 /plugin install tslink@tslink
 
-# Any other MCP client
+# Local MCP clients that use mcpServers JSON (others: see your client's MCP setup)
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 
 Ask your agent: "Share the dev server so I can open it on my phone."
 ```
 
-The same thing by hand, with the dev server already listening on port 5173:
+The same thing by hand, with the dev server already listening on port 5173. Use the name that `share` reports in the later commands: it differs from `--name` when that name was taken, for example `web-2`.
 
 ```sh
-tslink share 5173 --name web   # prints the exact URL, https://web.<your-tailnet>.ts.net unless the name was taken
-tslink remove web              # when you are done; the dev server keeps running
+tslink share 5173 --name web   # prints a Tailscale sign-in link (needs_login) or the exact URL
+tslink url <name> --wait       # after you finish sign-in: the exact URL
+tslink remove <name>           # when you are done; skip it if share failed. The dev server keeps running
 ```
 
 <a id="installation"></a>
@@ -53,29 +54,11 @@ To upgrade, run `brew upgrade --cask tslink` or `scoop update; scoop update tsli
 
 Linux `.deb` and `.rpm` packages and Windows builds are on the [latest release](https://github.com/anydoor7/tslink/releases/latest). The first time you share an app, TSLink prints a Tailscale sign-in link for it. [Getting started](docs/getting-started.md)
 
-<a id="why"></a>
-
-## When you need TSLink
-
-Serve is enough for one app you start yourself and open on your own phone. TSLink is for the dev servers an agent starts, often several: each needs its own name, an address the agent hands back, and a cleanup step.
-
-| Job | Tailscale alone | TSLink |
-|---|---|---|
-| Dev servers your agent starts, one name each | Serve or Services setup per server; you collect each address and clean up | The agent calls `share` per server, hands back each exact URL, and removes it with `unshare` or `tslink remove` |
-| One app you start yourself, on your phone | `tailscale serve 3000` is enough | `tslink share 3000` |
-| Several apps, separate names | Services setup, or separate nodes | One `share`/`add` per app; enroll each node |
-| One person, one app, seven days | Policy rules, then a JIT tool or manual removal | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/files) |
-| Browser link, three days | Public Funnel; add a gate and scheduled shutdown | `tslink guest create photos --for 3d --public --print-link` (HTTP only) |
-
-Private recipients need Tailscale. Guest links are public, forwardable bearer links.
-
-[Full comparison](docs/comparison.md#tailscale-alone-or-tslink)
-
 <a id="agents"></a>
 
 ## For AI agents
 
-A dev server an agent starts on `localhost` is out of reach from your phone. TSLink lets the agent give it a private address, hand you the exact URL and remove it when you are done. Your phone needs the Tailscale app, signed in to the same tailnet.
+A dev server an agent starts on `localhost` is out of reach from your phone. TSLink lets the agent give it a private address, hand you the exact URL and remove the share when you are done. Your phone needs the Tailscale app, signed in to the same tailnet.
 
 Tested on 2026-10-22 with Vite 8.3.5 and an iPhone 15 Pro: the agent shared the dev server over MCP, the phone opened the private URL, and the page updated on save without a manual refresh.
 
@@ -94,20 +77,39 @@ agents can use the same skill or connect MCP directly. This integration
 requires the local CLI and does not run in claude.ai chat.
 [Setup and enrollment](docs/agent-integrations.md)
 
+For a local MCP client that uses `mcpServers` JSON (other clients: see their MCP setup instructions and the [MCP clients guide](docs/mcp-clients.md)):
+
 ```json
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
 - **One name per dev server.** Each share gets its own private `https://<name>.<tailnet>.ts.net` address at the root path on port 443. A taken name gets a number suffix, so use the URL the agent gets back.
-- **Needs a person once.** The first share needs a person to finish Tailscale sign-in (`needs_login`). A new name can take a while to become reachable the first time: 36 to 38 seconds in our two test runs.
+- **Needs a person for each new app.** In the default setup, each fresh app node needs a person to complete Tailscale enrollment. If the result is `needs_login`, finish sign-in, then run `tslink url <name> --wait` for the exact URL. Separately, a new name can take a while to become reachable: 36 to 38 seconds in our two test runs.
 - **Who can open it.** By default, tailnet devices your policy allows. MCP `share` accepts `allow` to limit it to your login; from the CLI, use `tslink add web --proxy localhost:5173 --allow you@example.com`. Names appear in public certificate logs, so they are not secret.
 - **Edit, save, see it.** Saving code updates the page on your phone. Your app's own Host and Origin rules can still block requests; Vite needed no `allowedHosts` change in our test, and Next.js is untested and still needs `allowedDevOrigins`.
-- **Clean up.** The agent calls `unshare`, or you run `tslink remove <name>`. That removes the address and its tailnet node; it does not stop the dev server.
+- **Clean up.** The agent calls `unshare`, or you run `tslink remove <name>`, always with the name the share result returned. Removal unregisters the share and attempts to delete its tailnet node when TSLink can prove it owns it, so check the result for cleanup or retained-state fields. It does not stop the dev server.
 - **CLI or MCP.** Management commands take `--json` and return versioned results; `tslink mcp` offers app and access operations over MCP.
 - **One file, not the folder.** An agent can share just its self-contained HTML report with `tslink share ./report.html`; other files in that folder stay unreachable.
 - **Limited roles.** `viewer`, `app-operator` or `people-manager`, scoped to the apps you name; sharing a new app needs the `owner` role. `tslink mcp-audit` shows what an agent changed. Roles limit TSLink's tools, not the agent's own shell.
 
 [Agent quickstart](docs/agent-quickstart.md) · [MCP scopes](docs/mcp-scopes.md) · [Remote MCP](docs/remote-mcp.md)
+
+<a id="why"></a>
+
+## When you need TSLink
+
+Serve is enough for one app you start yourself and open on your own phone. TSLink is for the dev servers an agent starts, often several, when each should get its own private name and the share, URL and unshare steps should come ready-made in the CLI, MCP and a Claude Code skill.
+
+| Job | Tailscale alone | TSLink |
+|---|---|---|
+| Several dev servers your agent starts, one name each | Serve sets device-level routes under one name per machine; Services gives each name a definition, approval and a tagged host | One node per app, with `share`, `url` and `unshare` packaged in the CLI, MCP and a skill |
+| One app you start yourself, on your phone | `tailscale serve 3000` is enough | `tslink share 3000` |
+| One person, one app, seven days | Policy rules, then a JIT tool or manual removal | `tslink people add alice@example.com --apps photos --for 7d` (HTTP/files) |
+| Browser link, three days | Public Funnel; add a gate and scheduled shutdown | `tslink guest create photos --for 3d --public --print-link` (HTTP only) |
+
+Private recipients need Tailscale. Guest links are public, forwardable bearer links.
+
+[Full comparison](docs/comparison.md#tailscale-alone-or-tslink)
 
 <a id="use-cases"></a>
 
