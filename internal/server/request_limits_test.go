@@ -185,9 +185,40 @@ func (l *uploadJoinedAcceptListener) Accept() (net.Conn, error) {
 	return l.headerBudgetListener.Accept()
 }
 
+// The handshake budget of the lookup-stop table is a bound on a handshake the
+// test expects to succeed up to the certificate callback, not the variable under
+// test: HandshakeContext starts its clock when the listener accepts, so a
+// ClientHello that arrives later than the budget makes the server close the
+// connection before GetCertificate is ever called (the timeout itself is
+// pinned by TestRequestLimitsTLSHandshakeLifecycle/configured_timeout). Keep the
+// budget far above the hang guard so a loaded host cannot expire it, and delay
+// the ClientHello past the old 100ms budget so a regression to a short budget
+// fails every run instead of once in a while.
+const (
+	lookupStopHandshakeBudget = "1h"
+	lookupStopHelloDelay      = 150 * time.Millisecond
+)
+
+// lookupStopClientHandshake dials, waits, then sends the ClientHello, so the
+// listener's handshake clock runs before the first byte of the handshake.
+func lookupStopClientHandshake(ctx context.Context, addr string, cfg *tls.Config) error {
+	nc, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer nc.Close()
+	select {
+	case <-time.After(lookupStopHelloDelay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return tls.Client(nc, cfg).HandshakeContext(ctx)
+}
+
 // Port the review's stop controls through the actual pinned SDK callback and a
 // loopback LocalAPI. GetCertificate owns a background context, so closing the
-// TLS connection and expiring HandshakeContext cannot release this dependency.
+// TLS connection cannot release this dependency. The handshake budget is held
+// out of the test (see lookupStopHandshakeBudget); stop is the only release.
 func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 	for _, capped := range []bool{false, true} {
 		for _, stop := range []string{"listener_close", "server_close", "shutdown_100ms", "shutdown_production_budget"} {
@@ -225,7 +256,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 					transport = limited
 				}
 				srv := newHTTPServerFn(http.NotFoundHandler())
-				ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "100ms"}}, transport, nil).(*headerBudgetListener)
+				ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: lookupStopHandshakeBudget}}, transport, nil).(*headerBudgetListener)
 				acceptDone := make(chan struct{})
 				served := make(chan error, 1)
 				go func() {
@@ -235,11 +266,9 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				connectedDone := make(chan struct{})
 				go func() {
 					defer close(connectedDone)
-					c, err := tls.DialWithDialer(&net.Dialer{Timeout: testwait.Budget(t)}, "tcp", raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
-					if c != nil {
-						_ = c.Close()
-					}
-					connected <- err
+					ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
+					defer cancel()
+					connected <- lookupStopClientHandshake(ctx, raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
 				}()
 				defer func() {
 					unblock()
