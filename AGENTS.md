@@ -80,15 +80,18 @@ internal/
 
 ### Toolchain notes
 
-**Go version (`go.mod`, `go 1.27.1`, `toolchain go1.27.2`)**: the module floor
+**Go version (`go.mod`, `go 1.27.1`, `toolchain go1.27.3`)**: the module floor
 remains 1.27.1, as required by `tailscale.com@v1.104.1`. Builds and CI use Go
-1.27.2 with `golang.org/x/net v0.60.0` to fix
+1.27.3, which fixes [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809)
+(`crypto/x509` `Certificate.Verify`, fixed in Go 1.27.3), with
+`golang.org/x/net v0.60.0` to fix
 [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617). Raise the floor only when a
-dependency or a stdlib CVE forces it; the `toolchain` directive selects a
-preferred toolchain, not an exact pin, so a newer local Go is used as-is.
+dependency forces it; a stdlib fix is delivered by raising the `toolchain`
+directive, which selects a preferred toolchain, not an exact pin, so a newer
+local Go is used as-is.
 [setup-go v7.0.0](https://github.com/actions/setup-go/blob/v7.0.0/README.md#breaking-changes-in-v6)
-prefers the `toolchain` directive for `go-version-file: go.mod`; staticcheck is
-the temporary exception below.
+prefers the `toolchain` directive for `go-version-file: go.mod`, and every CI job
+uses it.
 
 **Builds on Go 1.27+ natively.** If a compile error appears inside the module cache
 referencing `json.SkipFunc` or `json.DiscardUnknownMembers`, check the transitive
@@ -98,20 +101,22 @@ are `encoding/json/v2` experimental API that 1.27 changed, and the fix is upgrad
 cache rather than this repository, so it reads like a local toolchain problem when it
 is a dependency problem.
 
-**`staticcheck` temporarily uses Go 1.27.1.** Released staticcheck versions cannot
-read Go 1.27.2's export data (`export data version 5 is greater than maximum
-supported version 4`; [upstream issue #1832](https://github.com/dominikh/go-tools/issues/1832)).
-CI pins Go 1.27.1 with `GOTOOLCHAIN=local` only in that analysis job;
-`scripts/check.sh` uses `GOTOOLCHAIN=go1.27.1` for its three-platform staticcheck
-step and fails with installation instructions if the tool is missing. Install
-the version CI uses (`STATICCHECK_VERSION` in `.github/workflows/release-candidate.yml`)
-with `GOTOOLCHAIN=go1.27.1 go install honnef.co/go/tools/cmd/staticcheck@v0.8.1`
-([2026.2.1 release](https://github.com/dominikh/go-tools/releases/tag/2026.2.1)).
-After staticcheck publishes Go 1.27.2 support, upgrade `STATICCHECK_VERSION`,
-remove both overrides and the CI version pin, and restore that job's
-`go-version-file: go.mod`. CI build artifacts and vulnerability scans use
-the fixed Go 1.27.2 toolchain. Release 2026.2.1 is module `v0.8.1`, so
-`staticcheck -version` reports both names for the same build.
+**`staticcheck` runs on the `go.mod` toolchain.** Staticcheck 2026.2.1 (`v0.8.1`)
+could not read the export data of Go 1.27.2
+(`export data version 5 is greater than maximum supported version 4`;
+[upstream issue #1832](https://github.com/dominikh/go-tools/issues/1832)), so CI
+and `scripts/check.sh` once analyzed with Go 1.27.1. Staticcheck 2026.2.2
+([release](https://github.com/dominikh/go-tools/releases/tag/2026.2.2), module
+`v0.8.2`) reads Go 1.27.3 export data, so that exception is gone: the CI job uses
+`go-version-file: go.mod` like every other job, and no `GOTOOLCHAIN` override
+remains. Install the version CI uses (`STATICCHECK_VERSION` in
+`.github/workflows/release-candidate.yml`) with
+`go install honnef.co/go/tools/cmd/staticcheck@v0.8.2`; `scripts/check.sh` fails
+with the same instruction if the tool is missing. Release 2026.2.2 is module
+`v0.8.2`, so `staticcheck -version` reports both names for the same build. If a
+future Go release moves the export data format again, expect the same error from
+the then-current staticcheck and look for the matching upstream release before
+adding any override.
 
 **macOS: `git` belongs to Xcode.** After an Xcode major upgrade the license resets and
 `/usr/bin/git` exits 69 until `sudo xcodebuild -license accept` is run. `go build`
@@ -128,7 +133,7 @@ This section teaches an agent how to install, configure, and operate tslink. The
 
 ### Prerequisites
 
-- Go 1.27.1+ installed; builds select Go 1.27.2 via `go.mod` (see Toolchain notes);
+- Go 1.27.1+ installed; builds select Go 1.27.3 via `go.mod` (see Toolchain notes);
   macOS 13 Ventura or later is required
   ([Go release notes](https://go.dev/doc/go1.27#darwin))
 - A Tailscale account. The default zero-credential path needs no admin-console token.

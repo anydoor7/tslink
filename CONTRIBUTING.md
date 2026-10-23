@@ -10,32 +10,34 @@ Documentation is English-only. The only translations are the homepage READMEs in
 
 ### Prerequisites
 
-- Go 1.27.1 or newer. The `go` directive in [`go.mod`](./go.mod) remains the supported minimum; `toolchain go1.27.2` selects the patched build toolchain (see below).
+- Go 1.27.1 or newer. The `go` directive in [`go.mod`](./go.mod) remains the supported minimum; `toolchain go1.27.3` selects the patched build toolchain (see below).
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 
 ### Development Setup
 
-Builds and CI use Go 1.27.2 with `golang.org/x/net v0.60.0` to fix
+Builds and CI use Go 1.27.3, which fixes
+[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), with
+`golang.org/x/net v0.60.0` to fix
 [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617). Keep Go's default automatic
-toolchain selection enabled for local builds, or select Go 1.27.2 explicitly.
+toolchain selection enabled for local builds, or select Go 1.27.3 explicitly.
+With `GOTOOLCHAIN=local`, install Go 1.27.3 or newer yourself: Go 1.27.1 and
+1.27.2 still compile TSLink but keep the vulnerable standard-library code.
 `go.mod` is the build-version source: `setup-go v7.0.0` prefers its `toolchain`
-directive when using `go-version-file`.
+directive when using `go-version-file`, and every CI job uses it.
 
-Staticcheck is temporarily the only Go 1.27.1 CI job, with `GOTOOLCHAIN=local`
-to prevent switching to 1.27.2. Released versions cannot read Go 1.27.2 export
-data ([upstream issue #1832](https://github.com/dominikh/go-tools/issues/1832)).
-Install the pinned tool before running local checks:
+Staticcheck 2026.2.2 (`v0.8.2`) or newer is required: earlier releases cannot read
+the export data of Go 1.27.2 and later
+([upstream issue #1832](https://github.com/dominikh/go-tools/issues/1832)).
+Install the version CI pins (`STATICCHECK_VERSION` in
+`.github/workflows/release-candidate.yml`) before running local checks:
 
 ```bash
-GOTOOLCHAIN=go1.27.1 go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
 ```
 
-`scripts/check.sh` uses `GOTOOLCHAIN=go1.27.1` only for its staticcheck analysis
-of Linux, Darwin and Windows; a missing tool fails with installation instructions.
-Once staticcheck releases Go 1.27.2 support, upgrade `STATICCHECK_VERSION` in
-`.github/workflows/release-candidate.yml`, remove the CI version pin and both
-toolchain overrides, and restore the job's `go-version-file: go.mod`.
+`scripts/check.sh` runs staticcheck for Linux, Darwin and Windows; a missing tool
+fails with installation instructions.
 
 ```bash
 # Clone the repository

@@ -47,17 +47,13 @@ if [ -z "${staticcheck}" ] && [ -x "$(go env GOPATH)/bin/staticcheck" ]; then
 	staticcheck="$(go env GOPATH)/bin/staticcheck"
 fi
 if [ -n "${staticcheck}" ]; then
-	# Released staticcheck cannot read Go 1.27.2 export data:
-	# https://github.com/dominikh/go-tools/issues/1832
-	# Once a supporting release ships, upgrade CI's STATICCHECK_VERSION and
-	# remove this override together with the CI Go 1.27.1 exception.
 	for goos in linux darwin windows; do
-		step "GOTOOLCHAIN=go1.27.1 GOOS=${goos} staticcheck ./..."
-		GOTOOLCHAIN=go1.27.1 GOOS="${goos}" "${staticcheck}" ./...
+		step "GOOS=${goos} staticcheck ./..."
+		GOOS="${goos}" "${staticcheck}" ./...
 	done
 else
 	staticcheck_version="$(awk '$1 == "STATICCHECK_VERSION:" { print $2 }' .github/workflows/release-candidate.yml)"
-	printf 'staticcheck is required; install it with:\n  GOTOOLCHAIN=go1.27.1 go install honnef.co/go/tools/cmd/staticcheck@%s\n' "${staticcheck_version:?missing CI staticcheck version}" >&2
+	printf 'staticcheck is required; install it with:\n  go install honnef.co/go/tools/cmd/staticcheck@%s\n' "${staticcheck_version:?missing CI staticcheck version}" >&2
 	exit 1
 fi
 
