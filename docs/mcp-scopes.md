@@ -138,7 +138,9 @@ are stored. Protocol-level unknown tools never execute a mutation.
 The owner reads it with `tslink mcp-audit --json` (the normal versioned envelope)
 or `mcp_audit`. A failed intent write refuses mutation with
 `mcp_audit_unavailable`; a failed completion write explicitly says mutation may
-have occurred. Concurrent writers serialize through a file lock; lock waiting is
+have occurred. When the tool itself had already failed, that failure keeps its
+own code, next steps and data and stays first in the message, and the missing
+receipt is added to it instead of replacing it. Concurrent writers serialize through a file lock; lock waiting is
 bounded. Partial/corrupt, special-file or oversized journals are preserved and
 refused. `status` shows value-free bindings; `doctor` reports risky bindings.
 

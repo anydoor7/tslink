@@ -537,8 +537,18 @@ func TestMCPScopeMutationAuditAndDuration(t *testing.T) {
 		}
 		return nil
 	}
-	result, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"bob","app":"photos","for":"1h"}`))
+	// A grant that succeeds and then loses its completion receipt is reported as
+	// an audit failure.
+	result, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"alice","app":"photos","for":"1h"}`))
 	if mcpResultCode(result, err) != "mcp_audit_unavailable" || calls != 2 {
+		t.Fatal(result, err, calls)
+	}
+	// A grant that itself fails (bob is not a person yet) keeps its own failure
+	// when the completion receipt also fails; see
+	// TestMCPCompletionAuditFailureKeepsTheToolFailure.
+	calls = 0
+	result, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"bob","app":"photos","for":"1h"}`))
+	if mcpResultCode(result, err) != "mcp_person_owner_required" || calls != 2 {
 		t.Fatal(result, err, calls)
 	}
 }

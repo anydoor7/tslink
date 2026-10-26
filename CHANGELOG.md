@@ -20,6 +20,7 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 ### Fixed
 
 - `tslink invite list` no longer reports `invite_response_invalid` for a service whose device has no invitations. Tailscale answers that listing with JSON `null` instead of an empty array; it is now read as an empty list, so the service shows `checked: true` with `invite_count: 0` and the result is `complete: true` when nothing else fails. Blank, partial and malformed bodies, and a `null` devices listing, are still incomplete. The people flows that wait for proof that an invitation is gone (replacement, removal, `--reconcile-invite app=none`) accept the same `null` as that proof.
+- When the completion receipt of an MCP tool call or of `requests approve` also fails, the tool's own failure keeps its code, next steps and data and stays first in the message; the missing receipt is added to it, not substituted for it. A successful call whose receipt cannot be written still reports `mcp_audit_unavailable`.
 
 ### Access traffic
 

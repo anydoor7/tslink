@@ -309,7 +309,13 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		}
 		// A cancelled client cannot suppress its completion receipt.
 		if recordErr := actions.audit(context.WithoutCancel(ctx), entry); recordErr != nil {
-			return makeMCPToolErrorResult(mcpAuditUnavailable(true)), nil
+			// A tool that already failed keeps its own failure, first; the
+			// missing receipt is added to it, never substituted for it.
+			primary := err
+			if primary == nil {
+				primary, _ = mcpResultFailure(result)
+			}
+			return makeMCPToolErrorResult(joinAuditFailure(primary, mcpAuditUnavailable(true))), nil
 		}
 	}
 	return result, err

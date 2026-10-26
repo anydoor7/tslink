@@ -211,6 +211,12 @@ func stableErrorMetadata(err error) (string, []string, bool) {
 }
 
 func errorMessage(err error) string {
+	// An error that joins several failures composes its own message: reading
+	// only the first coded error in its chain would hide the others.
+	var composed interface{ EnvelopeMessage() string }
+	if errors.As(err, &composed) {
+		return composed.EnvelopeMessage()
+	}
 	var coded registry.CodedError
 	if errors.As(err, &coded) {
 		if coded.Message != "" {
