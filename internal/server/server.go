@@ -2376,6 +2376,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 		identity = NewStaticIdentityResolver(lc)
 		h, err2 := NewProxyHandlerWithOptions(svc.Target, identity, ProxyOptions{
+			App:          svc.Name,
 			PreserveHost: svc.PreserveHost,
 			CanonicalHost: func() string {
 				return canonicalHostFor(tsnetSrv, runtimeHost)

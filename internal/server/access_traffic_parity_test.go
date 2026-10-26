@@ -42,9 +42,18 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 	originalNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return sentinel }
 	t.Cleanup(func() { newTSNetServerFn = originalNew })
-	for _, scenario := range []string{"allowed", "denied", "file", "websocket", "backend_error", "upstream_unavailable"} {
+	for _, scenario := range []string{"allowed", "denied", "file", "websocket", "backend_error", "upstream_unavailable", "timeout"} {
 		t.Run(scenario, func(t *testing.T) {
 			const upload, download = "upload-body", "download-body"
+			if scenario == "timeout" {
+				// Name resolution of the backend host times out: a genuine
+				// backend timeout on both entry paths, with no network access.
+				resolver := net.DefaultResolver
+				net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+					return nil, &net.DNSError{Err: "i/o timeout", IsTimeout: true}
+				}}
+				t.Cleanup(func() { net.DefaultResolver = resolver })
+			}
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if scenario == "websocket" {
 					ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -84,6 +93,9 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				_, err = registry.MutateService(f.path, "photos", func(s registry.Service) (registry.Service, error) {
 					s.PortalOnly = false
 					s.Target = backend.URL
+					if scenario == "timeout" {
+						s.Target = "http://backend.timeout.test.:8080"
+					}
 					if scenario == "file" {
 						s.Type, s.Target, s.Path = registry.TypeFile, "", files
 					}
@@ -130,12 +142,14 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			gatewayClient := f.client(t)
 			appClient := &http.Client{Timeout: testwait.Budget(t)}
 			t.Cleanup(appClient.CloseIdleConnections)
+			received := map[string]int64{}
 			for _, endpoint := range []struct {
+				via    string
 				url    string
 				client *http.Client
 			}{
-				{"https://home.tailnet.ts.net:8443", gatewayClient},
-				{"http://" + ln.Addr().String(), appClient},
+				{"portal", "https://home.tailnet.ts.net:8443", gatewayClient},
+				{"", "http://" + ln.Addr().String(), appClient},
 			} {
 				if scenario == "websocket" {
 					ctx, cancel := context.WithTimeout(t.Context(), testwait.Budget(t))
@@ -169,6 +183,9 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if scenario == "upstream_unavailable" {
 					wantStatus = http.StatusBadGateway
 				}
+				if scenario == "timeout" {
+					wantStatus = http.StatusGatewayTimeout
+				}
 				req, err := http.NewRequest(method, endpoint.url+path, strings.NewReader(body))
 				if err != nil {
 					t.Fatal(err)
@@ -182,9 +199,12 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if err != nil || resp.StatusCode != wantStatus {
 					t.Fatalf("HTTP %d: %v", resp.StatusCode, err)
 				}
-				if scenario != "denied" && scenario != "upstream_unavailable" && string(got) != download {
+				if scenario != "denied" && scenario != "upstream_unavailable" && scenario != "timeout" && string(got) != download {
 					t.Fatalf("download %q", got)
 				}
+				// What each client actually received: the recorded bytes_out of
+				// its entry path must equal it, not merely agree with the other.
+				received[endpoint.via] = int64(len(got))
 			}
 			dir := filepath.Dir(f.path)
 			testwait.Until(t, "both handler chains recorded", func() bool {
@@ -211,6 +231,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			type outcome struct {
 				Status                       int
 				Decision, Reason, ErrorClass string
+				BytesOut                     int64
 			}
 			outcomes := map[string]outcome{}
 			for _, e := range r.Events {
@@ -223,7 +244,10 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if scenario == "upstream_unavailable" && (e.Status != 502 || e.ErrorClass != "connection_refused") {
 					t.Fatalf("backend failure classification: %+v", e)
 				}
-				outcomes[e.Via] = outcome{e.Status, e.Decision, e.Reason, e.ErrorClass}
+				if scenario == "timeout" && (e.Status != 504 || e.ErrorClass != "timeout") {
+					t.Fatalf("backend timeout classification: %+v", e)
+				}
+				outcomes[e.Via] = outcome{e.Status, e.Decision, e.Reason, e.ErrorClass, e.BytesOut}
 				in += e.BytesIn
 				out += e.BytesOut
 				vias[e.Via]++
@@ -242,18 +266,40 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			if vias[""] != 1 || vias["portal"] != 1 || traffic.HTTP.BytesIn != in || traffic.HTTP.BytesOut != out || !equalJSON(p.HTTPTraffic, traffic.HTTP) || !equalJSON(traffic.Apps[0].HTTPTraffic, traffic.HTTP) {
 				t.Fatalf("two-entry totals: %+v, vias=%v in=%d out=%d", traffic, vias, in, out)
 			}
-			// The same request must yield the same authorization decision, status
-			// and backend classification whichever entry carried it.
+			// The same request must yield the same authorization decision, status,
+			// backend classification and response size whichever entry carried
+			// it. Totals prove aggregation; only per-entry equality proves the two
+			// producers generate the same response.
 			direct, gateway := outcomes[""], outcomes["portal"]
 			if direct.Status != gateway.Status || direct.Decision != gateway.Decision || direct.ErrorClass != gateway.ErrorClass {
 				t.Fatalf("entry paths disagree: direct=%+v gateway=%+v", direct, gateway)
 			}
-			if scenario == "upstream_unavailable" {
-				// An unreachable backend is an authorized request that failed
-				// downstream: 502 and a backend class, never a denial or a failure
-				// reason. The gateway keeps only the grant reason of any allowed
-				// request, never upstream_down.
-				if direct != (outcome{http.StatusBadGateway, "allowed", "", "connection_refused"}) || gateway.Reason != "granted" {
+			if scenario != "websocket" {
+				for via, o := range outcomes {
+					if received[via] != o.BytesOut {
+						t.Fatalf("recorded bytes_out differs from the body %q received: %d != %d", via, o.BytesOut, received[via])
+					}
+				}
+			}
+			switch scenario {
+			case "allowed", "file", "backend_error", "upstream_unavailable", "timeout":
+				if direct.BytesOut != gateway.BytesOut {
+					t.Fatalf("entry paths record different bytes_out: direct=%+v gateway=%+v", direct, gateway)
+				}
+			case "denied":
+				t.Logf("denial responses (not asserted equal): direct=%d bytes, gateway=%d bytes", direct.BytesOut, gateway.BytesOut)
+			}
+			switch scenario {
+			case "upstream_unavailable", "timeout":
+				// A backend that cannot answer is an authorized request that
+				// failed downstream: 502 (504 for a timeout) and a backend class,
+				// never a denial or a failure reason. The gateway keeps only the
+				// grant reason of any allowed request, never upstream_down.
+				status, class := http.StatusBadGateway, "connection_refused"
+				if scenario == "timeout" {
+					status, class = http.StatusGatewayTimeout, "timeout"
+				}
+				if direct != (outcome{status, "allowed", "", class, direct.BytesOut}) || gateway.Reason != "granted" || direct.BytesOut == 0 {
 					t.Fatalf("backend failure outcome: direct=%+v gateway=%+v", direct, gateway)
 				}
 			}

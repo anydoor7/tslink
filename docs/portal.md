@@ -123,8 +123,12 @@ reuse an upstream connection. Traffic and
 health checks dial that peer's Tailscale IP directly through the gateway netstack,
 only while `UseNetstackForIP` confirms it is a peer. They never use the host
 resolver or host network; a missing or disappearing peer fails closed with
-`remote_upstream_not_peer` or a netstack dial error, and on an already open
-upstream connection as `upstream_down`. TLS still verifies the
+`remote_upstream_not_peer` (visitors get 503 with that code, and the access log
+records the request as `denied` with that reason, as for every
+`remote_upstream_*` refusal). A netstack dial error, or a failure on an already
+open upstream connection, is a backend failure instead: visitors get 502, or 504
+when the backend timed out, with the code `upstream_down`, and the access log
+records an allowed request with an `error_class`. TLS still verifies the
 registered hostname normally. The remote app must permit the gateway tag in its own policy
 (for a TSLink app, its explicit tag allow list). This command does not change
 remote ACLs or registrations.
