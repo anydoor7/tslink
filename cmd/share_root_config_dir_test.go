@@ -68,7 +68,7 @@ func TestHomeShareWarnsWhenConfigDirectoryLivesElsewhere(t *testing.T) {
 	regPath := stubAddWritePaths(t)
 	paths := mcpSharePaths(t)
 	paths.Registry = regPath
-	result, err := defaultMCPActions(paths, io.Discard).add(context.Background(), AddParams{Name: "home", Dir: home, NoDaemonInstall: true}, true)
+	result, err := defaultMCPActions(paths, io.Discard).add(context.Background(), AddParams{Name: "homefiles", Dir: home, NoDaemonInstall: true}, true)
 	if err != nil {
 		t.Fatalf("add --dir home with the config directory elsewhere: %v", err)
 	}

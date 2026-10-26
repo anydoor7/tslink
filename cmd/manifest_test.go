@@ -568,6 +568,10 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"access_setup_incomplete":               accessSetupError(PeopleResult{}, nil),
+		"membership_unknown":                    registry.CodedError{Code: "membership_unknown", Message: "directory unavailable"},
+		"recipient_unavailable":                 registry.CodedError{Code: "recipient_unavailable", Message: "recipient suspended"},
+		"endpoint_unavailable":                  registry.CodedError{Code: "endpoint_unavailable", Message: "home disabled"},
 		"remote_upstream_outside_tailnet":       registry.ValidateRemoteTailnet("https://remote.foreign.ts.net", "tailnet.ts.net"),
 		"remote_upstream_requires_tag":          registry.CodedError{Code: "remote_upstream_requires_tag", Message: "observed gateway is untagged"},
 		"gateway_invite_stale":                  registry.CodedError{Code: "gateway_invite_stale", Message: "gateway invite targets the old node"},
@@ -1008,9 +1012,9 @@ func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T)
 	if removeFields["complete"].Type != "boolean" || removeFields["cleanup"].Type != "array" {
 		t.Fatal("people remove manifest must expose remote completion and cleanup evidence", removeFields)
 	}
-	for _, name := range []string{"reconcile-invite", "replace-invite"} {
-		if !containsString(flag("tslink people update", name).Requires, "--invite") {
-			t.Fatal("people update recovery flag requires --invite", name)
+	for _, name := range []string{"reconcile-invite", "replace-invite", "print-links", "qr-invite"} {
+		if containsString(flag("tslink people update", name).Requires, "--invite") {
+			t.Fatal("automatic sharing still depends on --invite", name)
 		}
 	}
 	resendFields := commands["tslink invite resend"].JSONResultFields
@@ -1045,9 +1049,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// Preserve the complete contract within a fixed budget. health set adds
 	// one command with seven flags and health_option_unsupported, about 110
 	// bytes, which took the contract past 6000 (6048 measured); 6100 keeps
-	// that and no more.
-	if len(data) >= 6100 {
-		t.Fatalf("compact manifest = %d bytes, want < 6100", len(data))
+	// that and no more. Unified access adds four stable failure codes and four
+	// add lifetime/disclosure flags (6183 bytes); retain a bounded 6250 ceiling.
+	if len(data) >= 6250 {
+		t.Fatalf("compact manifest = %d bytes, want < 6250", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

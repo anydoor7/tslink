@@ -2539,10 +2539,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Explicitly include bearer invitation links in output and the guide",
-          "requires": [
-            "--invite"
-          ]
+          "usage": "Explicitly include bearer invitation links in output and the guide"
         },
         {
           "name": "qr",
@@ -2557,7 +2554,6 @@
           "scope": "local",
           "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
           "requires": [
-            "--invite",
             "--print-links"
           ]
         },
@@ -2720,10 +2716,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Explicitly include bearer invitation links in output and the guide",
-          "requires": [
-            "--invite"
-          ]
+          "usage": "Explicitly include bearer invitation links in output and the guide"
         },
         {
           "name": "qr",
@@ -2738,7 +2731,6 @@
           "scope": "local",
           "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
           "requires": [
-            "--invite",
             "--print-links"
           ]
         },
@@ -2753,10 +2745,7 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway",
-          "requires": [
-            "--invite"
-          ]
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway"
         },
         {
           "name": "replace-invite",
@@ -2764,9 +2753,6 @@
           "default": "[]",
           "scope": "local",
           "usage": "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines",
-          "requires": [
-            "--invite"
-          ],
           "conflicts": [
             "--apps",
             "--for"

@@ -467,6 +467,8 @@ func accessSetupError(data any, cause error) error {
 		message = cause.Error()
 		if c, ok := registry.ErrorCode(cause); ok {
 			code = c
+		} else if c := output.StableErrorCode(output.ExitCode(cause)); c != "internal_error" {
+			code = c
 		}
 	}
 	return accessIncompleteError{CodedError: registry.CodedError{Code: code, Message: message, MessageOnly: true}, data: data}

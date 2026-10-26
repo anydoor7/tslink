@@ -19,6 +19,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/server"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 func wave2Actions(t *testing.T, paths sharePaths, role, app string) mcpActions {
@@ -418,10 +419,13 @@ func TestWave2ScopedPeopleGrantPolicyFailures(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			paths := peopleTestPaths(t)
 			now, value := peopleNowFn(), "1h"
+			// This stored guest is now a verified member; the sticky guest
+			// lifetime ceiling still applies without new owner-only sharing.
+			grantTestEnvironment(t, tailapi.MembershipMember)
 			if _, err := registry.ChangePersonWithLifetime(paths.Registry, "alice", []string{"photos"}, false, registry.PersonLifetimeOptions{Value: &value, Audience: duration.Guest, Now: now}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := registry.ChangePerson(paths.Registry, "owner", []string{"photos"}, nil, false, false); err != nil {
+			if _, err := registry.ChangePerson(paths.Registry, "owner", []string{"photos", "finance"}, nil, false, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := registry.SetPortal(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner"}); err != nil {
