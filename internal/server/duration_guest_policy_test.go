@@ -39,9 +39,9 @@ func TestFirstGuestGrantEnforcedBeforeInviteHistoryOnHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No invite record exists: this is exactly the first-invitation window.
-	_, err := registry.ExtendDuration(path, registry.ExtendOptions{Service: "photos", Who: "alice", Value: "never", AckNever: true, Now: now})
-	if err == nil || !strings.Contains(err.Error(), "only for tailnet-member") {
-		t.Errorf("guest permanent extension accepted: %v", err)
+	_, err := registry.ExtendDuration(path, registry.ExtendOptions{Service: "photos", Who: "alice", Value: "never", AckNever: false, Now: now})
+	if err == nil || !strings.Contains(err.Error(), "ack-never") {
+		t.Errorf("guest permanent extension without acknowledgement accepted: %v", err)
 	}
 	lc := fakeWhoIsClient(t, &apitype.WhoIsResponse{UserProfile: &tailcfg.UserProfile{LoginName: "alice"}}, nil)
 	target, _ := url.Parse(backend.URL)

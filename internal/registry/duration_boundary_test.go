@@ -105,8 +105,8 @@ func TestGuestClassificationPersistsBeforeInviteAndAfterReAdd(t *testing.T) {
 	}
 	before, _ := os.ReadFile(path)
 	for _, v := range []string{"never", "7d1s"} {
-		_, err := ChangePersonWithLifetime(path, "alice", nil, true, PersonLifetimeOptions{Value: &v, Audience: duration.TailnetMember, AckNever: true, Now: now})
-		if err == nil || !(strings.Contains(err.Error(), "only for tailnet-member") || strings.Contains(err.Error(), "exceeds")) {
+		_, err := ChangePersonWithLifetime(path, "alice", nil, true, PersonLifetimeOptions{Value: &v, Audience: duration.TailnetMember, AckNever: false, Now: now})
+		if err == nil || !(strings.Contains(err.Error(), "ack-never") || strings.Contains(err.Error(), "exceeds")) {
 			t.Fatal(err)
 		}
 	}
@@ -127,7 +127,7 @@ func TestGuestClassificationPersistsBeforeInviteAndAfterReAdd(t *testing.T) {
 	if err != nil || !p.Guest || p.Revoked {
 		t.Fatal("re-add lost guest marker", p, err)
 	}
-	if _, err := ExtendDuration(path, ExtendOptions{Service: "photos", Who: "alice", Value: "never", AckNever: true, Now: now}); err == nil || !strings.Contains(err.Error(), "only for tailnet-member") {
+	if _, err := ExtendDuration(path, ExtendOptions{Service: "photos", Who: "alice", Value: "never", AckNever: false, Now: now}); err == nil || !strings.Contains(err.Error(), "ack") {
 		t.Fatal(err)
 	}
 }

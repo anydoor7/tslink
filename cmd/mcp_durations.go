@@ -26,7 +26,7 @@ func lifetimeSchema(public bool) map[string]any {
 	if public {
 		description += " Default 24h; guest/public maximum defaults to 7d, configurable in durations.public_max. Never refused. Omission on add preserves an existing deadline."
 	} else {
-		description += " New grants default to 24h; update omission preserves deadlines. Never requires ack_never and a tailnet-member login; device-invited guests have the configured public maximum."
+		description += " New grants default to 24h; update omission preserves deadlines. Never requires ack_never for members and device-invited guests; finite guest grants retain the configured maximum."
 	}
 	return map[string]any{"type": "string", "description": description, "examples": []string{"1h", "8h", "24h", "3d", "7d", "90m", "1w", "1d12h", "until 2030-06-01T18:00:00Z"}}
 }
