@@ -198,7 +198,7 @@ func TestGatewayDenyPrivacyReasonsAndMatchedGrant(t *testing.T) {
 	eligible.Node.Hostinfo = (&tailcfg.Hostinfo{}).View()
 	f.who.Store(eligible)
 	code, body, _ = gatewayGet(t, c, "8444", "/", map[string]string{"Accept": "text/html"})
-	if code != 403 || !strings.Contains(body, "payroll") || !strings.Contains(body, "Request access") {
+	if code != 403 || !strings.Contains(body, "payroll") || strings.Contains(body, "href") {
 		t.Fatalf("requestable app: %d %s", code, body)
 	}
 	code, _, _ = gatewayGet(t, c, "8443", "/", nil)

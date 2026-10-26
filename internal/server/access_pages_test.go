@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -90,24 +93,22 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 		}
 	}
 	cases := []struct {
-		name        string
-		login       string
-		who         *apitype.WhoIsResponse // the caller; whoIsUser(login) when nil
-		setup       func(t *testing.T, path string)
-		whoErr      bool
-		code        string
-		message     string
-		directLog   string // the access-log reason of the app's own node
-		gatewayLog  string // and of the gateway
-		dashboard   bool   // the page links to the dashboard
-		later       time.Duration
-		requestLink bool
+		name       string
+		login      string
+		who        *apitype.WhoIsResponse // the caller; whoIsUser(login) when nil
+		setup      func(t *testing.T, path string)
+		whoErr     bool
+		code       string
+		message    string
+		directLog  string // the access-log reason of the app's own node
+		gatewayLog string // and of the gateway
+		later      time.Duration
 	}{
-		{name: "no grant", login: "alice", code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true},
+		{name: "no grant", login: "alice", code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant"},
 		// The app is named to a caller who can ask for it, and to nobody else.
-		{name: "no grant, requestable app, caller who can request", login: "alice", who: requestMember("alice"), code: "no_grant", message: "You do not have access to this app: photos", directLog: "people", gatewayLog: "no_grant", dashboard: true, requestLink: true,
+		{name: "no grant, requestable app, caller who can request", login: "alice", who: requestMember("alice"), code: "no_grant", message: "You do not have access to this app: photos", directLog: "people", gatewayLog: "no_grant",
 			setup: makeRequestable},
-		{name: "no grant, requestable app, node not described", login: "alice", code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true,
+		{name: "no grant, requestable app, node not described", login: "alice", code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant",
 			setup: makeRequestable},
 		{name: "no grant, requestable app, tagged caller", login: "alice", who: func() *apitype.WhoIsResponse {
 			w := requestMember("alice")
@@ -118,14 +119,12 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 			w := requestMember("alice")
 			w.Node.Sharer = 7
 			return w
-		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true, setup: makeRequestable},
+		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", setup: makeRequestable},
 		{name: "no grant, requestable app, sharee node", login: "alice", who: func() *apitype.WhoIsResponse {
 			w := requestMember("alice")
 			w.Node.Hostinfo = (&tailcfg.Hostinfo{ShareeNode: true}).View()
 			return w
-		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true, setup: makeRequestable},
-		// An expired or revoked person has no app left to open, so neither path
-		// sends them to the dashboard.
+		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", setup: makeRequestable},
 		{name: "expired grant", login: "alice", code: "expired", message: "Your access has expired", directLog: "expired", gatewayLog: "expired", later: time.Hour,
 			setup: func(t *testing.T, path string) {
 				deadline := now.Add(time.Minute)
@@ -198,7 +197,7 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 			clock := func() time.Time { return now.Add(tc.later) }
 			gate := &gatewayGate{path: path, svc: svc, lc: lc, now: clock, authority: "home.tailnet.ts.net:8443", dashboard: dashboard, expire: registry.TryExpirePeople}
 			viaGateway := gate.handler(next)
-			viaNode := peopleMiddlewareWithDashboard(path, svc, func() (*LocalClient, error) { return lc, nil }, clock, func() string { return dashboard })(next)
+			viaNode := peopleMiddleware(path, svc, func() (*LocalClient, error) { return lc, nil }, clock)(next)
 			for _, sh := range shapes {
 				t.Run(sh.name, func(t *testing.T) {
 					gw, node := serveGenerated(viaGateway, sh.method, sh.header), serveGenerated(viaNode, sh.method, sh.header)
@@ -230,11 +229,11 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 						if !strings.Contains(gw.body, "<h1>"+tc.message+"</h1>") {
 							t.Fatalf("page lacks %q: %q", tc.message, gw.body)
 						}
-						if linked := strings.Contains(gw.body, dashboard); linked != tc.dashboard {
-							t.Fatalf("dashboard link = %v, want %v: %q", linked, tc.dashboard, gw.body)
-						}
-						if requestable := strings.Contains(gw.body, "Request access"); requestable != tc.requestLink {
-							t.Fatalf("request link = %v, want %v: %q", requestable, tc.requestLink, gw.body)
+						// The gateway knows the dashboard's address (the gate is given it),
+						// yet its refusal links nowhere: a link would make the bytes
+						// depend on whether the gateway is running.
+						if strings.Contains(gw.body, "href") || strings.Contains(gw.body, "<a ") || strings.Contains(gw.body, dashboard) {
+							t.Fatalf("a refusal links somewhere: %q", gw.body)
 						}
 						return
 					}
@@ -244,64 +243,6 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 				})
 			}
 		})
-	}
-}
-
-// The gateway shows its refusal page only to a caller it has admitted, so the
-// dashboard link on an app's own node goes only to a caller who could open the
-// dashboard, and only while it is up. Everything else on the page is unchanged.
-func TestAppNodeDenialLinksOnlyToACallerWhoCanOpenTheDashboard(t *testing.T) {
-	const dashboard = "https://home.tailnet.ts.net"
-	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	dir := t.TempDir()
-	t.Setenv(config.ConfigDirEnv, dir)
-	t.Setenv("TSLINK_DISABLE_KEYRING", "1")
-	path := filepath.Join(dir, "registry.json")
-	if err := registry.SetPortal(path, &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner", Gateway: &registry.GatewayConfig{Enabled: true, Ports: registry.DefaultGatewayPorts()}}); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"photos", "payroll"} {
-		if _, err := registry.Add(path, registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://127.0.0.1:9", PortalOnly: true}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := registry.MutateService(path, name, func(s registry.Service) (registry.Service, error) { s.PortalOnly = false; return s, nil }); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := registry.ChangePerson(path, "alice", []string{"payroll"}, nil, true, false); err != nil {
-		t.Fatal(err)
-	}
-	reg, err := registry.Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var svc registry.Service
-	for _, s := range reg.Services {
-		if s.Name == "photos" {
-			svc = s
-		}
-	}
-	browser := map[string]string{"Sec-Fetch-Mode": "navigate"}
-	page := func(who *apitype.WhoIsResponse, address string) string {
-		lc := fakeWhoIsClient(t, who, nil)
-		h := peopleMiddlewareWithDashboard(path, svc, func() (*LocalClient, error) { return lc, nil }, func() time.Time { return now }, func() string { return address })(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("refused request reached the app") }))
-		got := serveGenerated(h, http.MethodGet, browser)
-		if got.status != http.StatusForbidden {
-			t.Fatalf("status %d: %q", got.status, got.body)
-		}
-		return got.body
-	}
-	if body := page(whoIsUser("alice", "phone"), dashboard); !strings.Contains(body, dashboard) {
-		t.Fatalf("a caller who can open the dashboard gets no link: %q", body)
-	}
-	// Someone who can see no app and cannot ask for one has no business with
-	// the portal's address, on the gateway as on an app's own node.
-	if body := page(whoIsUser("stranger", "phone"), dashboard); strings.Contains(body, "home.tailnet.ts.net") || !strings.Contains(body, "You do not have access to this app") {
-		t.Fatalf("a caller who cannot open the dashboard learns its address: %q", body)
-	}
-	// No dashboard (gateway down, or none yet): no link, nothing else changes.
-	if body := page(whoIsUser("alice", "phone"), ""); strings.Contains(body, "home.tailnet.ts.net") || !strings.Contains(body, "You do not have access to this app") {
-		t.Fatalf("link without a dashboard: %q", body)
 	}
 }
 
@@ -385,17 +326,131 @@ func TestClosingPageDoesNotDependOnTheEntryPath(t *testing.T) {
 	}
 }
 
-// An app node reads the dashboard address without Server.mu and sees it only
-// while the gateway runs: the same condition under which a gateway route, and
-// so a gateway refusal page, exists.
-func TestAppNodesLearnTheDashboardAddressOnlyWhileTheGatewayRuns(t *testing.T) {
-	f := newGatewayFixture(t, nil)
+// startDirectAppNode starts photos' own node on loopback, as the daemon does,
+// with every request on it identified as who. It returns the node's base URL.
+func startDirectAppNode(t *testing.T, f *gatewayFixture, who *apitype.WhoIsResponse) string {
+	t.Helper()
+	reg, err := registry.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var svc registry.Service
+	for _, s := range reg.Services {
+		if s.Name == "photos" {
+			svc = s
+		}
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	node := &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, who, nil)}, ln: ln}
+	installed := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return node }
+	t.Cleanup(func() { newTSNetServerFn = installed })
+	if err = f.s.startNodeLocked(t.Context(), svc); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.s.stopNodeLocked("photos") })
+	return "http://" + ln.Addr().String()
+}
+
+// What an app's own node tells a refused caller must not depend on whether the
+// gateway is running: the access log's bytes_out for that person and app would
+// otherwise change when the owner turns the gateway on or off. The page is also
+// the one the gateway gives the same caller.
+func TestDirectNodeDenialIsTheSameWithTheGatewayRunningAndStopped(t *testing.T) {
+	alice := requestMember("alice")
+	f := newGatewayFixture(t, func(f *gatewayFixture) {
+		f.who.Store(alice)
+		// photos is requestable and alice may use payroll only: she is admitted
+		// by the gateway, refused at photos, and may ask for it.
+		if _, err := registry.MutateService(f.path, "photos", func(s registry.Service) (registry.Service, error) {
+			s.PortalOnly, s.Requestable = false, true
+			return s, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := registry.ChangePerson(f.path, "alice", []string{"payroll"}, nil, true, true); err != nil {
+			t.Fatal(err)
+		}
+	})
 	f.waitRoute(t, "photos", "running")
-	if got := f.s.dashboardAddress(); got != "https://home.tailnet.ts.net" {
-		t.Fatalf("dashboard address with the gateway running: %q", got)
+	node := startDirectAppNode(t, f, alice)
+	type request struct {
+		name, method string
+		header       map[string]string
+	}
+	requests := []request{
+		{"browser", http.MethodGet, map[string]string{"Sec-Fetch-Mode": "navigate"}},
+		{"api", http.MethodPost, nil},
+	}
+	fetch := func(client *http.Client, url string, r request) string {
+		t.Helper()
+		req, err := http.NewRequest(r.method, url, strings.NewReader("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range r.header {
+			req.Header.Set(k, v)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s: status %d: %v: %q", r.name, resp.StatusCode, err, body)
+		}
+		return string(body)
+	}
+	direct := &http.Client{Timeout: testwait.Budget(t)}
+	t.Cleanup(direct.CloseIdleConnections)
+	gateway := f.client(t)
+	running := map[string]string{}
+	for _, r := range requests {
+		running[r.name] = fetch(direct, node, r)
+		// The gateway gives the same caller the same page for the same request.
+		if got := fetch(gateway, "https://home.tailnet.ts.net:8443/", r); got != running[r.name] {
+			t.Fatalf("%s: gateway and app node differ:\ngateway: %q\nnode:    %q", r.name, got, running[r.name])
+		}
+	}
+	if !strings.Contains(running["browser"], "<h1>You do not have access to this app: photos</h1>") {
+		t.Fatalf("the refused caller who can request the app is not told its name: %q", running["browser"])
+	}
+	if strings.Contains(running["browser"], "href") || strings.Contains(running["browser"], "home.tailnet.ts.net") {
+		t.Fatalf("a refusal links to the dashboard: %q", running["browser"])
 	}
 	f.s.closePortal()
-	if got := f.s.dashboardAddress(); got != "" {
-		t.Fatalf("dashboard address after the portal closed: %q", got)
+	for _, r := range requests {
+		if got := fetch(direct, node, r); got != running[r.name] {
+			t.Fatalf("%s: the node's refusal changed when the gateway stopped:\nrunning: %q\nstopped: %q", r.name, running[r.name], got)
+		}
+	}
+	// ... and so did what the access log recorded for it.
+	testwait.Until(t, "four direct refusals recorded", func() bool {
+		n := 0
+		for _, e := range f.events.all() {
+			if e.Kind == "http" && e.App == "photos" && e.Via == "" {
+				n++
+			}
+		}
+		return n == 2*len(requests)
+	})
+	bytesOut := map[string]map[int64]int{}
+	for _, e := range f.events.all() {
+		if e.Kind == "http" && e.App == "photos" && e.Via == "" {
+			if bytesOut[e.Method] == nil {
+				bytesOut[e.Method] = map[int64]int{}
+			}
+			bytesOut[e.Method][e.BytesOut]++
+		}
+	}
+	for method, sizes := range bytesOut {
+		if len(sizes) != 1 {
+			t.Fatalf("%s refusals recorded different bytes_out with the gateway running and stopped: %v", method, sizes)
+		}
 	}
 }

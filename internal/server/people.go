@@ -13,18 +13,11 @@ var peopleExpiryFn = registry.ExpirePeople
 // peopleMiddleware re-reads the atomic registry for each request; an accepted
 // network share cannot bypass it. It deliberately does not cache WhoIs.
 // now is captured by startNodeLocked before any handler goroutine exists.
-func peopleMiddleware(path string, initial registry.Service, provide func() (*LocalClient, error), now func() time.Time) func(http.Handler) http.Handler {
-	return peopleMiddlewareWithDashboard(path, initial, provide, now, nil)
-}
-
-// peopleMiddlewareWithDashboard also lets the refusal page link to the portal
-// dashboard, as the gateway's page does, for a caller who could open it. A nil
-// dashboard, or one with no address yet, leaves the link out.
 //
 // Every refusal is answered with the page the gateway gives for the same
 // refusal (writeAccessDenial), under the visitor code the gateway uses, while
 // the access log keeps this path's own reason (people, expired, acl).
-func peopleMiddlewareWithDashboard(path string, initial registry.Service, provide func() (*LocalClient, error), now func() time.Time, dashboard dashboardFunc) func(http.Handler) http.Handler {
+func peopleMiddleware(path string, initial registry.Service, provide func() (*LocalClient, error), now func() time.Time) func(http.Handler) http.Handler {
 	expire := peopleExpiryFn
 	unavailable := func(err error, issues []registry.ServiceIssue) bool {
 		if err != nil {
@@ -124,7 +117,6 @@ func peopleMiddlewareWithDashboard(path string, initial registry.Service, provid
 					App:         svc.Name,
 					Visible:     decision.DirectoryVisible,
 					Requestable: svc.Requestable && canRequest,
-					Dashboard:   denialDashboard(dashboard.address(), reg, who, svc.Name, t),
 				})
 				return
 			}

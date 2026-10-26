@@ -398,7 +398,6 @@ type Server struct {
 	portalRun                *portalRun
 	portalRoot               context.Context
 	portalState              runtimesnapshot.PortalState
-	dashboardURL             atomic.Pointer[string] // portalState.URL while the gateway runs; see publishDashboardLocked
 	portalRetryPending       atomic.Bool
 	gatewayRouteRetryPending atomic.Bool
 	// events fans runtime-state changes out to open control-plane event
@@ -2426,10 +2425,10 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			return err
 		}
 		if svc.GuestGate {
-			guestPrivate = peopleMiddlewareWithDashboard(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn, s.dashboardAddress)(handler)
+			guestPrivate = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
 			guestPath = peoplePath
 		} else {
-			handler = peopleMiddlewareWithDashboard(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn, s.dashboardAddress)(handler)
+			handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
 		}
 	}
 

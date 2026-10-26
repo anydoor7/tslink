@@ -73,7 +73,6 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 	s.gatewayRouteRetryPending.Store(false)
 	s.portalRun = nil
 	s.portalState = tsRuntime.PortalState{State: "disabled"}
-	s.publishDashboardLocked()
 	s.mu.Unlock()
 	if old != nil {
 		old.cancel()
@@ -97,7 +96,6 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 	s.mu.Lock()
 	s.portalRun = run
 	s.portalState = tsRuntime.PortalState{Enabled: true, Hostname: cfg.Hostname, State: "starting"}
-	s.publishDashboardLocked()
 	s.mu.Unlock()
 	// Capture seams before the worker exists, including the clock. The worker
 	// is joined on disable, replacement and daemon shutdown.
@@ -118,7 +116,6 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 			s.portalRetryPending.Store(true)
 		}
 		s.portalState = state
-		s.publishDashboardLocked()
 		if state.Gateway != nil {
 			run.gatewayTagged.Store(state.Gateway.Tagged)
 		}
@@ -352,28 +349,7 @@ func (s *Server) refreshPortalURLLocked() {
 			copy.Dropped = s.portalRun.dropped.Load()
 			s.portalState.Gateway = &copy
 		}
-		s.publishDashboardLocked()
 	}
-}
-
-// publishDashboardLocked makes the dashboard address readable without
-// Server.mu. It exists only while the gateway runs, the same condition under
-// which a gateway route (and so its refusal page) exists.
-func (s *Server) publishDashboardLocked() {
-	url := ""
-	if s.portalState.State == "running" && s.portalState.Gateway != nil {
-		url = s.portalState.URL
-	}
-	s.dashboardURL.Store(&url)
-}
-
-// dashboardAddress is the dashboard address an app node's refusal page may
-// link to, or "".
-func (s *Server) dashboardAddress() string {
-	if url := s.dashboardURL.Load(); url != nil {
-		return *url
-	}
-	return ""
 }
 
 // startMu makes the final route refresh and done publication atomic with the

@@ -133,8 +133,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					}
 				}
 				if scenario == "denied_browser" || scenario == "denied_ineligible" {
-					// A requestable app names itself and offers the request link
-					// to a caller who may ask; the page also links the dashboard.
+					// A requestable app names itself to a caller who may ask.
 					// denied_ineligible: the caller may not ask (WhoIs describes
 					// no node), so the app is not named to them on either path.
 					if scenario == "denied_browser" {
@@ -386,10 +385,10 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				}
 			}
 			if scenario == "denied_browser" {
-				for _, want := range []string{"You do not have access to this app: photos", "Back to your apps", "Request access", "https://home.tailnet.ts.net"} {
-					if !strings.Contains(pages[""], want) {
-						t.Fatalf("the app node's page lacks %q: %q", want, pages[""])
-					}
+				// Named to a caller who may ask for it, with no link to the
+				// dashboard: whether one exists depends on the gateway.
+				if !strings.Contains(pages[""], "You do not have access to this app: photos") || strings.Contains(pages[""], "href") || strings.Contains(pages[""], "home.tailnet.ts.net") {
+					t.Fatalf("the app node's page: %q", pages[""])
 				}
 			}
 			if scenario == "denied_ineligible" {

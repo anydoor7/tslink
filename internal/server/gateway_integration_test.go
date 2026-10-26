@@ -330,7 +330,7 @@ func TestGatewayTLSGateAndPerRequestRevocation(t *testing.T) {
 	f.who.Store(whoIsUser("alice", "laptop"))
 	client := f.client(t)
 	code, body, _ := gatewayGet(t, client, "8444", "/", map[string]string{"Accept": "text/html"})
-	if code != 403 || (!strings.Contains(body, "You do not have access to this app") || strings.Contains(body, "payroll")) || !strings.Contains(body, "https://home.tailnet.ts.net") {
+	if code != 403 || (!strings.Contains(body, "You do not have access to this app") || strings.Contains(body, "payroll")) || strings.Contains(body, "href") {
 		t.Fatalf("known visitor deny: %d %s", code, body)
 	}
 	if f.backend[1].Load() != 0 {

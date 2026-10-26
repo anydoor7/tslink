@@ -87,23 +87,16 @@ func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
 	if err != nil {
 		return false
 	}
-	return gatewayAdmits(reg, who, g.svc.Name, g.svc.PortalRoute == nil, g.now())
-}
-
-// gatewayAdmits is the connection gate's decision for an identified caller.
-// The dashboard admits a caller who can see an app or request one; an app
-// route admits one who may use some routed app. A non-revoked human
-// administrator passes either. name only scopes the administrator probe.
-func gatewayAdmits(reg *registry.Registry, who *apitype.WhoIsResponse, name string, dashboard bool, now time.Time) bool {
 	tags := gatewayTags(who)
 	// A scoped dummy service admits only non-revoked human administrators.
-	role := registry.Service{Name: name, Type: registry.TypeProxy, PeopleScoped: true}
-	if allowed, _, admin := privateAppAccessAt(reg, role, who.UserProfile.LoginName, tags, now); allowed && admin {
+	role := registry.Service{Name: g.svc.Name, Type: registry.TypeProxy, PeopleScoped: true}
+	if allowed, _, admin := privateAppAccessAt(reg, role, who.UserProfile.LoginName, tags, g.now()); allowed && admin {
 		return true
 	}
+	dashboard := g.svc.PortalRoute == nil
 	_, canRequest := requestVisitor(reg, who)
 	for _, svc := range reg.Services {
-		decision := AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, now)
+		decision := AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, g.now())
 		if dashboard {
 			if decision.DirectoryVisible || (canRequest && svc.Requestable) {
 				return true
@@ -264,19 +257,19 @@ func gatewayBrowser(r *http.Request) bool {
 	return htmlQ > 0 && htmlQ >= jsonQ
 }
 
-var gatewayPage = template.Must(template.New("gateway-message").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TSLink</title><h1>{{.Message}}</h1>{{if .Dashboard}}<p><a href="{{.Dashboard}}">Back to your apps</a></p>{{if .Requestable}}<p><a href="{{.Dashboard}}/#request-title">Request access</a></p>{{end}}{{end}}</html>`))
+var gatewayPage = template.Must(template.New("gateway-message").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TSLink</title><h1>{{.Message}}</h1>{{if .Dashboard}}<p><a href="{{.Dashboard}}">Back to your apps</a></p>{{end}}</html>`))
 
-func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason, message, dashboard string, requestable bool) {
+// gatewayErrorPage answers with a page TSLink generates: HTML for a browser
+// navigation, the JSON error envelope otherwise. dashboard, when set, is linked
+// from the HTML page; an app refusal passes none.
+func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason, message, dashboard string) {
 	w.Header().Set("Cache-Control", "no-store")
 	if gatewayBrowser(r) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 		w.WriteHeader(status)
 		if r.Method != http.MethodHead {
-			_ = gatewayPage.Execute(w, struct {
-				Message, Dashboard string
-				Requestable        bool
-			}{message, dashboard, requestable})
+			_ = gatewayPage.Execute(w, struct{ Message, Dashboard string }{message, dashboard})
 		}
 		return
 	}
@@ -326,20 +319,11 @@ func sameGatewayTarget(a, b registry.Service) bool {
 func (g *gatewayGate) handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		visible := false
-		var who *apitype.WhoIsResponse
-		var reg *registry.Registry
 		deny := func(reason string, requestable bool) {
 			accessDeny(r, reason)
-			// The dashboard link follows the same rule as on an app's own
-			// node: given to a caller who could open it, so the page is the
-			// same on both paths for the same person and app.
-			dashboard := ""
-			if who != nil && reg != nil {
-				dashboard = denialDashboard(g.dashboard, reg, who, g.svc.Name, g.now())
-			}
-			writeAccessDenial(w, r, accessDenial{Visitor: reason, App: g.svc.Name, Visible: visible, Requestable: requestable, Dashboard: dashboard})
+			writeAccessDenial(w, r, accessDenial{Visitor: reason, App: g.svc.Name, Visible: visible, Requestable: requestable})
 		}
-		who = g.who(r.Context(), r.RemoteAddr)
+		who := g.who(r.Context(), r.RemoteAddr)
 		if who == nil && accessGoneBeforeDecision(r) {
 			return
 		}
@@ -348,8 +332,7 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 			return
 		}
 		accessAttest(r, who, nil)
-		var err error
-		reg, err = g.registry()
+		reg, err := g.registry()
 		if err != nil {
 			deny("registry_unavailable", false)
 			return
@@ -411,7 +394,7 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		if g.upstreamCheck != nil {
 			if code := g.upstreamCheck(r.Context()); code != "" {
 				accessDeny(r, code)
-				gatewayErrorPage(w, r, 503, code, "Remote upstream is unavailable", g.dashboard, false)
+				gatewayErrorPage(w, r, 503, code, "Remote upstream is unavailable", g.dashboard)
 				return
 			}
 		}

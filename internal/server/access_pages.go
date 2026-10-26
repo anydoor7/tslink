@@ -2,10 +2,6 @@ package server
 
 import (
 	"net/http"
-	"time"
-
-	"github.com/anydoor7/tslink/internal/registry"
-	"tailscale.com/client/tailscale/apitype"
 )
 
 // The responses TSLink itself generates for an app, as opposed to the app's
@@ -34,9 +30,6 @@ type accessDenial struct {
 	App         string
 	Visible     bool
 	Requestable bool
-	// Dashboard is where the caller can see their apps; empty when the caller
-	// cannot be sent there.
-	Dashboard string
 }
 
 // message is the visitor text for the denial.
@@ -48,21 +41,12 @@ func (d accessDenial) message() string {
 	return message
 }
 
-// links reports whether the page may send the caller to the dashboard. A
-// caller TSLink could not identify, or a policy it could not read, gets none:
-// nothing says the caller may open it.
-func (d accessDenial) links() bool {
-	return d.Visitor != "whois_failed" && d.Visitor != "registry_unavailable"
-}
-
 // writeAccessDenial answers an access refusal with 403: an HTML page for a
-// browser navigation, the JSON error envelope otherwise.
+// browser navigation, the JSON error envelope otherwise. The body never links
+// to the dashboard: whether a dashboard exists depends on the gateway, and a
+// refusal must read the same whether or not the gateway is running.
 func writeAccessDenial(w http.ResponseWriter, r *http.Request, d accessDenial) {
-	dashboard := d.Dashboard
-	if !d.links() {
-		dashboard = ""
-	}
-	gatewayErrorPage(w, r, http.StatusForbidden, d.Visitor, d.message(), dashboard, d.Requestable)
+	gatewayErrorPage(w, r, http.StatusForbidden, d.Visitor, d.message(), "")
 }
 
 func denialMessage(code string) string {
@@ -91,7 +75,7 @@ const appClosingCode = "app_restarting"
 
 // appClosingPage answers a request that TSLink itself ended with 503.
 func appClosingPage(w http.ResponseWriter, r *http.Request, app string) {
-	gatewayErrorPage(w, r, http.StatusServiceUnavailable, appClosingCode, appLabel(app)+" is being reconfigured; try again", "", false)
+	gatewayErrorPage(w, r, http.StatusServiceUnavailable, appClosingCode, appLabel(app)+" is being reconfigured; try again", "")
 }
 
 // appLabel names the app in a generated message.
@@ -100,28 +84,4 @@ func appLabel(app string) string {
 		return "The app"
 	}
 	return app
-}
-
-// dashboardFunc reports the portal dashboard's address, or "" while there is
-// none. It is called per request and must not take Server.mu: stopping a node
-// holds that lock while it waits for the node's requests.
-type dashboardFunc func() string
-
-func (d dashboardFunc) address() string {
-	if d == nil {
-		return ""
-	}
-	return d()
-}
-
-// denialDashboard is the dashboard link for the page refusing an identified
-// caller, on the gateway and on an app's own node alike: the address is given
-// only while the dashboard is up and only to a caller who could open it right
-// now. A refused caller learns nothing about the portal that they could not
-// already reach, and the same person and app get the same page on either path.
-func denialDashboard(address string, reg *registry.Registry, who *apitype.WhoIsResponse, app string, now time.Time) string {
-	if address == "" || !gatewayAdmits(reg, who, app, true, now) {
-		return ""
-	}
-	return address
 }

@@ -181,7 +181,7 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 					if options.Gateway.Observe != nil {
 						options.Gateway.Observe(false)
 					}
-					gatewayErrorPage(w, r, http.StatusServiceUnavailable, code, "Remote upstream is unavailable", "", false)
+					gatewayErrorPage(w, r, http.StatusServiceUnavailable, code, "Remote upstream is unavailable", "")
 					return
 				}
 			}
@@ -233,7 +233,7 @@ func backendFailurePage(w http.ResponseWriter, r *http.Request, err error, app, 
 	if isTimeout(err) {
 		status, message = http.StatusGatewayTimeout, app+" on "+host+" did not respond in time"
 	}
-	gatewayErrorPage(w, r, status, "upstream_down", message, "", false)
+	gatewayErrorPage(w, r, status, "upstream_down", message, "")
 }
 
 type canonicalProxyHostKey struct{}
