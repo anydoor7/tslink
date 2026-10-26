@@ -2,6 +2,7 @@ package registry
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,109 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 )
+
+func TestLegacyTwentyAppPreservation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 20; i++ {
+		allow := []string{"owner", "tag:backup"}
+		if i == 0 {
+			allow = append(allow, "guest-one", "guest-two")
+		}
+		if i == 1 || i == 2 {
+			allow = append(allow, "guest-three")
+		}
+		if _, err := Add(path, Service{Name: fmt.Sprintf("app-%02d", i), Type: TypeProxy, Target: "http://localhost:3000", AllowedUsers: allow}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := Load(path)
+	if err := SetPortal(path, &PortalConfig{Enabled: true, Hostname: "home", Owner: "owner", Gateway: &GatewayConfig{Enabled: true, Ports: DefaultGatewayPorts()}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, login := range []string{"guest-one", "guest-two", "guest-three"} {
+		app := "app-00"
+		if login == "guest-three" {
+			app = "app-01"
+		}
+		// The third person's second legacy app must survive their first grant,
+		// even when it was not repeated in this command.
+		if _, err := ChangePersonWithLifetime(path, login, []string{app}, false, PersonLifetimeOptions{PrepareAccess: true, Audience: duration.Guest, Now: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, _ := Load(path)
+	for i, old := range before.Services {
+		next := after.Services[i]
+		if strings.Join(old.AllowedUsers, ",") != strings.Join(next.AllowedUsers, ",") {
+			t.Fatal("route cleared legacy allow", next.Name)
+		}
+		for _, login := range []string{"owner", "guest-one", "guest-two", "guest-three", "stranger"} {
+			a, _, _ := PrivateAppAccessAt(before, old, login, nil, now)
+			b, _, _ := PrivateAppAccessAt(after, next, login, nil, now.Add(400*24*time.Hour))
+			if a != b {
+				t.Fatalf("legacy access changed: %s/%s before=%v after=%v", login, old.Name, a, b)
+			}
+		}
+		a, _, _ := PrivateAppAccessAt(before, old, "machine", []string{"tag:backup"}, now)
+		b, _, _ := PrivateAppAccessAt(after, next, "machine", []string{"tag:backup"}, now)
+		if !a || !b {
+			t.Fatal("machine ACL changed", old.Name)
+		}
+	}
+	if err := DisablePortal(path); err != nil {
+		t.Fatal(err)
+	}
+	short := "1h"
+	if _, err := ChangePersonWithLifetime(path, "guest-three", []string{"app-01"}, false, PersonLifetimeOptions{PrepareAccess: true, Audience: duration.Guest, Value: &short, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = Load(path)
+	for _, svc := range after.Services {
+		if svc.Name == "app-01" {
+			if allowed, _, _ := PrivateAppAccessAt(after, svc, "guest-three", nil, now.Add(time.Hour)); allowed {
+				t.Fatal("legacy allow bypassed expiry")
+			}
+		}
+	}
+	if _, err := RemovePerson(path, "guest-three"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ChangePersonWithLifetime(path, "guest-three", []string{"app-01"}, false, PersonLifetimeOptions{PrepareAccess: true, PreserveRevoked: true, Now: now})
+	if err == nil {
+		t.Fatal("compatibility adapter restored revoked person")
+	}
+}
+
+func TestLegacyOpenAppAndOwnerChangesAreAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	if _, err := Add(path, Service{Name: "open", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	_, err := ChangePersonWithLifetime(path, "guest", []string{"open"}, false, PersonLifetimeOptions{PrepareAccess: true, Now: time.Now()})
+	if code, _ := ErrorCode(err); code != "conflict" {
+		t.Fatal("open access silently narrowed", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("conflict wrote registry")
+	}
+	if _, err := Add(path, Service{Name: "private", Type: TypeProxy, Target: "http://localhost:3001", AllowedUsers: []string{"existing"}}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ = os.ReadFile(path)
+	err = SetPortal(path, &PortalConfig{Enabled: true, Hostname: "home", Owner: "stranger", Gateway: &GatewayConfig{Enabled: true, Ports: DefaultGatewayPorts()}})
+	if code, _ := ErrorCode(err); code != "conflict" {
+		t.Fatal("first owner silently expanded access", err)
+	}
+	after, _ = os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("owner conflict wrote registry")
+	}
+}
 
 func peopleFixture(t *testing.T) string {
 	t.Helper()

@@ -69,7 +69,7 @@ func TestAccessRequestStoreUnknownPersonAndGuestPolicy(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	_, _, err = DecideAccessRequest(path, r.ID, RequestApproved, "8d", "", false, duration.Policy{}, requestTestNow)
 	requestCode(t, err, "usage_error")
-	_, _, err = DecideAccessRequest(path, r.ID, RequestApproved, "never", "", true, duration.Policy{}, requestTestNow)
+	_, _, err = DecideAccessRequest(path, r.ID, RequestApproved, "never", "", false, duration.Policy{}, requestTestNow)
 	requestCode(t, err, "usage_error")
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(before, after) {

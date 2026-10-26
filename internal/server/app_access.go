@@ -43,39 +43,5 @@ func AppAccessDecisionAt(reg *registry.Registry, svc registry.Service, login str
 // Tagged machines never inherit a human role. Tombstones precede roles and
 // legacy allow lists without claiming to restrict raw TCP or public traffic.
 func privateAppAccessAt(reg *registry.Registry, svc registry.Service, login string, tags []string, now time.Time) (bool, *time.Time, bool) {
-	allowed, authoritative := registry.PeopleAccessAt(reg, svc, login, tags, now)
-	canonical, err := registry.ResolvePersonLoginIn(reg, login)
-	if err != nil {
-		return allowed, nil, false
-	}
-	var person *registry.Person
-	if len(tags) == 0 {
-		for i := range reg.People {
-			if reg.People[i].Login == canonical {
-				person = &reg.People[i]
-				if person.Revoked {
-					return false, nil, false
-				}
-				break
-			}
-		}
-		if reg.Portal != nil {
-			for _, admin := range append([]string{reg.Portal.Owner}, reg.Portal.Admins...) {
-				if canonical == admin {
-					return true, nil, true
-				}
-			}
-		}
-	}
-	if !authoritative {
-		allowed = isAllowed(login, tags, svc.AllowedUsers)
-	}
-	if allowed && person != nil {
-		for _, grant := range person.Grants {
-			if grant.App == svc.Name {
-				return true, grant.ExpiresAt, false
-			}
-		}
-	}
-	return allowed, nil, false
+	return registry.PrivateAppAccessAt(reg, svc, login, tags, now)
 }

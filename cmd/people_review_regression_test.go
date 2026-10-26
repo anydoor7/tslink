@@ -32,6 +32,7 @@ type reviewInviteAPI struct {
 
 func reviewPeopleAPI(t *testing.T, paths sharePaths) *reviewInviteAPI {
 	t.Helper()
+	grantTestEnvironment(t, tailapi.MembershipGuest)
 	restoreInviteCommandSeams(t)
 	now := peopleNowFn()
 	inviteIsRunningFn = func(string) bool { return true }
@@ -142,7 +143,7 @@ func TestReviewBundleRetryAvoidsDuplicateSuccesses(t *testing.T) {
 	a.failPhotos = true
 	args := peopleArguments{Who: "alice@example.com", Apps: []string{"photos", "finance"}, Invite: true}
 	result, err := changePeople(context.Background(), paths, args, false)
-	if err != nil || result.Complete || len(result.Invites) != 2 {
+	if err == nil || result.Complete || len(result.Invites) != 2 {
 		t.Fatal("partial-failure control", result, err)
 	}
 	a.mu.Lock()
@@ -174,7 +175,7 @@ func TestReviewAmbiguousCreateRecoveryAvoidsDuplicate(t *testing.T) {
 	a.dropOnce = "photos"
 	args := peopleArguments{Who: "alice@example.com", Apps: []string{"photos", "finance"}, Invite: true}
 	result, err := changePeople(context.Background(), paths, args, false)
-	if err != nil || result.Complete || result.Invites[0].ID == "" || result.Invites[1].Code == "" {
+	if err == nil || result.Complete || result.Invites[0].ID == "" || result.Invites[1].Code == "" {
 		t.Fatal("ambiguous response control", result, err)
 	}
 	a.mu.Lock()
@@ -186,8 +187,8 @@ func TestReviewAmbiguousCreateRecoveryAvoidsDuplicate(t *testing.T) {
 	// Recovery now uses the durable people operation, not standalone invite device.
 	reviewRefreshProof(t, paths)
 	result, err = changePeople(context.Background(), paths, args, true)
-	if err != nil {
-		t.Fatal("retry failed", result, err)
+	if err == nil || result.Complete {
+		t.Fatal("unknown retry must be incomplete", result, err)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -238,9 +239,9 @@ func TestReviewAccessExplanationReflectsPeopleScope(t *testing.T) {
 	if svc.Name != "photos" || !svc.PeopleScoped {
 		t.Fatal("scope positive control", svc)
 	}
-	allowed, authoritative := registry.PeopleAccessAt(reg, svc, "stranger@example.com", nil, peopleNowFn())
-	if allowed || !authoritative {
-		t.Fatal("request policy positive control", allowed, authoritative)
+	allowed, _, _ := registry.PrivateAppAccessAt(reg, svc, "stranger@example.com", nil, peopleNowFn())
+	if allowed {
+		t.Fatal("request policy positive control allowed stranger")
 	}
 	view, err := accessExplainResultForPath(paths.Registry, "photos")
 	if err != nil {

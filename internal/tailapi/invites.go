@@ -119,21 +119,24 @@ type DeviceTarget struct {
 // Invite is the stable TSLink representation of either first-party invite
 // schema. InviteURL is copied verbatim from the API and is never constructed.
 type Invite struct {
-	TargetKind      string `json:"target_kind,omitempty"`
-	Kind            string `json:"kind"`
-	ID              string `json:"id"`
-	Recipient       string `json:"recipient,omitempty"`
-	Email           string `json:"email,omitempty"`
-	Emailed         bool   `json:"emailed"`
-	InviteURL       string `json:"invite_url,omitempty"`
-	Role            string `json:"role,omitempty"`
-	Service         string `json:"service,omitempty"`
-	DeviceID        int64  `json:"device_id,omitempty"`
-	MultiUse        bool   `json:"multi_use,omitempty"`
-	AllowExitNode   bool   `json:"allow_exit_node,omitempty"`
-	Accepted        bool   `json:"accepted,omitempty"`
-	Created         string `json:"created,omitempty"`
-	LastEmailSentAt string `json:"last_email_sent_at,omitempty"`
+	Grant           *registry.Person `json:"grant,omitempty"`
+	AccessState     string           `json:"access_state,omitempty"`
+	Message         string           `json:"message,omitempty"`
+	TargetKind      string           `json:"target_kind,omitempty"`
+	Kind            string           `json:"kind"`
+	ID              string           `json:"id,omitempty"`
+	Recipient       string           `json:"recipient,omitempty"`
+	Email           string           `json:"email,omitempty"`
+	Emailed         bool             `json:"emailed"`
+	InviteURL       string           `json:"invite_url,omitempty"`
+	Role            string           `json:"role,omitempty"`
+	Service         string           `json:"service,omitempty"`
+	DeviceID        int64            `json:"device_id,omitempty"`
+	MultiUse        bool             `json:"multi_use,omitempty"`
+	AllowExitNode   bool             `json:"allow_exit_node,omitempty"`
+	Accepted        bool             `json:"accepted,omitempty"`
+	Created         string           `json:"created,omitempty"`
+	LastEmailSentAt string           `json:"last_email_sent_at,omitempty"`
 }
 
 type InviteTargetError struct {
@@ -516,7 +519,7 @@ func validateCreatedInvite(kind string, printLink bool, count int, id, inviteURL
 			MessageOnly: true,
 		}
 	}
-	if inviteURL == "" && (kind == InviteKindDevice || printLink) {
+	if inviteURL == "" && printLink {
 		return registry.CodedError{
 			Code:        registry.CodeInviteResponseInvalid,
 			Message:     fmt.Sprintf("create %s invite returned an incomplete record; expected a non-empty inviteUrl for this delivery mode", kind),

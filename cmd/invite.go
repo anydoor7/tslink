@@ -163,6 +163,10 @@ func writeInviteCreate(out io.Writer, command string, invite tailapi.Invite, isJ
 		output.WriteJSON(out, output.NewSuccess(command, data))
 		return nil
 	}
+	if invite.Grant != nil {
+		fmt.Fprintln(out, invite.Message)
+		return nil
+	}
 	if invite.Emailed {
 		fmt.Fprintf(out, humanText("→ Created %s invite %s and asked Tailscale to email %s\n"), invite.Kind, invite.ID, invite.Recipient)
 		return nil
@@ -198,6 +202,39 @@ func inviteDeviceCreate(ctx context.Context, regPath, pidPath, snapshotPath, ser
 	}
 	if strings.TrimSpace(email) == "" {
 		return tailapi.Invite{}, output.ErrUsage("email is required")
+	}
+	reg, _, err := registry.Preflight(regPath)
+	if os.IsNotExist(err) {
+		return tailapi.Invite{}, output.ErrNotFound("service not found: " + service)
+	}
+	if err != nil {
+		return tailapi.Invite{}, err
+	}
+	for _, svc := range reg.Services {
+		if svc.Name != service || svc.Type == registry.TypeTCP {
+			continue
+		}
+		result, err := grantAccess(ctx, sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath}, grantAccessIntent{
+			Arguments:       peopleArguments{Who: email, Apps: []string{service}, PrintLinks: printLink, EmailInvite: !printLink, MultiUse: multiUse, AllowExitNode: allowExitNode},
+			PreserveRevoked: true, Tool: "invite_device",
+		})
+		if err != nil {
+			return tailapi.Invite{}, err
+		}
+		person, err := readPerson(regPath, result.Person.Login)
+		if err != nil {
+			return tailapi.Invite{}, err
+		}
+		inv := tailapi.Invite{Kind: tailapi.InviteKindDevice, Service: service, Recipient: person.Login, Grant: &person, Message: result.Message}
+		if len(result.Access) > 0 {
+			inv.AccessState = result.Access[0].AccessState
+		}
+		if len(result.Invites) > 0 {
+			v := result.Invites[0]
+			inv.ID, inv.TargetKind, inv.InviteURL = v.ID, v.TargetKind, v.InviteURL
+			inv.Accepted, inv.Emailed = v.State == registry.PersonInviteAccepted, !printLink
+		}
+		return inv, nil
 	}
 	target, err := inviteDeviceTargetForService(regPath, pidPath, snapshotPath, service)
 	if err != nil {

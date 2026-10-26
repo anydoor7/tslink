@@ -10,6 +10,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -19,20 +20,26 @@ import (
 )
 
 var peopleNowFn = time.Now
+var peopleMembershipFn = tailapi.ResolveMembership
+var peopleRuntimeFn = readPeopleAccessRuntime
+var peopleRuntimeWait = 3 * time.Second
 
 type peopleArguments struct {
-	Now        time.Time         `json:"-"`
-	Who        string            `json:"who"`
-	Apps       []string          `json:"apps,omitempty"`
-	For        *string           `json:"for,omitempty"`
-	Until      *string           `json:"until,omitempty"`
-	AckNever   bool              `json:"ack_never,omitempty"`
-	Invite     bool              `json:"invite,omitempty"`
-	PrintLinks bool              `json:"print_links,omitempty"`
-	QR         bool              `json:"qr,omitempty"`
-	QRInvite   string            `json:"qr_invite,omitempty"`
-	Reconcile  map[string]string `json:"reconcile_invites,omitempty"`
-	Replace    map[string]string `json:"replace_invites,omitempty"`
+	EmailInvite   bool              `json:"-"`
+	MultiUse      bool              `json:"-"`
+	AllowExitNode bool              `json:"-"`
+	Now           time.Time         `json:"-"`
+	Who           string            `json:"who"`
+	Apps          []string          `json:"apps,omitempty"`
+	For           *string           `json:"for,omitempty"`
+	Until         *string           `json:"until,omitempty"`
+	AckNever      bool              `json:"ack_never,omitempty"`
+	Invite        bool              `json:"invite,omitempty"`
+	PrintLinks    bool              `json:"print_links,omitempty"`
+	QR            bool              `json:"qr,omitempty"`
+	QRInvite      string            `json:"qr_invite,omitempty"`
+	Reconcile     map[string]string `json:"reconcile_invites,omitempty"`
+	Replace       map[string]string `json:"replace_invites,omitempty"`
 }
 
 type PeopleGrantView struct {
@@ -59,7 +66,16 @@ type PeopleInviteView struct {
 	ReconcileIDs         []string                       `json:"reconcile_ids,omitempty"`
 }
 
+type PeopleAppAccess struct {
+	App         string `json:"app"`
+	AccessState string `json:"access_state"`
+	URL         string `json:"url,omitempty"`
+	Message     string `json:"message"`
+}
+
 type PeopleResult struct {
+	Access            []PeopleAppAccess     `json:"access"`
+	Membership        tailapi.Membership    `json:"membership,omitempty"`
 	Person            PeopleView            `json:"person"`
 	Invites           []PeopleInviteView    `json:"invites"`
 	Complete          bool                  `json:"complete"`
@@ -74,7 +90,7 @@ type PeopleResult struct {
 	GuideZH           []string              `json:"guide_zh"`
 }
 
-const peopleInviteRequirement = "Device invitations require a stored user-owned Tailscale API access token; OAuth client tokens cannot create them. People already in the tailnet need no token or invite."
+const peopleInviteRequirement = "Device invitations require a stored user-owned Tailscale API access token; OAuth client tokens cannot create them. Membership verification also requires access to the network user directory. Verified members need no device invitation."
 
 func peopleURLs(paths sharePaths) map[string]string {
 	reg, issues, err := registry.Preflight(paths.Registry)
@@ -124,45 +140,25 @@ func peopleView(p registry.Person, urls map[string]string, now time.Time) People
 	return v
 }
 
-func peopleMessage(p PeopleView, invites []PeopleInviteView, requested, printLinks bool) string {
-	if p.Revoked {
-		return fmt.Sprintf("Access for %s is revoked. The owner should retry tslink people remove %s to finish pending invitation cleanup; accepted network shares may remain.", p.Login, p.Login)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Install Tailscale from https://tailscale.com/download on your phone or computer. Open it, sign in as %s, and keep it connected.\n", p.Login)
-	if requested {
-		b.WriteString("Accept each app invitation below. Use the same account when accepting and in the Tailscale app.\n")
-		for _, inv := range invites {
-			if inv.InviteURL != "" && printLinks {
-				fmt.Fprintf(&b, "%s: accept %s\n", inv.App, inv.InviteURL)
-			} else if inv.Code != "" {
-				fmt.Fprintf(&b, "%s: invitation is not ready; ask the owner for a link.\n", inv.App)
-			} else {
-				fmt.Fprintf(&b, "%s: invitation link hidden; ask the owner for the link.\n", inv.App)
-			}
-		}
-	} else {
-		b.WriteString("If you already belong to the owner's Tailscale network, no invitation is needed. Otherwise ask the owner for the app invitation links and accept each one.\n")
-	}
-	for _, g := range p.Grants {
-		if !g.Active {
-			fmt.Fprintf(&b, "%s: access has ended.\n", g.App)
-			continue
-		}
-		if g.URL != "" {
-			fmt.Fprintf(&b, "Open and bookmark %s for %s.\n", g.URL, g.App)
-		} else {
-			fmt.Fprintf(&b, "%s: ask the owner for its address (owner: tslink status --urls).\n", g.App)
-		}
-		if g.ExpiresAt != nil {
-			fmt.Fprintf(&b, "Access ends at %s.\n", g.ExpiresAt.UTC().Format(time.RFC3339))
-		}
-	}
-	b.WriteString("If an app will not open, check that Tailscale is connected and you used the account above, then ask the owner for help.")
-	return b.String()
+type grantAccessIntent struct {
+	Arguments       peopleArguments
+	Update          bool
+	PreserveRevoked bool
+	Tool            string
+	Commit          func(registry.PersonLifetimeOptions) (registry.Person, error)
 }
 
 func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, update bool) (PeopleResult, error) {
+	return grantAccess(ctx, paths, grantAccessIntent{Arguments: args, Update: update})
+}
+
+// grantAccess is the one business action: validate, classify, commit local
+// authority, then complete the selected transport without holding its lock.
+func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent) (PeopleResult, error) {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return PeopleResult{}, err
+	}
+	args, update := intent.Arguments, intent.Update
 	if args.QRInvite != "" && (!args.QR || !args.PrintLinks) {
 		return PeopleResult{}, output.ErrUsage("--qr-invite requires --qr or --qr-png and --print-links; the QR is a credential")
 	}
@@ -171,14 +167,11 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 		return PeopleResult{}, err
 	}
 	args.Who = login
-	if args.PrintLinks && !args.Invite {
-		return PeopleResult{}, output.ErrUsage("--print-links requires --invite")
+	if len(args.Reconcile) > 0 && !update {
+		return PeopleResult{}, output.ErrUsage("reconcile-invite requires people update")
 	}
-	if len(args.Reconcile) > 0 && (!update || !args.Invite) {
-		return PeopleResult{}, output.ErrUsage("reconcile-invite requires people update --invite")
-	}
-	if len(args.Replace) > 0 && (!update || !args.Invite || args.Apps != nil || args.For != nil || args.Until != nil || args.AckNever) {
-		return PeopleResult{}, output.ErrUsage("replace-invite requires people update --invite without --apps or --for; grants and deadlines are preserved")
+	if len(args.Replace) > 0 && (!update || args.Apps != nil || args.For != nil || args.Until != nil || args.AckNever) {
+		return PeopleResult{}, output.ErrUsage("replace-invite requires people update without --apps or --for; grants and deadlines are preserved")
 	}
 	for app, id := range args.Replace {
 		if err := registry.ValidateName(app); err != nil && app != gatewayInviteKey {
@@ -204,9 +197,6 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if !update && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("--apps is required; use a comma-separated app list or all")
 	}
-	if update && args.Apps == nil && args.For == nil && args.Until == nil && !args.Invite && !args.QR {
-		return PeopleResult{}, output.ErrUsage("update requires --apps, --for, --until, --invite or --qr")
-	}
 	if args.Apps != nil && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("apps must not be empty")
 	}
@@ -222,39 +212,158 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if err != nil {
 		return PeopleResult{}, err
 	}
-	audience := duration.TailnetMember
-	if args.Invite {
-		audience = duration.Guest
+	reg, _, err := registry.Preflight(paths.Registry)
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	if err := peopleMutationAuthorization(ctx)(reg, login); err != nil {
+		return PeopleResult{}, err
+	}
+	if update {
+		found := false
+		for _, p := range reg.People {
+			found = found || p.Login == login && !p.Revoked
+		}
+		if !found {
+			return PeopleResult{}, output.ErrNotFound("person not found: " + login)
+		}
+	}
+	apps := args.Apps
+	if apps == nil {
+		for _, person := range reg.People {
+			if person.Login == login {
+				for _, g := range person.Grants {
+					apps = append(apps, g.App)
+				}
+			}
+		}
+	}
+	if len(apps) == 1 && apps[0] == "all" {
+		apps = nil
+		for _, svc := range reg.Services {
+			if registry.PeopleServiceSupported(svc) && !svc.Funnel {
+				apps = append(apps, svc.Name)
+			}
+		}
+	}
+	if len(apps) == 0 {
+		return PeopleResult{}, output.ErrUsage("apps must include at least one private HTTP or file service")
+	}
+	global, err := config.LoadGlobalConfig()
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	controlURL := global.ControlURL
+	for _, app := range apps {
+		found := false
+		for _, svc := range reg.Services {
+			if svc.Name != app {
+				continue
+			}
+			found = true
+			if !registry.PeopleServiceSupported(svc) || svc.Funnel || svc.GuestGate {
+				return PeopleResult{}, registry.CodedError{Code: "people_service_unsupported", Message: app + " cannot apply per-person private app access (TCP and public/browser access use their existing settings)"}
+			}
+			if svc.PortalOnly && !registry.GatewayEnabled(reg) {
+				return PeopleResult{}, registry.CodedError{Code: "endpoint_unavailable", Message: app + " is unavailable while its home is off"}
+			}
+			if svc.ControlURL != "" && svc.ControlURL != global.ControlURL {
+				// A mixed/custom control plane has no Tailscale directory proof.
+				controlURL = svc.ControlURL
+			}
+		}
+		if !found {
+			return PeopleResult{}, output.ErrNotFound("service not found: " + app)
+		}
 	}
 	if value != nil {
-		if _, err := policy.Resolve(*value, audience, args.AckNever, now, time.Local); err != nil {
+		if _, err := policy.Resolve(*value, duration.TailnetMember, args.AckNever, now, time.Local); err != nil {
 			return PeopleResult{}, output.ErrUsage(err.Error())
 		}
 	}
-	urls := peopleURLs(paths)
-	// Snapshot proof precedes the registry mutation: setting people_scoped
-	// changes its fingerprint but does not replace the existing service node.
-	// Capture the independent home address at the same point so the first
-	// grant does not turn a proven portal URL into a pending guide message.
-	portal := tsruntime.PortalState{State: "disabled"}
-	if reg, _, err := registry.Preflight(paths.Registry); err == nil {
-		pid, _ := inviteReadPIDFn(paths.PID)
-		portal = readPortalView(reg, paths.Registry, inviteIsRunningFn(paths.PID), pid)
+	// Reject unauthorized callers before a directory read; repeat all checks
+	// under the writer lock because authority can change while the API runs.
+	tool := intent.Tool
+	if tool == "" {
+		tool = "people_add"
+		if update {
+			tool = "people_update"
+		}
 	}
-	targets := map[string]tailapi.DeviceTarget{}
-	if args.Invite {
-		known, err := inviteDeviceTargetsForPaths(paths.Registry, paths.PID, paths.Snapshot)
-		if err != nil {
+	if session, ok := mcpscope.FromContext(ctx); ok {
+		if err := session.Authorize(tool, apps, peopleNowFn()); err != nil {
 			return PeopleResult{}, err
 		}
-		for _, target := range known {
-			targets[target.Service] = target
+		known := false
+		for _, p := range reg.People {
+			known = known || p.Login == login
 		}
-		if reg, _, e := registry.Preflight(paths.Registry); e == nil {
-			gatewayPeopleTargets(reg, portal, paths.Registry, targets)
+		if !known && session.Scope.Role != "owner" {
+			return PeopleResult{}, registry.CodedError{Code: "mcp_person_owner_required", Message: "The owner must add the person first"}
 		}
 	}
-	p, err := registry.ChangePersonWithLifetime(paths.Registry, args.Who, args.Apps, update, registry.PersonLifetimeOptions{Context: peopleMutationContext(ctx), Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: peopleMutationAuthorization(ctx)})
+	membership, err := peopleMembershipFn(ctx, login, controlURL)
+	if err == nil && membership != tailapi.MembershipMember && membership != tailapi.MembershipGuest {
+		err = registry.CodedError{Code: "membership_unknown", Message: "Could not verify " + login + "'s network membership; access setup is incomplete"}
+	}
+	if err != nil {
+		result := PeopleResult{Person: PeopleView{Login: login, Grants: []PeopleGrantView{}}, Complete: false, Invites: []PeopleInviteView{}, Access: []PeopleAppAccess{}, Message: err.Error()}
+		for _, app := range apps {
+			result.Access = append(result.Access, PeopleAppAccess{App: app, AccessState: "incomplete", Message: result.Message})
+		}
+		return result, accessSetupError(result, err)
+	}
+	audience := duration.TailnetMember
+	if membership == tailapi.MembershipGuest {
+		audience = duration.Guest
+	}
+	authorize := func(current *registry.Registry, who string) error {
+		if err := peopleMutationAuthorization(ctx)(current, who); err != nil {
+			return err
+		}
+		needsOwner := membership != tailapi.MembershipMember
+		known := false
+		for _, p := range current.People {
+			known = known || p.Login == who
+		}
+		needsOwner = needsOwner || !known
+		for _, svc := range current.Services {
+			for _, app := range apps {
+				if svc.Name == app && registry.GatewayEnabled(current) && svc.PortalRoute == nil {
+					needsOwner = true
+				}
+			}
+		}
+		if session, ok := mcpscope.FromContext(ctx); ok {
+			tool := intent.Tool
+			if tool == "" {
+				tool = "people_add"
+				if update {
+					tool = "people_update"
+				}
+			}
+			if err := session.Authorize(tool, apps, peopleNowFn()); err != nil {
+				return err
+			}
+			if needsOwner && session.Scope.Role != "owner" {
+				return mcpscope.Denied{}
+			}
+		}
+		if needsOwner {
+			return requireRequestOwnerInRegistry(ctx, current)
+		}
+		return nil
+	}
+	if err := authorize(reg, login); err != nil {
+		return PeopleResult{}, err
+	}
+	options := registry.PersonLifetimeOptions{Context: ctx, Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: authorize, PrepareAccess: true, PreserveRevoked: intent.PreserveRevoked, Tool: intent.Tool}
+	var p registry.Person
+	if intent.Commit != nil {
+		p, err = intent.Commit(options)
+	} else {
+		p, err = registry.ChangePersonWithLifetime(paths.Registry, login, args.Apps, update, options)
+	}
 	if err != nil {
 		return PeopleResult{}, err
 	}
@@ -263,43 +372,149 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			return PeopleResult{}, output.ErrConflict("replace-invite requires an active grant for " + app)
 		}
 	}
-	result := PeopleResult{Portal: portal, Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
-	if args.Invite {
-		resumePeopleInvites(ctx, paths.Registry, p, targets, args, &result)
-	}
-	gateway := portal.Gateway != nil && portal.Gateway.Enabled
-	if gateway {
-		if reg, _, err := registry.Preflight(paths.Registry); err == nil {
-			for _, grant := range p.Grants {
-				for _, svc := range reg.Services {
-					if svc.Name == grant.App && svc.PortalRoute == nil {
-						result.Warnings = append(result.Warnings, svc.Name+" is not routed through the gateway and requires its own app invitation.")
-					}
-				}
-			}
-		}
-	}
-	result.Message = peopleMessage(result.Person, result.Invites, args.Invite, args.PrintLinks)
-	if !result.Person.Revoked {
-		for _, inv := range result.Invites {
-			if inv.TargetKind == registry.InviteTargetGateway {
-				result.Message = gatewayPeopleMessage(result, args.PrintLinks)
+	portal, urls, targets := peopleRuntimeFn(ctx, paths, apps)
+	result := PeopleResult{Portal: portal, Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Access: []PeopleAppAccess{}, Complete: true, Membership: membership, InviteRequirement: peopleInviteRequirement}
+	// Only this action's apps are transport targets; inherited legacy grants
+	// retain their old paths and must not acquire unsolicited invitations.
+	requested := p
+	requested.Grants = nil
+	for _, g := range p.Grants {
+		for _, app := range apps {
+			if g.App == app {
+				requested.Grants = append(requested.Grants, g)
 				break
 			}
 		}
 	}
-	if result.Portal.Enabled && !gateway {
-		if result.Portal.URL != "" {
-			result.Message += "\nYour one home address: open and bookmark " + result.Portal.URL + ". It shows the apps available to you, their health and when access ends."
-		} else {
-			result.Message += "\nYour home page is being prepared. Ask the owner for its address (owner: tslink status --urls). Bookmark that one address for your apps."
+	if membership == tailapi.MembershipGuest {
+		resumePeopleInvites(ctx, paths.Registry, requested, targets, args, &result)
+	}
+	if current, readErr := readPerson(paths.Registry, login); readErr == nil {
+		p = current
+	}
+	for _, app := range apps {
+		state, message := "enabled", fmt.Sprintf("%s has access to %s. Open it with Tailscale connected.", login, app)
+		if urls[app] == "" {
+			state, message, result.Complete = "runtime_pending", app+" is saved; its access address is not ready. Retry this command after the daemon is ready.", false
 		}
-		result.Message += " If you are outside the owner's tailnet, ask the owner to share the home node too; app invitations alone do not provide access to it."
+		if membership == tailapi.MembershipGuest {
+			for _, inv := range result.Invites {
+				if inv.App != app && !(inv.TargetKind == registry.InviteTargetGateway && targets[app].Kind == registry.InviteTargetGateway) {
+					continue
+				}
+				switch {
+				case inv.Code != "":
+					state, message = "incomplete", fmt.Sprintf("%s is saved, but sharing with %s is not complete (%s).", app, login, inv.Code)
+				case inv.State == registry.PersonInviteAccepted:
+					message = fmt.Sprintf("%s already accepted the invitation. Access to %s is enabled.", login, app)
+				default:
+					if state != "runtime_pending" {
+						state = "awaiting_acceptance"
+					}
+					message = fmt.Sprintf("%s is outside your network. %s is shared with them; they can open it after accepting the invitation.", login, app)
+				}
+			}
+		}
+		if !registry.PersonGrantActiveAt(p, app, now) {
+			state, message, result.Complete = "inactive", "Access to "+app+" has ended; an explicit lifetime change is required.", false
+		}
+		result.Access = append(result.Access, PeopleAppAccess{App: app, URL: urls[app], AccessState: state, Message: message})
+		result.Message += message + "\n"
+		if urls[app] != "" {
+			result.Message += urls[app] + "\n"
+		}
+	}
+	for _, inv := range result.Invites {
+		if inv.Code != "" || inv.State == registry.PersonInviteAccepted {
+			continue
+		}
+		if args.PrintLinks && inv.InviteURL != "" {
+			result.Message += inviteLabel(inv) + ": accept " + inv.InviteURL + "\n"
+		} else if args.EmailInvite {
+			result.Message += inviteLabel(inv) + ": Tailscale was asked to email the invitation.\n"
+		} else {
+			result.Message += inviteLabel(inv) + ": invitation prepared; link hidden (use --print-links to forward it).\n"
+		}
 	}
 	if err := preparePeopleQR(&result, args); err != nil {
 		return result, err
 	}
+	if !result.Complete {
+		return result, accessSetupError(result, nil)
+	}
 	return result, nil
+}
+
+func accessSetupError(data any, cause error) error {
+	message, code := "Access setup is incomplete; retry the same command after resolving the reported state.", "access_setup_incomplete"
+	if result, ok := data.(PeopleResult); ok && result.Message != "" {
+		message = result.Message
+	}
+	if cause != nil {
+		message = cause.Error()
+		if c, ok := registry.ErrorCode(cause); ok {
+			code = c
+		}
+	}
+	return accessIncompleteError{CodedError: registry.CodedError{Code: code, Message: message, MessageOnly: true}, data: data}
+}
+
+type accessIncompleteError struct {
+	registry.CodedError
+	data any
+}
+
+func (e accessIncompleteError) ErrorData() any { return e.data }
+
+func readPeopleAccessRuntime(ctx context.Context, paths sharePaths, apps []string) (tsruntime.PortalState, map[string]string, map[string]tailapi.DeviceTarget) {
+	deadline := time.NewTimer(peopleRuntimeWait)
+	defer deadline.Stop()
+	for {
+		urls, targets := map[string]string{}, map[string]tailapi.DeviceTarget{}
+		portal := tsruntime.PortalState{State: "disabled"}
+		if reg, issues, err := registry.Preflight(paths.Registry); err == nil {
+			urls = peopleURLsFromRegistry(paths, reg, issues)
+			pid, _ := inviteReadPIDFn(paths.PID)
+			portal = readPortalView(reg, paths.Registry, inviteIsRunningFn(paths.PID), pid)
+			if known, err := inviteDeviceTargetsForPaths(paths.Registry, paths.PID, paths.Snapshot); err == nil {
+				for _, target := range known {
+					targets[target.Service] = target
+				}
+			}
+			gatewayPeopleTargets(reg, portal, paths.Registry, targets)
+			if registry.GatewayEnabled(reg) {
+				for _, svc := range reg.Services {
+					if svc.PortalRoute != nil {
+						delete(urls, svc.Name)
+					}
+				}
+				if portal.Gateway != nil {
+					for _, route := range portal.Gateway.Routes {
+						if route.State == "running" && route.URL != "" {
+							urls[route.App] = route.URL
+						}
+					}
+				}
+			}
+		}
+		ready := true
+		for _, app := range apps {
+			ready = ready && urls[app] != "" && targets[app].NodeID != ""
+		}
+		if ready || !inviteIsRunningFn(paths.PID) {
+			return portal, urls, targets
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return portal, urls, targets
+		case <-deadline.C:
+			timer.Stop()
+			return portal, urls, targets
+		case <-timer.C:
+		}
+	}
 }
 
 type PeopleListResult struct {
@@ -480,15 +695,16 @@ func newPeopleCmd() *cobra.Command {
 		c.Flags().StringVar(&apps, "apps", "", "Comma-separated private HTTP/file apps, or all current supported apps")
 		c.Flags().StringVar(&lifetime, "for", "", "Grant lifetime; presets "+duration.Suggestions+"; relative, 'until <date/time>', or never with --ack-never; default 24h, update omission preserves deadlines")
 		c.Flags().StringVar(&until, "until", "", "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for")
-		c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent access for a tailnet member; refused for device-invited guests")
-		c.Flags().BoolVar(&invite, "invite", false, "Create or resume single-use per-app device invitations (requires a user-owned API token)")
+		c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent access for a member or device-invited guest")
+		c.Flags().BoolVar(&invite, "invite", false, "Compatibility option; necessary invitations are always prepared")
+		_ = c.Flags().MarkHidden("invite")
 		c.Flags().BoolVar(&printLinks, "print-links", false, "Explicitly include bearer invitation links in output and the guide")
 		c.Flags().BoolVar(&qr, "qr", false, "Render the exact portal URL (or first app when portal disabled) as a terminal QR")
 		c.Flags().StringVar(&qrFile, "qr-png", "", "Write a private QR PNG to an existing directory; JSON contains payload text only")
 		c.Flags().StringVar(&qrInvite, "qr-invite", "", "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential")
 		if update {
-			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway; requires --invite")
-			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines; requires --invite")
+			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway")
+			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines")
 		}
 		group.AddCommand(c)
 	}
@@ -531,3 +747,21 @@ func newPeopleCmd() *cobra.Command {
 }
 
 func init() { rootCmd.AddCommand(newPeopleCmd()) }
+
+// currentGatewayAppURL uses the same exact-instance portal projection as status.
+func currentGatewayAppURL(paths sharePaths, app string) string {
+	reg, _, err := registry.Preflight(paths.Registry)
+	if err != nil || !registry.GatewayEnabled(reg) {
+		return ""
+	}
+	pid, _ := inviteReadPIDFn(paths.PID)
+	portal := readPortalView(reg, paths.Registry, inviteIsRunningFn(paths.PID), pid)
+	if portal.Gateway != nil {
+		for _, route := range portal.Gateway.Routes {
+			if route.App == app && route.State == "running" {
+				return route.URL
+			}
+		}
+	}
+	return ""
+}

@@ -230,7 +230,7 @@ func TestInviteMutationValidationPrecedesRegistryAndUsesStableUsageCodes(t *test
 // api handler until that command was removed; inviteDeviceRun is the same
 // passthrough on the shipped CLI path.
 func TestInviteDeviceErrorEnvelopePreservesStableCodeExitAndNext(t *testing.T) {
-	service := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	service := registry.Service{Name: "app", Type: registry.TypeTCP, Target: "localhost:3000", Port: 3000}
 	configureExactInviteRuntime(t, []registry.Service{service}, map[string]string{"app": "n-app-owned"})
 	inviteCreateDeviceFn = func(context.Context, tailapi.DeviceTarget, string, bool, bool, bool) (tailapi.Invite, error) {
 		return tailapi.Invite{}, registry.CodedError{
@@ -290,7 +290,7 @@ func TestInviteTargetServiceMissingUsesNotFoundExit(t *testing.T) {
 }
 
 func TestInviteCLIRunsAllHumanAndJSONOperationsWithExactTargets(t *testing.T) {
-	service := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}}
+	service := registry.Service{Name: "app", Type: registry.TypeTCP, Target: "localhost:3000", Port: 3000, Tags: []string{"tag:tsmain"}}
 	configureExactInviteRuntime(t, []registry.Service{service}, map[string]string{"app": "n-app-owned"})
 
 	var deviceCalls int

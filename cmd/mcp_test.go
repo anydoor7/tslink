@@ -54,7 +54,7 @@ func fakeMCPActions() mcpActions {
 		portalChange: func(_ context.Context, args portalArguments, enable bool) (any, error) {
 			return map[string]any{"enabled": enable, "state": "pending", "hostname": args.Hostname}, nil
 		},
-		personApp: func(_ context.Context, who, app, lifetime string, revoke bool) (any, error) {
+		personApp: func(_ context.Context, who, app, lifetime string, revoke, ackNever bool) (any, error) {
 			return map[string]any{"person": PeopleView{Login: who, Grants: []PeopleGrantView{{PersonGrant: registry.PersonGrant{App: app}, Active: !revoke}}}, "app": app, "revoked": revoke}, nil
 		},
 		appRestart: func(_ context.Context, app string) (any, error) {
@@ -579,7 +579,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	shareSchema := mcpToolByName(t, "share").InputSchema
 	required := shareSchema["required"].([]string)
 	properties := shareSchema["properties"].(map[string]any)
-	if len(required) != 1 || required[0] != "target" || len(properties) != 11 {
+	if len(required) != 1 || required[0] != "target" || len(properties) != 15 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
 	nameDescription := properties["name"].(map[string]any)["description"].(string)
@@ -587,7 +587,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		t.Fatalf("share name description = %q", nameDescription)
 	}
 	allowDescription := properties["allow"].(map[string]any)["description"].(string)
-	if !strings.Contains(allowDescription, "every member of the user's tailnet") {
+	if !strings.Contains(allowDescription, "access action") {
 		t.Fatalf("share allow description = %q, want the no-allow-list consequence spelled out", allowDescription)
 	}
 

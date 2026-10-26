@@ -85,6 +85,10 @@ func TestPeopleRemoteAuthorityMutationMatrix(t *testing.T) {
 						if err != nil || !bytes.Equal(before, after) {
 							t.Fatal("refused mutation changed registry bytes", err)
 						}
+					} else if tool == "people_add" && target == "admin" {
+						if !bytes.Contains(body, []byte(`conflict`)) {
+							t.Fatal("global admin restoration must report unrelated access changes", string(body))
+						}
 					} else if bytes.Contains(body, []byte(`"isError":true`)) {
 						t.Fatal("authorized or ordinary-person control failed", string(body))
 					}
@@ -102,12 +106,22 @@ func TestPeopleLocalRevokedOwnerRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			if transport == "cli" {
-				out, stderr, code := runTSLinkBinaryWithConfigDir(t, compiledTSLinkBinary(t), filepath.Dir(paths.Registry), "", "people", "add", "owner", "--apps", request.App, "--for", "8h", "--json")
-				if code != 0 || !strings.Contains(out, `"ok":true`) {
+				out, stderr, code := runTSLinkBinaryWithConfigDir(t, compiledTSLinkBinary(t), filepath.Dir(paths.Registry), "", "people", "add", "owner", "--apps", "all", "--for", "8h", "--json")
+				if code != 1 || !strings.Contains(out, `membership_unknown`) {
 					t.Fatal(out, stderr, code)
 				}
+				restoreInviteCommandSeams(t)
+				inviteRegistryPathFn = func() (string, error) { return paths.Registry, nil }
+				invitePIDPathFn = func() (string, error) { return paths.PID, nil }
+				inviteRuntimeSnapshotPathFn = func() (string, error) { return paths.Snapshot, nil }
+				group := newPeopleCmd()
+				group.SetOut(io.Discard)
+				group.SetArgs([]string{"add", "owner", "--apps", "all", "--for", "8h"})
+				if err := group.Execute(); err != nil {
+					t.Fatal(err)
+				}
 			} else {
-				wire, err := json.Marshal(map[string]any{"who": "owner", "apps": []string{request.App}, "for": "8h"})
+				wire, err := json.Marshal(map[string]any{"who": "owner", "apps": []string{"all"}, "for": "8h"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -123,7 +137,7 @@ func TestPeopleLocalRevokedOwnerRecovery(t *testing.T) {
 			restored := false
 			for _, p := range reg.People {
 				if p.Login == "owner" {
-					restored = !p.Revoked && len(p.Grants) == 1
+					restored = !p.Revoked && len(p.Grants) == 2
 				}
 			}
 			if !restored {

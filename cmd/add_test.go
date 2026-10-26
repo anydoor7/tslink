@@ -562,69 +562,19 @@ func TestBuildService_NormalizesAllowEmailCase(t *testing.T) {
 	}
 }
 
-func TestAddCmd_InvalidAllowEntryWarns(t *testing.T) {
-	dir := t.TempDir()
-	testenv.SetHome(t, dir)
-	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	addCmd, _, err := rootCmd.Find([]string{"add"})
-	if err != nil {
-		t.Fatalf("find add command: %v", err)
-	}
-	_ = addCmd.Flags().Set("proxy", "")
-	_ = addCmd.Flags().Set("dir", "")
-	_ = addCmd.Flags().Set("tcp", "")
-	_ = addCmd.Flags().Set("ephemeral", "false")
-	_ = addCmd.Flags().Set("tags", "")
-	_ = addCmd.Flags().Set("allow", "")
-	_ = addCmd.Flags().Set("funnel", "false")
-	_ = addCmd.Flags().Set("public", "false")
-	_ = addCmd.Flags().Set("control-url", "")
-	t.Cleanup(func() {
-		addCmd.SetErr(os.Stderr)
-	})
-
-	var errBuf strings.Builder
-	addCmd.SetErr(&errBuf)
-	if _, err := runAddCmdOutput(t, []string{"app"}, map[string]string{
-		"proxy": "localhost:3000",
-		"allow": "not-an-email",
-	}); err != nil {
-		t.Fatalf("run add: %v", err)
-	}
-	if !strings.Contains(errBuf.String(), "Warning: --allow entry") {
-		t.Fatalf("stderr = %q, want invalid allow warning", errBuf.String())
-	}
-}
-
-func TestAddJSONIncludesInvalidAllowWarning(t *testing.T) {
-	dir := t.TempDir()
-	regPath := filepath.Join(dir, "registry.json")
-	oldRegPath := registryPathFn
-	oldEnsureDir := ensureDirFn
-	t.Cleanup(func() {
-		registryPathFn = oldRegPath
-		ensureDirFn = oldEnsureDir
-	})
-	registryPathFn = func() (string, error) { return regPath, nil }
-	ensureDirFn = func() error { return nil }
-	setRootJSONFlag(t, true)
-
-	got := captureStdout(t, func() {
-		if _, err := runAddCmdOutput(t, []string{"app"}, map[string]string{"proxy": "localhost:3000", "allow": "not-an-email"}); err != nil {
-			t.Fatalf("run add: %v", err)
-		}
-	})
-	data := dataMap(t, got)
-	warnings, ok := data["warnings"].([]any)
-	if !ok || len(warnings) != 2 {
-		t.Fatalf("warnings = %#v, want invalid allow and offline daemon findings", data["warnings"])
-	}
-	warning, _ := warnings[0].(map[string]any)
-	if warning["code"] != "invalid_allow_entry" {
-		t.Fatalf("warning = %#v, want invalid_allow_entry", warning)
+func TestAddInvalidAllowRejectedBeforeWrite(t *testing.T) {
+	for _, input := range []string{"not-an-email", ", ,", "alice@example.com,not-an-email"} {
+		t.Run(input, func(t *testing.T) {
+			path := stubAddWritePaths(t)
+			setRootJSONFlag(t, true)
+			_, err := runAddCmdOutput(t, []string{"app"}, map[string]string{"proxy": "localhost:3000", "allow": input})
+			if err == nil || !strings.Contains(err.Error(), "--allow") {
+				t.Fatal("invalid recipient accepted", err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("invalid recipient wrote registry", err)
+			}
+		})
 	}
 }
 

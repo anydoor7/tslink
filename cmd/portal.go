@@ -27,6 +27,36 @@ type portalArguments struct {
 	Funnel          bool     `json:"funnel,omitempty"`
 }
 
+func priorGatewayInstallation() (bool, error) {
+	path, err := supervisorPath()
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return true, err
+	}
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		return false, err
+	}
+	if cfg.MCP != nil && cfg.MCP.Enabled && cfg.MCP.NodeName == registry.DefaultPortalHostname {
+		return false, output.ErrConflict("portal hostname is already used by the MCP node")
+	}
+	return false, nil
+}
+
+func initializeDefaultGateway(ctx context.Context) error {
+	path, err := config.RegistryPath()
+	if err != nil {
+		return err
+	}
+	return registry.InitializeGateway(ctx, path, priorGatewayInstallation)
+}
+
+func addDefaultService(ctx context.Context, path string, svc registry.Service, tentative bool) (bool, error) {
+	return registry.AddWithDefaults(ctx, path, svc, tentative, priorGatewayInstallation)
+}
+
 // portalView never promotes old, stopped or registry-mismatched runtime URLs.
 func portalView(reg *registry.Registry, snapshot *tsRuntime.Snapshot, exact bool) tsRuntime.PortalState {
 	view := tsRuntime.PortalState{State: "disabled"}
@@ -36,6 +66,11 @@ func portalView(reg *registry.Registry, snapshot *tsRuntime.Snapshot, exact bool
 	view.Enabled, view.Hostname = reg.Portal.Enabled, reg.Portal.Hostname
 	view.Gateway = configuredGatewayView(reg)
 	if !view.Enabled {
+		for _, svc := range reg.Services {
+			if svc.PortalOnly {
+				view.UnavailableApps = append(view.UnavailableApps, svc.Name)
+			}
+		}
 		return view
 	}
 	view.State = "pending"
@@ -52,6 +87,9 @@ func portalView(reg *registry.Registry, snapshot *tsRuntime.Snapshot, exact bool
 				view.Gateway = &copy
 			}
 		}
+	}
+	if reg.Portal.Owner == "" {
+		view.Message = "Choose the account that will manage your apps: tslink portal enable --owner <login>"
 	}
 	return view
 }
@@ -83,13 +121,12 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 		return tsRuntime.PortalState{}, registry.CodedError{Code: registry.CodePortalFunnelRefused, Message: "the portal is Tailnet-only and cannot use Funnel"}
 	}
 	if enable {
-		if args.Hostname == "" {
-			args.Hostname = registry.DefaultPortalHostname
-		}
 		var err error
-		args.Owner, err = registry.NormalizePerson(args.Owner)
-		if err != nil {
-			return tsRuntime.PortalState{}, err
+		if args.Owner != "" {
+			args.Owner, err = registry.NormalizePerson(args.Owner)
+			if err != nil {
+				return tsRuntime.PortalState{}, err
+			}
 		}
 		for i := range args.Admins {
 			args.Admins[i], err = registry.NormalizePerson(args.Admins[i])
@@ -118,6 +155,23 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 			var current *registry.GatewayConfig
 			if reg.Portal != nil {
 				current = reg.Portal.Gateway
+				if portal.Owner == "" {
+					portal.Owner = reg.Portal.Owner
+				}
+				if portal.Admins == nil {
+					portal.Admins = reg.Portal.Admins
+				}
+				if portal.Hostname == "" {
+					portal.Hostname = reg.Portal.Hostname
+				}
+			} else if !args.GatewaySet {
+				args.Gateway = true
+			}
+			if portal.Hostname == "" {
+				portal.Hostname = registry.DefaultPortalHostname
+			}
+			if cfg.MCP != nil && cfg.MCP.Enabled && cfg.MCP.NodeName == portal.Hostname {
+				return output.ErrConflict("portal hostname is already used by the MCP node")
 			}
 			gateway, err := parseGatewayArguments(args, current)
 			if err != nil {
@@ -167,6 +221,9 @@ func newPortalCmd() *cobra.Command {
 			output.WriteJSON(c.OutOrStdout(), output.NewSuccess("portal enable", view))
 		} else {
 			fmt.Fprintf(c.OutOrStdout(), "Portal %s: %s\n", view.Hostname, view.State)
+			if view.Message != "" {
+				fmt.Fprintln(c.OutOrStdout(), view.Message)
+			}
 			if view.URL != "" {
 				fmt.Fprintln(c.OutOrStdout(), view.URL)
 			} else {
@@ -175,8 +232,8 @@ func newPortalCmd() *cobra.Command {
 		}
 		return nil
 	}}
-	enable.Flags().StringVar(&args.Hostname, "hostname", registry.DefaultPortalHostname, "Portal node hostname")
-	enable.Flags().StringVar(&args.Owner, "owner", "", "Owner's verified Tailscale login (required)")
+	enable.Flags().StringVar(&args.Hostname, "hostname", "", "Portal node hostname (new portals default to home)")
+	enable.Flags().StringVar(&args.Owner, "owner", "", "Account that will manage your apps; omission preserves the current owner")
 	enable.Flags().StringSliceVar(&args.Admins, "admins", nil, "Additional administrator logins; these identities can open every private app")
 	enable.Flags().BoolVar(&args.Funnel, "funnel", false, "Refused: the portal must stay Tailnet-only")
 	enable.Flags().BoolVar(&args.Gateway, "gateway", false, "Use a persistent gateway; --gateway=false removes gateway mode when no routes remain")
@@ -195,6 +252,9 @@ func newPortalCmd() *cobra.Command {
 			output.WriteJSON(c.OutOrStdout(), output.NewSuccess("portal disable", view))
 		} else {
 			fmt.Fprintln(c.OutOrStdout(), "Portal disabled. The running daemon will close its listener.")
+			for _, app := range view.UnavailableApps {
+				fmt.Fprintf(c.OutOrStdout(), "%s is unavailable while its home is off.\n", app)
+			}
 		}
 		return nil
 	}}
@@ -220,4 +280,7 @@ func formatPortal(out io.Writer, p tsRuntime.PortalState) {
 		fmt.Fprintf(out, " [%s]", p.Error)
 	}
 	fmt.Fprintln(out)
+	if p.Message != "" {
+		fmt.Fprintln(out, p.Message)
+	}
 }

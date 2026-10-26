@@ -25,6 +25,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/server"
+	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -469,11 +470,12 @@ func TestMCPScopedBindingExpiryAndLegacyHTTP(t *testing.T) {
 }
 
 func TestMCPScopeMutationAuditAndDuration(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	dir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, dir)
 	path := filepath.Join(dir, "registry.json")
 	for _, app := range []string{"photos", "finance"} {
-		if _, err := registry.Add(path, registry.Service{Name: app, Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		if _, err := registry.Add(path, registry.Service{Name: app, Type: registry.TypeProxy, Target: "http://localhost:3000", PeopleScoped: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -484,7 +486,7 @@ func TestMCPScopeMutationAuditAndDuration(t *testing.T) {
 	s := mcpscope.Session{Who: "agent@example.com", Scope: testRoleScope("people-manager")}
 	a.session = &s
 	for _, tc := range []struct{ app, lifetime, code string }{{"photos", "1h", "ok"}, {"finance", "1h", "mcp_scope_denied"}, {"photos", "never", "mcp_scope_denied"}, {"photos", "3h", "mcp_scope_denied"}} {
-		raw, _ := json.Marshal(map[string]any{"who": "alice", "app": tc.app, "for": tc.lifetime})
+		raw, _ := json.Marshal(map[string]any{"who": "alice", "app": tc.app, "for": tc.lifetime, "ack_never": tc.lifetime == "never"})
 		result, err := callMCPTool(context.Background(), a, "people_grant", raw)
 		if code := mcpResultCode(result, err); code != tc.code {
 			t.Fatal(code, tc)
@@ -498,7 +500,7 @@ func TestMCPScopeMutationAuditAndDuration(t *testing.T) {
 		t.Fatal(err, result)
 	}
 	entries, err := (mcpaudit.Journal{Path: mcpAuditPath(path)}).Read()
-	if err != nil || len(entries) != 7 {
+	if err != nil || len(entries) != 9 {
 		t.Fatal(len(entries), err)
 	}
 	for _, e := range entries {

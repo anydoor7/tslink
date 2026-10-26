@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -29,14 +30,17 @@ type gatewayInviteFixture struct {
 	listBody       string
 	beforePost     func()
 	beforeList     func()
+	login          string
+	emailMode      bool
 	nodeID         string
 }
 
 func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 	t.Helper()
 	paths := peopleTestPaths(t)
+	grantTestEnvironment(t, tailapi.MembershipGuest)
 	restoreInviteCommandSeams(t)
-	f := &gatewayInviteFixture{paths: paths, nodeID: "gateway-node", pending: map[string]string{}, accepted: map[string]bool{}}
+	f := &gatewayInviteFixture{paths: paths, login: "alice", nodeID: "gateway-node", pending: map[string]string{}, accepted: map[string]bool{}}
 	now := peopleNowFn()
 	inviteIsRunningFn = func(string) bool { return true }
 	inviteReadPIDFn = func(string) (int, error) { return 42, nil }
@@ -64,13 +68,17 @@ func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 		t.Fatal(err)
 	}
 	f.refresh(t)
+	peopleRuntimeFn = func(ctx context.Context, paths sharePaths, apps []string) (tsruntime.PortalState, map[string]string, map[string]tailapi.DeviceTarget) {
+		f.refresh(t)
+		return readPeopleAccessRuntime(ctx, paths, apps)
+	}
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/devices"):
-			fmt.Fprintf(w, `{"devices":[{"nodeId":%q,"hostname":"home"},{"nodeId":"lookalike","hostname":"home"},{"nodeId":"n1","hostname":"photos"},{"nodeId":"n2","hostname":"finance"}]}`, f.nodeID)
+			fmt.Fprintf(w, `{"devices":[{"nodeId":%q,"hostname":"home"},{"nodeId":"lookalike","hostname":"home"},{"nodeId":"n1","hostname":"photos"},{"nodeId":"n2","hostname":"finance"},{"nodeId":"n3","hostname":"files"}]}`, f.nodeID)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/user-invites"):
 			io.WriteString(w, "null")
 		case strings.Contains(r.URL.Path, "/device/") && strings.HasSuffix(r.URL.Path, "/device-invites"):
@@ -80,7 +88,7 @@ func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 				t.Error("invited lookalike node")
 			}
 			if r.Method == "POST" {
-				p, err := readPerson(paths.Registry, "alice")
+				p, err := readPerson(paths.Registry, f.login)
 				if err != nil {
 					t.Error(err)
 				}
@@ -108,7 +116,15 @@ func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 					io.WriteString(w, "[")
 					return
 				}
-				json.NewEncoder(w).Encode([]map[string]any{{"id": id, "inviteUrl": "https://fixture.invalid/invite/" + id}})
+				if f.emailMode {
+					var payload []map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload) != 1 || payload[0]["email"] != f.login {
+						t.Error("email mode lost recipient", payload, err)
+					}
+					json.NewEncoder(w).Encode([]map[string]any{{"id": id}})
+				} else {
+					json.NewEncoder(w).Encode([]map[string]any{{"id": id, "inviteUrl": "https://fixture.invalid/invite/" + id}})
+				}
 			} else if r.Method == "GET" {
 				if f.beforeList != nil {
 					f.beforeList()
@@ -128,7 +144,7 @@ func newGatewayInviteFixture(t *testing.T) *gatewayInviteFixture {
 				t.Errorf("unexpected method %s", r.Method)
 			}
 		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/device-invites/"):
-			p, err := readPerson(paths.Registry, "alice")
+			p, err := readPerson(paths.Registry, f.login)
 			if err != nil || !p.Revoked {
 				t.Error("DELETE before local denial", p, err)
 			}
@@ -154,8 +170,26 @@ func (f *gatewayInviteFixture) refresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := tsruntime.NewSnapshot(42, now, currentRegistryFingerprint(f.paths.Registry), now, nil)
-	snap.Services = []tsruntime.ServiceSnapshot{{Name: "photos", Type: "proxy", NodeID: "n1", RuntimeState: "running"}, {Name: "finance", Type: "proxy", NodeID: "n2", RuntimeState: "running"}}
+	snap.Services = []tsruntime.ServiceSnapshot{}
+	for i, svc := range reg.Services {
+		node := fmt.Sprintf("n%d", i+1)
+		if svc.Name == "photos" {
+			node = "n1"
+		}
+		if svc.Name == "finance" {
+			node = "n2"
+		}
+		if svc.Name == "files" {
+			node = "n3"
+		}
+		snap.Services = append(snap.Services, tsruntime.ServiceSnapshot{Name: svc.Name, Type: string(svc.Type), NodeID: node, RuntimeState: "running", Endpoint: inspect.EndpointView{Kind: "https", State: "exact", Display: "https://" + svc.Name + ".tail.test.ts.net"}})
+	}
 	snap.Portal = tsruntime.PortalState{Enabled: true, Hostname: "home", State: "running", URL: "https://home.tailnet.ts.net", Gateway: &tsruntime.GatewayState{Enabled: true, Persistent: true, OwnershipProven: true, NodeID: f.nodeID, Ports: reg.Portal.Gateway.Ports, Routes: []tsruntime.GatewayRouteState{}}}
+	for _, svc := range reg.Services {
+		if svc.PortalRoute != nil {
+			snap.Portal.Gateway.Routes = append(snap.Portal.Gateway.Routes, tsruntime.GatewayRouteState{App: svc.Name, Port: svc.PortalRoute.Port, State: "running", URL: fmt.Sprintf("https://home.tailnet.ts.net:%d", svc.PortalRoute.Port)})
+		}
+	}
 	if err := tsruntime.Save(f.paths.Snapshot, snap); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +206,7 @@ func TestGatewayOneInviteGrantChangesAndRemoval(t *testing.T) {
 	if err != nil || !got.Complete || len(got.Invites) != 1 || got.Invites[0].TargetKind != "gateway" || got.Invites[0].App != "" {
 		t.Fatal(got, err)
 	}
-	if got.QRPayload != "https://home.tailnet.ts.net" || !strings.Contains(got.Message, "gateway invitation once") || strings.Contains(got.Message, "share the home node too") {
+	if got.QRPayload != "https://home.tailnet.ts.net" || !strings.Contains(got.Message, "Gateway: accept") || strings.Contains(got.Message, "share the home node too") {
 		t.Fatal(got)
 	}
 	validateAgainstToolOutputSchema(t, "people_add", got)
@@ -218,7 +252,7 @@ func TestGatewayInviteUnknownReconcileAndAcceptedDedup(t *testing.T) {
 			f.partial = mode == "partial"
 			f.fail = mode == "api-error"
 			got, err := changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos", "finance"}, Invite: true}, false)
-			if err != nil || got.Complete || len(got.Invites) != 1 || got.Invites[0].State != "unknown" {
+			if err == nil || got.Complete || len(got.Invites) != 1 || got.Invites[0].State != "unknown" {
 				t.Fatal(got, err)
 			}
 			f.mu.Lock()
@@ -226,7 +260,7 @@ func TestGatewayInviteUnknownReconcileAndAcceptedDedup(t *testing.T) {
 			f.fail = false
 			f.mu.Unlock()
 			got, err = changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Invite: true}, true)
-			if err != nil || got.Complete || got.Invites[0].Code != "invite_reconciliation_required" {
+			if err == nil || got.Complete || got.Invites[0].Code != "invite_reconciliation_required" {
 				t.Fatal(got, err)
 			}
 			if posts, _ := f.counts(); posts != 1 {
@@ -261,7 +295,7 @@ func TestGatewayInviteOwnershipRefusalAndMixedApps(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if err != nil || got.Complete || got.Invites[0].Code != registry.CodeInviteOwnershipUnproven {
+	if err == nil || got.Complete || got.Invites[0].Code != registry.CodeInviteOwnershipUnproven {
 		t.Fatal(got, err)
 	}
 	if posts, _ := f.counts(); posts != 0 {
@@ -275,11 +309,11 @@ func TestGatewayInviteOwnershipRefusalAndMixedApps(t *testing.T) {
 	}
 	f.refresh(t)
 	got, err = changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos", "finance"}, Invite: true}, true)
-	if err != nil || !got.Complete || len(got.Invites) != 2 || len(got.Warnings) != 1 {
+	if err != nil || !got.Complete || len(got.Invites) != 1 || len(got.Warnings) != 0 {
 		t.Fatal(got, err)
 	}
-	if posts, _ := f.counts(); posts != 2 {
-		t.Fatal("mixed invite count", posts)
+	if posts, _ := f.counts(); posts != 1 {
+		t.Fatal("auto-routed invite count", posts)
 	}
 	validateAgainstToolOutputSchema(t, "people_update", got)
 }
@@ -328,7 +362,7 @@ func TestGatewayInviteConcurrentRevocationAndPartialList(t *testing.T) {
 		}
 	}
 	got, err := changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos", "finance"}, Invite: true}, false)
-	if err != nil || got.Complete || !got.Person.Revoked {
+	if err == nil || got.Complete || !got.Person.Revoked {
 		t.Fatal(got, err)
 	}
 	p, _ := readPerson(f.paths.Registry, "alice")

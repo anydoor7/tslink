@@ -61,7 +61,7 @@ func TestGatewayInviteIdentityReplacement(t *testing.T) {
 			f.refresh(t)
 			args := peopleArguments{Who: "alice", Invite: true}
 			got, err = changePeople(context.Background(), f.paths, args, true)
-			if err != nil || got.Complete || len(got.Invites) != 1 || got.Invites[0].Code != "gateway_invite_stale" {
+			if err == nil || got.Complete || len(got.Invites) != 1 || got.Invites[0].Code != "gateway_invite_stale" {
 				t.Fatalf("stale invite not reported: %+v %v", got, err)
 			}
 			if posts, deletes := f.counts(); posts != 1 || deletes != 0 {
@@ -74,7 +74,7 @@ func TestGatewayInviteIdentityReplacement(t *testing.T) {
 			f.refresh(t)
 			args.Replace = map[string]string{gatewayInviteKey: "9999"}
 			got, err = changePeople(context.Background(), f.paths, args, true)
-			if err != nil || got.Complete || got.Invites[0].Code != "gateway_invite_stale" {
+			if err == nil || got.Complete || got.Invites[0].Code != "gateway_invite_stale" {
 				t.Fatal(got, err)
 			}
 			f.refresh(t)
@@ -111,10 +111,11 @@ func TestGatewayInviteIdentityReplacement(t *testing.T) {
 
 func TestGatewayInviteProofRecheckedBeforePost(t *testing.T) {
 	f := newGatewayInviteFixture(t)
-	got, err := changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false)
-	if err != nil || !got.Complete {
-		t.Fatal(got, err)
+	_, err := registry.ChangePersonWithLifetime(f.paths.Registry, "alice", []string{"photos"}, false, registry.PersonLifetimeOptions{Now: peopleNowFn()})
+	if err != nil {
+		t.Fatal(err)
 	}
+	var got PeopleResult
 	op := registry.PersonInvite{TargetKind: "gateway", Hostname: "home", NodeID: "gateway-node", State: registry.PersonInviteUnknown}
 	if err := registry.SavePersonInvite(f.paths.Registry, "alice", op); err != nil {
 		t.Fatal(err)
@@ -135,7 +136,7 @@ func TestGatewayInviteProofRecheckedBeforePost(t *testing.T) {
 	}
 	f.refresh(t)
 	got, err = changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Invite: true, Reconcile: map[string]string{gatewayInviteKey: "none"}}, true)
-	if err != nil || got.Complete || len(got.Invites) != 1 || got.Invites[0].Code != registry.CodeInviteOwnershipUnproven {
+	if err == nil || got.Complete || len(got.Invites) != 1 || got.Invites[0].Code != registry.CodeInviteOwnershipUnproven {
 		t.Fatalf("second ownership proof not enforced: %+v %v", got, err)
 	}
 	if !retired {

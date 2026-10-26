@@ -299,6 +299,16 @@ func DecideAccessRequest(path, id, status, value, reason string, ackNever bool, 
 // DecideAccessRequestAuthorized checks authority before expiry, retry lookup,
 // grants or decisions, against the same locked state that will be committed.
 func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time, authorize func(*Registry) error, contexts ...context.Context) (result AccessRequest, changed bool, err error) {
+	return decideAccessRequestWithOptions(path, id, status, value, reason, ackNever, policy, now, authorize, nil, contexts...)
+}
+
+// DecideAccessRequestWithGrantOptions retains the atomic decision/grant write
+// while the command's common access action supplies membership and authority.
+func DecideAccessRequestWithGrantOptions(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time, authorize func(*Registry) error, options PersonLifetimeOptions, contexts ...context.Context) (AccessRequest, bool, error) {
+	return decideAccessRequestWithOptions(path, id, status, value, reason, ackNever, policy, now, authorize, &options, contexts...)
+}
+
+func decideAccessRequestWithOptions(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time, authorize func(*Registry) error, accessOptions *PersonLifetimeOptions, contexts ...context.Context) (result AccessRequest, changed bool, err error) {
 	if status != RequestApproved && status != RequestDenied {
 		return result, false, requestError("usage_error", "decision must be approved or denied")
 	}
@@ -344,11 +354,20 @@ func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNe
 					return requestError("access_request_unavailable", "app is no longer requestable")
 				}
 				options := PersonLifetimeOptions{Value: &value, Policy: policy, Now: now, AckNever: ackNever}
+				if accessOptions != nil {
+					options = *accessOptions
+				}
 				if session, scoped := mcpscope.FromContext(optionalMutationContext(contexts)); scoped && session.Scope.Role != "owner" {
 					// A new person's grants replace legacy ACL authority across all
 					// apps, including apps outside this session's scope. Resolve and
 					// check the person inside this same locked grant transaction.
+					priorAuthorize := options.Authorize
 					options.Authorize = func(reg *Registry, login string) error {
+						if priorAuthorize != nil {
+							if err := priorAuthorize(reg, login); err != nil {
+								return err
+							}
+						}
 						for _, person := range reg.People {
 							if person.Login == login {
 								return nil

@@ -36,7 +36,7 @@ func TestMCPScopedPeoplePreservesOtherAppAccess(t *testing.T) {
 				t.Run(label, func(t *testing.T) {
 					backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "finance-content") }))
 					defer backend.Close()
-					svc := registry.Service{Name: "finance", Type: kind, Target: backend.URL, AllowedUsers: []string{"alice"}}
+					svc := registry.Service{Name: "finance", Type: kind, Target: backend.URL, AllowedUsers: []string{"alice", "owner"}}
 					route := "/"
 					if kind == registry.TypeFile {
 						svc.Target, svc.Path = "", t.TempDir()
@@ -118,7 +118,7 @@ func TestMCPRequestApprovalPreservesOtherAppAccess(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 			path := filepath.Join(t.TempDir(), "registry.json")
-			finance := registry.Service{Name: "finance", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"alice"}}
+			finance := registry.Service{Name: "finance", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"alice", "owner"}}
 			if _, err := registry.Add(path, finance); err != nil {
 				t.Fatal(err)
 			}

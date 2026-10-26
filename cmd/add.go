@@ -26,6 +26,7 @@ import (
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
+	Access        []PeopleResult                   `json:"access,omitempty"`
 	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
 	Name          string                           `json:"name"`
 	Type          string                           `json:"type"`
@@ -100,6 +101,12 @@ func invalidAllowEntries(allowedUsers []string) []string {
 
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
+	AccessTool      string
+	For             *string
+	Until           *string
+	AckNever        bool
+	PrintLinks      bool
+	ExplicitFields  map[string]bool
 	Remote          string
 	PortalOnly      bool
 	PortalPort      int
@@ -138,7 +145,14 @@ func parseAllowedUsers(allow string) ([]string, error) {
 		a = strings.TrimSpace(a)
 		if a != "" {
 			if !strings.HasPrefix(a, "tag:") {
-				a = strings.ToLower(a)
+				if !isValidAllowEmail(a) {
+					return nil, output.ErrUsage("--allow requires human email logins or tag:<name>")
+				}
+				var err error
+				a, err = registry.NormalizePerson(a)
+				if err != nil {
+					return nil, err
+				}
 			}
 			allowedUsers = append(allowedUsers, a)
 		}
@@ -147,6 +161,9 @@ func parseAllowedUsers(allow string) ([]string, error) {
 				return nil, err
 			}
 		}
+	}
+	if len(allowedUsers) == 0 {
+		return nil, output.ErrUsage("--allow must not be empty")
 	}
 	return allowedUsers, nil
 }
@@ -394,7 +411,7 @@ func replaceWarnings(name string, replaced []string) []inspect.WarningView {
 		warnings = append(warnings, inspect.WarningView{
 			Code:     inspect.WarningCodeAccessChangedOnReplace,
 			Severity: inspect.WarningCodeRegistry[inspect.WarningCodeAccessChangedOnReplace].Severity,
-			Message:  fmt.Sprintf("add replaced existing service %q and changed who can reach it (%s); fields not given again, such as --allow or --tags, were dropped. Re-run add with every flag the service should keep.", name, strings.Join(access, ", ")),
+			Message:  fmt.Sprintf("add replaced existing service %q and changed who can reach it (%s); review the changed settings before using the updated service.", name, strings.Join(access, ", ")),
 			Source:   "cmd.add",
 		})
 	}
@@ -442,6 +459,11 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 	if !result.DaemonRunning {
 		result.Next = []string{"tslink install"}
 		result.Warnings = append(result.Warnings, inspect.WarningView{Code: "daemon_not_running", Severity: "error", Source: "cmd.add", Message: "Configuration saved only; run 'tslink install' to make this service reachable."})
+		return result, nil
+	}
+	if endpoint := currentGatewayAppURL(sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath}, svc.Name); endpoint != "" {
+		result.URL, result.URLPending = &endpoint, false
+		result.Endpoint.Display = endpoint
 		return result, nil
 	}
 	resolution, handoff, err := resolveAddEndpoint(ctx, pidPath, regPath, snapshotPath, svc.Name, wait)
@@ -529,19 +551,81 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 // replace it to run a share's rollback first.
 var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 
+type addAccessKey struct{}
+
+func addAccessContext(ctx context.Context, params AddParams) context.Context {
+	return context.WithValue(ctx, addAccessKey{}, params)
+}
+
+func splitAccessRecipients(allow []string) (people, tags []string) {
+	seen := map[string]bool{}
+	for _, entry := range allow {
+		if strings.HasPrefix(entry, "tag:") {
+			tags = append(tags, entry)
+			continue
+		}
+		if !seen[entry] {
+			people = append(people, entry)
+			seen[entry] = true
+		}
+	}
+	return people, tags
+}
+
+func grantServiceRecipients(ctx context.Context, paths sharePaths, app string, recipients []string, params AddParams) ([]PeopleResult, error) {
+	results := []PeopleResult{}
+	if params.AccessTool == "" {
+		params.AccessTool = "add"
+	}
+	var failed error
+	for _, login := range recipients {
+		result, err := grantAccess(ctx, paths, grantAccessIntent{Arguments: peopleArguments{Who: login, Apps: []string{app}, For: params.For, Until: params.Until, AckNever: params.AckNever, PrintLinks: params.PrintLinks}, PreserveRevoked: true, Tool: params.AccessTool})
+		results = append(results, result)
+		if err != nil {
+			failed = err
+		}
+	}
+	return results, failed
+}
+
 // executeAdd writes an admitted service to the registry and builds the shared
 // AddResult. It is the single write path behind `tslink add` and the MCP add
 // tool. The persisted service is returned alongside the result because the
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
 func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, now time.Time, afterPersist ...func() error) (AddResult, registry.Service, error) {
+	if err := registry.ValidateService(svc); err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
+	params, _ := ctx.Value(addAccessKey{}).(AddParams)
+	recipients, tags := splitAccessRecipients(svc.AllowedUsers)
+	if len(recipients) == 0 && (params.For != nil || params.Until != nil || params.AckNever) {
+		return AddResult{}, registry.Service{}, output.ErrUsage("access lifetime requires a human --allow recipient")
+	}
+	if value, err := lifetimeArgument(params.For, params.Until); err != nil {
+		return AddResult{}, registry.Service{}, err
+	} else if value != nil {
+		policy, err := config.LoadLifetimePolicy()
+		if err != nil {
+			return AddResult{}, registry.Service{}, err
+		}
+		if _, err := policy.Resolve(*value, duration.TailnetMember, params.AckNever, now, time.Local); err != nil {
+			return AddResult{}, registry.Service{}, output.ErrUsage(err.Error())
+		}
+	}
+	svc.AllowedUsers = tags
 	registryWasAbsent := registryFileAbsent(regPath)
 	policy, err := config.LoadLifetimePolicy()
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
 	}
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
-		Context: ctx,
+		Context:             ctx,
+		InitializeGateway:   true,
+		PriorInstall:        priorGatewayInstallation,
+		PreserveUnspecified: true,
+		ExplicitFields:      params.ExplicitFields,
+		HumanAccess:         len(recipients) > 0,
 		Authorize: func(reg *registry.Registry, effective registry.Service) error {
 			return authorizePortalServiceMutation(ctx, reg, effective)
 		},
@@ -589,6 +673,11 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 			return AddResult{}, persisted, daemonRegistryRetainedError(err)
 		}
 	}
+	// A grant uses its exact primary path; an un-enrolled background app
+	// node must not hold up a working gateway route.
+	if len(recipients) > 0 {
+		wait = 0
+	}
 	result, err := buildAddResult(ctx, persisted, outcome.Created, pidPath, regPath, snapshotPath, wait)
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
@@ -603,6 +692,16 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 		}
 	}
 	result.FunnelRearmed = outcome.RearmedExpiredFunnel
+	if len(recipients) > 0 {
+		access, accessErr := grantServiceRecipients(ctx, sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath}, svc.Name, recipients, params)
+		result.Access = access
+		if len(access) > 0 && len(access[0].Access) > 0 && access[0].Access[0].URL != "" {
+			result.URL, result.URLPending = &access[0].Access[0].URL, false
+		}
+		if accessErr != nil {
+			return result, persisted, accessSetupError(result, accessErr)
+		}
+	}
 	return result, persisted, nil
 }
 
@@ -691,11 +790,11 @@ func init() {
 		Short: "Register a local service or file directory",
 		Long: `Register a local service or file directory to expose on the Tailscale network.
 
-If a service with the same name already exists, add replaces it: every
-setting comes from this command, so flags you do not repeat (--allow, --tags,
---funnel, --ephemeral, --control-url, ...) are dropped, and tags fall back to
-the default. The result lists replaced_fields and warns when access or the
-node identity changed.
+If a service with the same name already exists, add replaces its backend
+settings while preserving existing access, routes, tags, Funnel, ephemeral
+and control URL settings unless explicitly changed. Human --allow entries
+use the same access action as people add; new grants default to 24h.
+The result lists replaced_fields and any existing access/identity findings.
 
 Examples:
   tslink add myapp --proxy localhost:3000         Expose a web service
@@ -765,6 +864,17 @@ Examples:
 				NoAutoProvision: noAutoProvision,
 				ControlURL:      controlURL,
 			}
+			if cmd.Flags().Changed("for") {
+				value, _ := cmd.Flags().GetString("for")
+				params.For = &value
+			}
+			if cmd.Flags().Changed("until") {
+				value, _ := cmd.Flags().GetString("until")
+				params.Until = &value
+			}
+			params.AckNever, _ = cmd.Flags().GetBool("ack-never")
+			params.PrintLinks, _ = cmd.Flags().GetBool("print-links")
+			params.ExplicitFields = map[string]bool{"tags": cmd.Flags().Changed("tags"), "funnel": cmd.Flags().Changed("funnel"), "ephemeral": cmd.Flags().Changed("ephemeral"), "control_url": cmd.Flags().Changed("control-url")}
 			params.Health = healthConfigFromFlags(cmd)
 			svc, err := buildService(params)
 			if err != nil {
@@ -838,13 +948,18 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, params.Now, func() error {
+			result, persisted, err := executeAdd(addAccessContext(cmd.Context(), params), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, params.Now, func() error {
 				return ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noDaemonInstall)
 			})
 			if err != nil {
 				return err
 			}
 			svc = persisted
+			if !jsonOutput(cmd) {
+				for _, access := range result.Access {
+					fmt.Fprintln(cmd.OutOrStdout(), access.Message)
+				}
+			}
 
 			if jsonOutput(cmd) {
 				output.Success("add", result)
@@ -897,6 +1012,10 @@ Examples:
 		},
 	}
 
+	addCmd.Flags().String("for", "", "Human --allow grant lifetime; default 24h for new grants; never requires --ack-never")
+	addCmd.Flags().String("until", "", "Human --allow grant deadline; conflicts with --for")
+	addCmd.Flags().Bool("ack-never", false, "Acknowledge permanent access for a member or device-invited guest")
+	addCmd.Flags().Bool("print-links", false, "Include bearer invitation links for --allow recipients")
 	addCmd.Flags().Bool("requestable", false, "Let human tailnet members ask for this app from the portal; discloses its name; default off")
 	addCmd.Flags().String("remote", "", "HTTPS MagicDNS upstream in the gateway tailnet; implies --portal-only")
 	addCmd.Flags().Bool("portal-only", false, "Serve only through the portal gateway; do not create an app node")

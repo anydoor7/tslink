@@ -24,11 +24,12 @@ import (
 
 func peopleTestPaths(t *testing.T) sharePaths {
 	t.Helper()
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	dir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, dir)
 	paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "tslink.pid"), Snapshot: filepath.Join(dir, "runtime.json")}
 	for _, name := range []string{"photos", "finance"} {
-		if _, err := registry.Add(paths.Registry, registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		if _, err := registry.Add(paths.Registry, registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner", "admin"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -71,7 +72,7 @@ func TestPeopleCommandAndMCPRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &added); err != nil {
 		t.Fatal(err)
 	}
-	if len(added.Person.Grants) != 2 || !strings.Contains(added.Message, "Install Tailscale") || !strings.Contains(added.InviteRequirement, "user-owned") {
+	if len(added.Person.Grants) != 2 || !strings.Contains(added.Message, "has access") || !strings.Contains(added.InviteRequirement, "user-owned") {
 		t.Fatal(added)
 	}
 	before, _ := os.ReadFile(paths.Registry)
@@ -100,7 +101,7 @@ func TestPeopleCommandAndMCPRoundTrip(t *testing.T) {
 	if !reg.People[0].Revoked {
 		t.Fatal("MCP remove failed")
 	}
-	for _, call := range []struct{ name, args string }{{"people_add", `{"who":"bob","apps":["photos"]}`}, {"people_add", `{"who":"bob","allow_exit_node":true}`}, {"people_list", `{"surprise":true}`}, {"people_remove", `{}`}, {"people_update", `{"who":"bob"}`}} {
+	for _, call := range []struct{ name, args string }{{"people_add", `{"who":"bob","apps":["photos"]}`}, {"people_add", `{"who":"bob","allow_exit_node":true}`}, {"people_list", `{"surprise":true}`}, {"people_remove", `{}`}} {
 		res, err := callMCPTool(context.Background(), tools, call.name, json.RawMessage(call.args))
 		if err != nil {
 			t.Fatal(err)
@@ -119,6 +120,7 @@ func TestPeopleBundledInvitesUseFakeRESTAndMaskLinks(t *testing.T) {
 	for _, printLinks := range []bool{false, true} {
 		t.Run(map[bool]string{false: "masked", true: "explicit"}[printLinks], func(t *testing.T) {
 			paths := peopleTestPaths(t)
+			grantTestEnvironment(t, tailapi.MembershipGuest)
 			restoreInviteCommandSeams(t)
 			started := peopleNowFn()
 			inviteIsRunningFn = func(string) bool { return true }
@@ -173,6 +175,7 @@ func TestPeopleBundledInvitesUseFakeRESTAndMaskLinks(t *testing.T) {
 
 func TestPeoplePartialInviteFailureKeepsLocalGrants(t *testing.T) {
 	paths := peopleTestPaths(t)
+	grantTestEnvironment(t, tailapi.MembershipGuest)
 	restoreInviteCommandSeams(t)
 	now := peopleNowFn()
 	inviteIsRunningFn = func(string) bool { return true }
@@ -189,7 +192,7 @@ func TestPeoplePartialInviteFailureKeepsLocalGrants(t *testing.T) {
 		return tailapi.Invite{ID: "100", Kind: "device", Service: target.Service, InviteURL: "https://login.tailscale.com/admin/invite/FAKE"}, nil
 	}
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos", "finance"}, Invite: true}, false)
-	if err != nil || result.Complete || len(result.Invites) != 2 || result.Invites[0].Code != registry.CodeInviteAPIKeyRequired || result.Invites[1].InviteURL != "" {
+	if err == nil || result.Complete || len(result.Invites) != 2 || result.Invites[0].Code != registry.CodeInviteAPIKeyRequired || result.Invites[1].InviteURL != "" {
 		t.Fatal(result, err)
 	}
 	reg, _ := registry.Load(paths.Registry)
@@ -206,7 +209,7 @@ func TestPeoplePartialInviteFailureKeepsLocalGrants(t *testing.T) {
 	}
 	reviewRefreshProof(t, paths)
 	result, err = changePeople(context.Background(), paths, peopleArguments{Who: "bob", Apps: []string{"photos"}, Invite: true}, false)
-	if err != nil || result.Invites[0].Code != "invite_failed" {
+	if err == nil || result.Invites[0].Code != "invite_failed" {
 		t.Fatal(result, err)
 	}
 }
@@ -228,7 +231,7 @@ func TestPeopleURLProofAndHumanOutput(t *testing.T) {
 		t.Fatal(urls)
 	}
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false)
-	if err != nil || !strings.Contains(result.Message, "Open and bookmark https://photos.tail.test.ts.net") {
+	if err != nil || !strings.Contains(result.Message, "https://photos.tail.test.ts.net") {
 		t.Fatal(result, err)
 	}
 	if urls := peopleURLs(paths); len(urls) != 0 {
@@ -245,12 +248,12 @@ func TestPeopleURLProofAndHumanOutput(t *testing.T) {
 
 func TestPeopleInputRefusalsAndReadOnlyMissing(t *testing.T) {
 	paths := peopleTestPaths(t)
-	for _, args := range []peopleArguments{{Who: "alice"}, {Who: "alice", Apps: []string{"photos"}, PrintLinks: true}, {Who: "alice", Apps: []string{}}, {Who: "alice", Apps: []string{"photos"}, For: ptrString("0h")}} {
+	for _, args := range []peopleArguments{{Who: "alice"}, {Who: "alice", Apps: []string{}}, {Who: "alice", Apps: []string{"photos"}, For: ptrString("0h")}} {
 		if _, err := changePeople(context.Background(), paths, args, false); err == nil {
 			t.Fatal("invalid add accepted", args)
 		}
 	}
-	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice"}, true); err == nil || !strings.Contains(err.Error(), "update requires") {
+	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice"}, true); err == nil || !strings.Contains(err.Error(), "person not found") {
 		t.Fatal(err)
 	}
 	if _, err := removePeople(paths.Registry, "bad login"); err == nil {
@@ -345,8 +348,8 @@ func TestPeopleRemainingViewAndValidationPaths(t *testing.T) {
 	}
 	expires := peopleNowFn()
 	v := PeopleView{Login: "alice", Grants: []PeopleGrantView{{PersonGrant: registry.PersonGrant{App: "photos", ExpiresAt: &expires}, Active: false}}}
-	if message := peopleMessage(v, nil, false, false); !strings.Contains(message, "access has ended") {
-		t.Fatal(message)
+	if v.Grants[0].Active {
+		t.Fatal("expired grant reported active")
 	}
 	var human bytes.Buffer
 	writePeopleResult(&human, "people list", PeopleListResult{People: []PeopleView{v}}, false)

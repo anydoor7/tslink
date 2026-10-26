@@ -106,7 +106,7 @@ func refusingMCPActions() mcpActions {
 			}
 			return nil, mcpRefusal(name)
 		},
-		personApp: func(_ context.Context, _, _, _ string, revoke bool) (any, error) {
+		personApp: func(_ context.Context, _, _, _ string, revoke, ackNever bool) (any, error) {
 			name := "people_grant"
 			if revoke {
 				name = "people_revoke"

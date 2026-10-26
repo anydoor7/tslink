@@ -173,6 +173,7 @@ var (
 		"boundaries":     stringArraySchema(),
 	}, "schema_version", "id", "operation", "remote_system", "mutates", "default", "resources", "boundaries")
 	mcpInviteProperties = map[string]any{
+		"grant": nestedObjectSchema("Person grant saved by the common access action."), "access_state": map[string]any{"type": "string"}, "message": map[string]any{"type": "string"},
 		"kind":        map[string]any{"type": "string", "enum": []string{tailapi.InviteKindUser, tailapi.InviteKindDevice}},
 		"id":          map[string]any{"type": "string"},
 		"recipient":   map[string]any{"type": "string"},
@@ -188,7 +189,7 @@ var (
 		"created":            map[string]any{"type": "string"},
 		"last_email_sent_at": map[string]any{"type": "string"},
 	}
-	mcpInviteSchema       = objectSchema(mcpInviteProperties, "kind", "id", "emailed")
+	mcpInviteSchema       = objectSchema(mcpInviteProperties, "kind", "emailed")
 	mcpInviteArraySchema  = map[string]any{"type": "array", "items": mcpInviteSchema}
 	mcpServiceErrorSchema = objectSchema(map[string]any{
 		"code":    map[string]any{"type": "string"},
@@ -381,7 +382,7 @@ var (
 	}, "source", "file", "since", "since_at", "lines", "count", "matched", "truncated", "redacted")
 	mcpInviteCreateOutputSchema = objectSchema(mergeSchemaProperties(mcpInviteProperties, map[string]any{
 		"remote_side_effect_plan": mcpRemoteSideEffectPlanSchema,
-	}), "kind", "id", "emailed", "remote_side_effect_plan")
+	}), "kind", "emailed", "remote_side_effect_plan")
 	mcpInviteListOutputSchema = objectSchema(map[string]any{
 		"complete":       map[string]any{"type": "boolean", "description": "False when at least one TSLink-owned device could not be checked; device_targets carries the per-service reason."},
 		"user_invites":   mcpInviteArraySchema,
@@ -721,7 +722,7 @@ type mcpActions struct {
 	audit             func(context.Context, mcpaudit.Entry) error
 	auditRead         func() ([]mcpaudit.Entry, error)
 	registryPath      string
-	personApp         func(context.Context, string, string, string, bool) (any, error)
+	personApp         func(context.Context, string, string, string, bool, bool) (any, error)
 	appRestart        func(context.Context, string) (any, error)
 	healthSet         func(context.Context, healthSetArguments) (any, error)
 	guest             func(context.Context, string, guestArguments) (any, error)
@@ -758,6 +759,10 @@ type mcpActions struct {
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
 type mcpAddArguments struct {
+	For             *string                 `json:"for,omitempty"`
+	Until           *string                 `json:"until,omitempty"`
+	AckNever        bool                    `json:"ack_never,omitempty"`
+	PrintLinks      bool                    `json:"print_links,omitempty"`
 	PortalOnly      bool                    `json:"portal_only,omitempty"`
 	Remote          string                  `json:"remote,omitempty"`
 	PortalPort      int                     `json:"portal_port,omitempty"`
@@ -798,7 +803,9 @@ type mcpInviteDeviceArguments struct {
 // --funnel-ttl does.
 func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	params := AddParams{
-		PortalOnly: args.PortalOnly, PortalPort: args.PortalPort, Remote: args.Remote,
+		For: args.For, Until: args.Until, AckNever: args.AckNever, PrintLinks: args.PrintLinks,
+		ExplicitFields: map[string]bool{"tags": args.Tags != nil, "funnel": args.Funnel, "ephemeral": args.Ephemeral, "control_url": args.ControlURL != ""},
+		PortalOnly:     args.PortalOnly, PortalPort: args.PortalPort, Remote: args.Remote,
 		Health:          args.Health,
 		RequestLimits:   args.RequestLimits,
 		Name:            args.Name,
@@ -941,7 +948,14 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		},
 		registryPath: paths.Registry,
 		audit:        journal.Record, auditRead: journal.Read, nowFn: nowFn,
-		personApp: func(ctx context.Context, who, app, lifetime string, revoke bool) (any, error) {
+		personApp: func(ctx context.Context, who, app, lifetime string, revoke, ackNever bool) (any, error) {
+			if !revoke {
+				result, err := grantAccess(ctx, paths, grantAccessIntent{Arguments: peopleArguments{Who: who, Apps: []string{app}, For: &lifetime, AckNever: ackNever, Now: nowFn()}, PreserveRevoked: true, Tool: "people_grant"})
+				if err != nil {
+					return result, err
+				}
+				return map[string]any{"person": result.Person, "app": app, "revoked": false, "access": result.Access, "complete": result.Complete, "invites": result.Invites, "message": result.Message}, nil
+			}
 			session, _ := mcpscope.FromContext(ctx)
 			p, err := registry.ChangePersonAppAuthorized(paths.Registry, session, who, app, lifetime, revoke, nowFn, peopleMutationAuthorization(ctx), ctx)
 			if err != nil {
@@ -1015,7 +1029,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, params.Now, func() error {
+			result, _, err := executeAdd(addAccessContext(ctx, params), svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, params.Now, func() error {
 				return ensureDaemonFn(ctx, errOut, params.NoDaemonInstall)
 			})
 			if err != nil {
@@ -1767,7 +1781,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 			}
 		}
 		var args portalArguments
-		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"owner", args.Owner}); refusal != nil {
+		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args)); refusal != nil {
 			return refusal, nil
 		}
 		var present map[string]json.RawMessage
@@ -1799,17 +1813,18 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		data, err = actions.portalChange(ctx, portalArguments{}, false)
 	case "people_grant", "people_revoke":
 		var args struct {
-			Who string `json:"who"`
-			App string `json:"app"`
-			For string `json:"for,omitempty"`
+			Who      string `json:"who"`
+			App      string `json:"app"`
+			For      string `json:"for,omitempty"`
+			AckNever bool   `json:"ack_never,omitempty"`
 		}
 		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"who", args.Who}, mcpRequiredArgument{"app", args.App}); refusal != nil {
 			return refusal, nil
 		}
-		if name == "people_revoke" && args.For != "" {
+		if name == "people_revoke" && (args.For != "" || args.AckNever) {
 			return makeMCPToolErrorResult(output.ErrUsage("people_revoke does not accept for")), nil
 		}
-		data, err = actions.personApp(ctx, args.Who, args.App, args.For, name == "people_revoke")
+		data, err = actions.personApp(ctx, args.Who, args.App, args.For, name == "people_revoke", args.AckNever)
 	case "app_restart":
 		var args struct {
 			App string `json:"app"`
@@ -1881,6 +1896,10 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		data, err = actions.peopleRemove(ctx, args.Who, args.Reconcile)
 	case "share":
 		var args struct {
+			For             *string                 `json:"for,omitempty"`
+			Until           *string                 `json:"until,omitempty"`
+			AckNever        bool                    `json:"ack_never,omitempty"`
+			PrintLinks      bool                    `json:"print_links,omitempty"`
 			RequestLimits   *registry.RequestLimits `json:"request_limits,omitempty"`
 			NoDaemonInstall bool                    `json:"no_daemon_install,omitempty"`
 			Target          string                  `json:"target"`
@@ -1898,6 +1917,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 			return refusal, nil
 		}
 		req := shareRequest{
+			For: args.For, Until: args.Until, AckNever: args.AckNever, PrintLinks: args.PrintLinks,
 			RequestLimits:   args.RequestLimits,
 			NoDaemonInstall: args.NoDaemonInstall,
 			Target:          args.Target,
@@ -1924,6 +1944,13 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 			return refusal, nil
 		}
 		params, preserveFunnelExpiry, paramsErr := addParamsFromMCPArguments(args)
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(arguments, &fields)
+		if paramsErr == nil {
+			for _, key := range []string{"tags", "funnel", "ephemeral", "control_url"} {
+				_, params.ExplicitFields[key] = fields[key]
+			}
+		}
 		if paramsErr != nil {
 			data, err = nil, paramsErr
 		} else {

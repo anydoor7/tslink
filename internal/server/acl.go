@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/anydoor7/tslink/internal/registry"
 )
@@ -14,34 +12,7 @@ import (
 // matches any entry in the allowedUsers list.
 // If allowedUsers is empty, all callers are allowed (no restriction).
 func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
-	if !utf8.ValidString(login) {
-		return false
-	}
-	if len(allowedUsers) == 0 {
-		return true
-	}
-
-	normalizedLogin, loginErr := registry.NormalizePerson(login)
-	for _, entry := range allowedUsers {
-		entry = strings.TrimSpace(entry)
-		// Check tag match: entry is "tag:xxx" and caller's node has that tag
-		if strings.HasPrefix(entry, "tag:") {
-			for _, t := range nodeTags {
-				if t == entry {
-					return true
-				}
-			}
-			continue
-		}
-
-		// Check email/login match
-		canonical, err := registry.NormalizePerson(entry)
-		if loginErr == nil && err == nil && normalizedLogin == canonical {
-			return true
-		}
-	}
-
-	return false
+	return registry.LegacyAccessAllowed(login, nodeTags, allowedUsers)
 }
 
 // ACLMiddleware returns an HTTP middleware that enforces access control.

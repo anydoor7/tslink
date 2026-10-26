@@ -1541,7 +1541,12 @@ func Add(path string, svc Service) (created bool, err error) {
 }
 
 type AddOptions struct {
-	Context context.Context
+	Context             context.Context
+	InitializeGateway   bool
+	PriorInstall        func() (bool, error)
+	PreserveUnspecified bool
+	ExplicitFields      map[string]bool
+	HumanAccess         bool
 	// Authorize sees the current registry and the effective service under the writer lock.
 	Authorize func(*Registry, Service) error
 	// PreserveFunnelExpiry keeps a decided public lifetime when the TTL was
@@ -1646,15 +1651,55 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		if err != nil {
 			return err
 		}
+		if options.InitializeGateway {
+			if _, err := initializeGateway(path, reg, options.PriorInstall); err != nil {
+				return err
+			}
+		}
 		if reg.Portal != nil && svc.Name == reg.Portal.Hostname {
 			return portalConflict(svc.Name)
 		}
+		exists := false
 		for _, existing := range reg.Services {
 			if existing.Name == svc.Name {
+				exists = true
+				if options.PreserveUnspecified {
+					allow := append([]string(nil), existing.AllowedUsers...)
+					for _, entry := range svc.AllowedUsers {
+						found := false
+						for _, prior := range allow {
+							found = found || prior == entry
+						}
+						if !found {
+							allow = append(allow, entry)
+						}
+					}
+					svc.AllowedUsers = allow
+					if !options.ExplicitFields["tags"] {
+						svc.Tags = existing.Tags
+					}
+					if !options.ExplicitFields["ephemeral"] {
+						svc.Ephemeral = existing.Ephemeral
+					}
+					if !options.ExplicitFields["control_url"] {
+						svc.ControlURL = existing.ControlURL
+					}
+					if !options.ExplicitFields["funnel"] {
+						svc.Funnel, svc.PublicAck, svc.NoAutoProvision = existing.Funnel, existing.PublicAck, existing.NoAutoProvision
+					}
+				}
 				if svc.PortalRoute == nil {
 					svc.PortalRoute = existing.PortalRoute
 				}
 				svc.PortalOnly = svc.PortalOnly || existing.PortalOnly
+			}
+		}
+		if !exists && options.HumanAccess {
+			svc.PeopleScoped = true
+		}
+		if !exists && options.InitializeGateway {
+			if err := defaultGatewayRoute(reg, &svc); err != nil {
+				return err
 			}
 		}
 		if svc.PortalOnly && svc.PortalRoute == nil {
@@ -1735,7 +1780,7 @@ func AddTentative(path string, svc Service) (created bool, err error) {
 	return addIfMissing(context.Background(), path, svc, true)
 }
 
-func addIfMissing(ctx context.Context, path string, svc Service, tentative bool) (created bool, err error) {
+func addIfMissing(ctx context.Context, path string, svc Service, tentative bool, defaults ...func() (bool, error)) (created bool, err error) {
 	if err := ValidateService(svc); err != nil {
 		return false, err
 	}
@@ -1755,6 +1800,14 @@ func addIfMissing(ctx context.Context, path string, svc Service, tentative bool)
 
 		if svc.CreatedAt.IsZero() {
 			svc.CreatedAt = time.Now().UTC()
+		}
+		if len(defaults) > 0 {
+			if _, err := initializeGateway(path, reg, defaults[0]); err != nil {
+				return err
+			}
+			if err := defaultGatewayRoute(reg, &svc); err != nil {
+				return err
+			}
 		}
 
 		// The mark goes first, so a registration its creator may still
@@ -1786,6 +1839,12 @@ func addIfMissing(ctx context.Context, path string, svc Service, tentative bool)
 		return nil
 	})
 	return created, err
+}
+
+// AddWithDefaults preserves first registration and default gateway creation
+// in one transaction, including tentative share and template registrations.
+func AddWithDefaults(ctx context.Context, path string, svc Service, tentative bool, priorInstall func() (bool, error)) (bool, error) {
+	return addIfMissing(ctx, path, svc, tentative, priorInstall)
 }
 
 func Remove(path, name string) (removed bool, err error) {

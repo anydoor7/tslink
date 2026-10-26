@@ -231,14 +231,6 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 			authErr = session.Authorize(name, apps, mcpNow(actions))
 		}
 	}
-	if authErr == nil && name == "people_grant" {
-		var args struct {
-			For string `json:"for"`
-		}
-		if json.Unmarshal(raw, &args) == nil {
-			_, authErr = session.GrantDeadline(args.For, mcpNow(actions))
-		}
-	}
 	mutating := mcpMutatingTool(name)
 	entry := mcpaudit.Entry{Surface: func() string {
 		if session.Scope.Role == "owner" {
@@ -593,15 +585,26 @@ func init() {
 		props := map[string]any{"who": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"}}
 		required := []string{"who", "app"}
 		if tool == "people_grant" {
-			props["for"] = lifetimeSchema(true)
-			props["for"].(map[string]any)["description"] = "Lifetime of at least 1h using the shared grammar and presets, within audience policy, scope maximum and binding expiry; never is refused."
+			props["for"] = lifetimeSchema(false)
+			props["for"].(map[string]any)["description"] = "Lifetime within audience policy, scope maximum and binding expiry; never requires ack_never and an unexpired unrestricted owner binding."
+			props["ack_never"] = map[string]any{"type": "boolean", "default": false}
 			required = append(required, "for")
 		}
-		mcpToolHints[tool] = mcpHints(false, true, tool == "people_revoke", false)
+		mcpToolHints[tool] = mcpHints(false, true, tool == "people_revoke", tool == "people_grant")
 		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: tool, Description: map[string]string{
-			"people_grant":  "Create or replace one person's time-limited grant for one private HTTP/file app; return the person view, app and revoked=false. Use people_grant to allow one app while preserving all other grants; people_update can replace the whole app set, and people_revoke denies one app. Replacing an expired or revoked grant re-activates it without regrant; use extend to move an existing deadline. If the app was not yet people-scoped, it becomes scoped: callers without a grant or explicit legacy allow rule are denied. Reduced scopes require an existing person; only the owner can create one. Cannot clear an owner revocation. Changes local state only, preserves invitations and creates no network invitation. Lifetime must be at least 1h and obey audience policy, scope maximum and binding expiry; never is refused.",
+			"people_grant":  "Grant one person's private HTTP/file app while preserving all other grants and revocations. Uses the shared membership, routing and invitation action; can contact Tailscale and create a device share. New people, routes and external sharing require owner authority. Existing member grants retain scoped operation, with audience policy, scope maximum and binding expiry checked under the writer lock. never requires ack_never and unrestricted owner authority. Does not restore a globally revoked person. Returns per-app access state and invitation progress; incomplete setup is an error with retained data.",
 			"people_revoke": "Deny one person's access to one private HTTP/file app by expiring that grant; return the person view, app and revoked=true. Use people_revoke for one app; people_remove revokes the person across apps, and people_grant allows one app. An unknown login is a no-op. Otherwise, if the app was not yet people-scoped, it becomes scoped: callers without a grant or explicit legacy allow rule are denied. Preserves all other grants and invitations; cannot clear an owner revocation. Changes local state only and creates no network invitation. Accepted network shares and in-flight streams remain; ask the owner to clean up invitations.",
 		}[tool], InputSchema: objectSchema(props, required...), OutputSchema: objectSchema(map[string]any{"person": peopleViewSchema(), "app": map[string]any{"type": "string"}, "revoked": map[string]any{"type": "boolean"}}, "person", "app", "revoked")})
+	}
+	for i := range mcpToolDefinitions {
+		d := &mcpToolDefinitions[i]
+		if d.Name == "people_grant" {
+			props := d.OutputSchema["properties"].(map[string]any)
+			shared := peopleResultSchema()["properties"].(map[string]any)
+			for _, key := range []string{"access", "complete", "invites", "message"} {
+				props[key] = shared[key]
+			}
+		}
 	}
 	mcpToolHints["app_restart"] = mcpHints(false, true, false, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "app_restart", Description: "Queue restart of this app's TSLink gateway node on daemon reconciliation. Keeps the enrolled identity and other apps; does not restart the third-party app process or install a daemon. queued is not evidence that reconciliation finished. Reduced operators cannot restart a public Funnel app.", InputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}}, "app"), OutputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}, "queued": map[string]any{"type": "boolean"}, "restart_generation": map[string]any{"type": "integer"}}, "app", "queued", "restart_generation")})

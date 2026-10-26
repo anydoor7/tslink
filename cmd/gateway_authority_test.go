@@ -196,7 +196,7 @@ func TestGatewayMCPOwnerChangesBeforeWrite(t *testing.T) {
 
 func TestGatewayOffMCPDisablePreservesAuthorityBehavior(t *testing.T) {
 	paths := gatewayCommandPaths(t)
-	if _, err := changePortal(paths, portalArguments{Owner: "owner"}, true); err != nil {
+	if _, err := changePortal(paths, portalArguments{Owner: "owner", Gateway: false, GatewaySet: true}, true); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(mcpHTTPControlPlaneHandler(t, []string{"operator"}, "operator", defaultMCPActions(paths, io.Discard)))

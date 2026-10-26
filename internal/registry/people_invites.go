@@ -44,7 +44,7 @@ func PersonInviteTerminal(op PersonInvite) bool {
 // Accepted gateway shares remain live for deduplication; they are terminal
 // for remote cleanup, which must never delete an accepted network share.
 func PersonInviteLive(op PersonInvite) bool {
-	return !PersonInviteTerminal(op) || (op.TargetKind == InviteTargetGateway && op.State == PersonInviteAccepted)
+	return !PersonInviteTerminal(op) || op.State == PersonInviteAccepted
 }
 
 func SameInviteTarget(a, b PersonInvite) bool {
@@ -104,7 +104,7 @@ func validatePersonInvites(ops []PersonInvite) error {
 			return fmt.Errorf("duplicate invite operation for %s", op.App)
 		}
 		seen[key] = true
-		if PersonInviteLive(op) {
+		if PersonInviteLive(op) && !(op.TargetKind != InviteTargetGateway && op.State == PersonInviteAccepted) {
 			activeKey := target
 			if op.TargetKind == InviteTargetGateway {
 				activeKey = InviteTargetGateway
@@ -132,12 +132,13 @@ func TryPeopleInviteWork(path string, fn func() error) (bool, error) {
 type PersonInviteSaveOptions struct {
 	// RetireGatewayTarget is the proven replacement NodeID. It permits only an
 	// exact CAS of an accepted gateway attempt to target_gone, never remote revocation.
-	RetireGatewayTarget string
-	Authorize           func(*Registry) error
-	Context             context.Context
-	Now                 time.Time
-	Expected            *PersonInvite
-	ResetConfirmed      bool
+	RetireGatewayTarget  string
+	Authorize            func(*Registry) error
+	Context              context.Context
+	Now                  time.Time
+	Expected             *PersonInvite
+	ResetConfirmed       bool
+	ReplacementConfirmed bool
 	// ExpectedGrant optionally binds a pending/send transition to the exact
 	// grant observed before remote work. Late outcomes can still be recorded.
 	ExpectedGrant *PersonGrant
@@ -203,7 +204,8 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 						return CodedError{Code: errcode.Conflict, Message: "invite attempt changed before transition"}
 					}
 					retireAccepted := old.TargetKind == InviteTargetGateway && old.State == PersonInviteAccepted && op.State == PersonInviteTargetGone && opts.RetireGatewayTarget != "" && opts.RetireGatewayTarget != old.NodeID && opts.Expected != nil && old == *opts.Expected
-					if PersonInviteTerminal(old) && old != op && !retireAccepted {
+					replaceAccepted := old.State == PersonInviteAccepted && op.State == PersonInviteReplaced && opts.ReplacementConfirmed && opts.Expected != nil && old == *opts.Expected
+					if PersonInviteTerminal(old) && old != op && !retireAccepted && !replaceAccepted {
 						return CodedError{Code: errcode.Conflict, Message: "terminal invite attempt cannot be overwritten"}
 					}
 					if old.ID != "" && op.ID != old.ID {

@@ -593,7 +593,7 @@ func TestValidateCreatedInviteUsesStableWireContractError(t *testing.T) {
 		{name: "multi_batch", kind: InviteKindUser, count: 2, id: "12346", inviteURL: "https://example.invalid/placeholder", wantText: "returned 2 records"},
 		{name: "non_numeric_id", kind: InviteKindUser, count: 1, id: "uinv-example", inviteURL: "https://example.invalid/placeholder", wantText: "numeric id"},
 		{name: "self_delivery_user_missing_url", kind: InviteKindUser, printLink: true, count: 1, id: "12346", wantText: "non-empty inviteUrl"},
-		{name: "emailed_device_missing_url", kind: InviteKindDevice, count: 1, id: "12346", wantText: "non-empty inviteUrl"},
+		{name: "link_device_missing_url", kind: InviteKindDevice, printLink: true, count: 1, id: "12346", wantText: "non-empty inviteUrl"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			coded := codedError(t, validateCreatedInvite(tc.kind, tc.printLink, tc.count, tc.id, tc.inviteURL), registry.CodeInviteResponseInvalid)
@@ -601,6 +601,9 @@ func TestValidateCreatedInviteUsesStableWireContractError(t *testing.T) {
 				t.Fatalf("error = %+v, want predicate-specific text %q", coded, tc.wantText)
 			}
 		})
+	}
+	if err := validateCreatedInvite(InviteKindDevice, false, 1, "12346", ""); err != nil {
+		t.Fatalf("emailed device ID without URL refused: %v", err)
 	}
 	if err := validateCreatedInvite(InviteKindUser, false, 1, "12346", ""); err != nil {
 		t.Fatalf("documented same-domain emailed user response was rejected: %v", err)
@@ -649,7 +652,7 @@ func TestCreateInviteAuditsSuccessfulPOSTBeforeResponseValidation(t *testing.T) 
 					}
 					io.WriteString(w, `[{"id":"20003","deviceId":100,"email":"bob@example.com"}]`)
 				})
-				_, err := CreateDeviceInvite(context.Background(), DeviceTarget{Service: "app", Hostname: "app", NodeID: "n-owned"}, "bob@example.com", false, false, false)
+				_, err := CreateDeviceInvite(context.Background(), DeviceTarget{Service: "app", Hostname: "app", NodeID: "n-owned"}, "bob@example.com", true, false, false)
 				return err
 			},
 		},

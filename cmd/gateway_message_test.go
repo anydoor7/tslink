@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 func TestGatewayMessageRequiresGatewayOperation(t *testing.T) {
@@ -17,6 +18,11 @@ func TestGatewayMessageRequiresGatewayOperation(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newGatewayInviteFixture(t)
+			if !tt.invite {
+				peopleMembershipFn = func(context.Context, string, string) (tailapi.Membership, error) {
+					return tailapi.MembershipMember, nil
+				}
+			}
 			if !tt.routed {
 				if err := registry.SetPortalRoute(context.Background(), f.paths.Registry, "photos", nil); err != nil {
 					t.Fatal(err)
@@ -27,8 +33,8 @@ func TestGatewayMessageRequiresGatewayOperation(t *testing.T) {
 			if err != nil || !got.Complete {
 				t.Fatal(got, err)
 			}
-			want := tt.invite && tt.routed
-			if strings.Contains(got.Message, "Accept the gateway invitation once") != want {
+			want := tt.invite
+			if strings.Contains(got.Message, "Gateway: invitation prepared") != want {
 				t.Fatalf("gateway message without an operation: %s", got.Message)
 			}
 			has := false

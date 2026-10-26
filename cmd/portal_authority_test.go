@@ -195,6 +195,9 @@ func TestPortalCurrentOwnerAndLocalRecovery(t *testing.T) {
 	if err := registry.SetPortal(paths.Registry, nil); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := registry.ChangePerson(paths.Registry, "bootstrapped", []string{"all"}, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
 	local, err := callMCPTool(context.Background(), defaultMCPActions(paths, io.Discard), "portal_enable", json.RawMessage(`{"owner":"bootstrapped"}`))
 	if err != nil || local.IsError {
 		t.Fatal(local, err)

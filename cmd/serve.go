@@ -278,6 +278,9 @@ Examples:
 			if err := serveEnsureDirFn(); err != nil {
 				return err
 			}
+			if err := initializeDefaultGateway(cmd.Context()); err != nil {
+				return err
+			}
 			manageACL, _ := cmd.Flags().GetBool("manage-acl")
 			noAutoProvision, _ := cmd.Flags().GetBool("no-auto-provision")
 			mcpFlag, _ := cmd.Flags().GetBool("mcp")

@@ -190,7 +190,7 @@ func TestMCPScopedReadEndsAtBindingExpiry(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, dir)
 	path := filepath.Join(dir, "registry.json")
-	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []string{"active-control", "expired"} {
@@ -335,7 +335,7 @@ func TestMCPAuditTagCallerAttribution(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, dir)
 	path := filepath.Join(dir, "registry.json")
-	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner"}}); err != nil {
 		t.Fatal(err)
 	}
 	a := defaultMCPActions(sharePaths{Registry: path}, io.Discard)
@@ -370,7 +370,7 @@ func TestMCPExpiryAfterRealAuditWait(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, dir)
 	path := filepath.Join(dir, "registry.json")
-	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner"}}); err != nil {
 		t.Fatal(err)
 	}
 	// Virtual time: Journal.Record polls the real OS lock on 10ms timers under
@@ -439,12 +439,13 @@ func TestMCPExpiryAfterRealAuditWait(t *testing.T) {
 }
 
 func TestMCPPersonCreationHintAndUnknownRevoke(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	for _, role := range []string{"people-manager", "app-operator", "owner"} {
 		t.Run(role, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv(config.ConfigDirEnv, dir)
 			path := filepath.Join(dir, "registry.json")
-			if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+			if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner"}}); err != nil {
 				t.Fatal(err)
 			}
 			a := defaultMCPActions(sharePaths{Registry: path}, io.Discard)
@@ -616,6 +617,7 @@ func (c *mcpRegistryEffectContext) Err() error {
 }
 
 func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	for _, tc := range []struct{ tool, raw string }{
 		{"share", `{"target":"3001"}`}, {"add", `{"name":"new-app","type":"proxy","target":"http://localhost:3001","no_daemon_install":true}`},
 		{"template_apply", `{"name":"local-web","no_daemon_install":true}`}, {"recipe_apply", `{"recipe_id":"immich","no_daemon_install":true}`},
@@ -630,7 +632,7 @@ func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
 				t.Setenv(config.ConfigDirEnv, dir)
 				paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "pid"), Snapshot: filepath.Join(dir, "runtime.json"), Ownership: filepath.Join(dir, "ownership.json"), AuthHandoff: filepath.Join(dir, "auth.json")}
 				for _, name := range []string{"photos", "finance"} {
-					if _, err := registry.Add(paths.Registry, registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+					if _, err := registry.Add(paths.Registry, registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner"}}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -916,7 +918,7 @@ func TestMCPInviteCreateChecksSessionBeforeClient(t *testing.T) {
 			}
 			t.Run(kind+"/"+state, func(t *testing.T) {
 				t.Setenv(config.ConfigDirEnv, t.TempDir())
-				service := registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}}
+				service := registry.Service{Name: "photos", Type: registry.TypeTCP, Target: "localhost:3000", Port: 3000, Tags: []string{"tag:tsmain"}}
 				reg, pid, snapshot := configureExactInviteRuntime(t, []registry.Service{service}, map[string]string{"photos": "node-photos"})
 				calls := 0
 				inviteCreateUserFn = func(context.Context, string, string, bool) (tailapi.Invite, error) {
@@ -965,7 +967,7 @@ func TestMCPRemovalRechecksEachEffect(t *testing.T) {
 				dir := t.TempDir()
 				t.Setenv(config.ConfigDirEnv, dir)
 				regPath, ledgerPath := filepath.Join(dir, "registry.json"), filepath.Join(dir, "ownership.json")
-				if _, err := registry.Add(regPath, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+				if _, err := registry.Add(regPath, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{"owner"}}); err != nil {
 					t.Fatal(err)
 				}
 				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)

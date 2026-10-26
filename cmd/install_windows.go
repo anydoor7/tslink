@@ -75,6 +75,10 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read --no-auto-provision: %w", err)
 	}
+	if err := initializeDefaultGateway(ctx); err != nil {
+		return err
+	}
+
 	startup, _ := cmd.Flags().GetBool("startup")
 	if cmd.Annotations["tslink.bootstrap"] == "true" && supervisorName() == "windows-startup" {
 		startup = true
