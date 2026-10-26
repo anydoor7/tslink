@@ -248,8 +248,10 @@ only, since the gateway routes people-scoped apps; a legacy refusal uses the
 same page and names no app. The gateway-only refusals are deliberate and are the
 only places the two paths decide differently for a caller the gateway admits:
 `cross_origin_blocked` (routes share one hostname and its cookies, while an app
-node has its own origin) and `route_changed` (a gateway route serves the
-configuration it started with and refuses once the registry has moved on). A
+node has its own origin), `route_changed` (a gateway route serves the
+configuration it started with and refuses once the registry has moved on) and
+the malformed-request `no_grant` (a `CONNECT` or absolute-form target must not
+pick its own destination on a node that serves many apps). A
 caller with no routed grant is dropped before TLS and never sees a page at all.
 The [access log guide](access-log.md) gives the reason for each and what it does
 to the traffic counters. A request cut because TSLink is closing a route or

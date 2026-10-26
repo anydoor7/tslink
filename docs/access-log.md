@@ -110,6 +110,11 @@ node does not, and each is a security boundary rather than a gap.
    upstream under a policy the owner has replaced, until the route is rebuilt. An
    app's own node is stopped or reloaded instead, and a request it cuts is
    `node_closed`, so the reason exists only on the gateway.
+4. **Malformed request targets.** A gateway route refuses a `CONNECT` request or
+   an absolute-form target (a request line that names a host) from an admitted
+   caller (403, `denied`, reason `no_grant`), because one gateway node serves
+   many apps and a request must not choose its own destination. An app's own
+   node serves exactly one app and does not apply this check.
 
 WebSocket `bytes_out` is observed to be equal on both paths in manual runs but is
 not asserted by the test suite, because frame timing varies.
