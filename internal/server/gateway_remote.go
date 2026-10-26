@@ -124,6 +124,17 @@ func (d *gatewayRemoteUpstream) DialContext(ctx context.Context, network, addres
 	return dialer.NetstackDialTCP(ctx, netip.AddrPortFrom(ip, uint16(port)))
 }
 
+// remoteUpstreamRefusal reports the stable code when err is this gateway
+// refusing a remote upstream by policy (untagged gateway, foreign tailnet, no
+// such peer, status unreadable) rather than the remote app failing.
+func remoteUpstreamRefusal(err error) (string, bool) {
+	code, ok := registry.ErrorCode(err)
+	if !ok || !strings.HasPrefix(code, "remote_upstream_") {
+		return "", false
+	}
+	return code, true
+}
+
 func (s *Server) remoteGatewayUpstream(run *portalRun, svc registry.Service) *gatewayRemoteUpstream {
 	node, _ := run.node.tsnetSrv.(gatewayNodeDialer)
 	return &gatewayRemoteUpstream{node: node, lc: run.lc, target: svc.Target, observe: func(tagged bool) {

@@ -166,6 +166,20 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				accessClientCanceled(w, r)
 				return
 			}
+			if options.Gateway != nil {
+				// The gateway refusing a remote upstream by policy, such as a
+				// tag removed after the request passed the gate, is the same
+				// restriction the gate records: denied with its reason and 503.
+				// It is not a backend failure and never an allowed request.
+				if code, ok := remoteUpstreamRefusal(err); ok {
+					accessDeny(r, code)
+					if options.Gateway.Observe != nil {
+						options.Gateway.Observe(false)
+					}
+					gatewayErrorPage(w, r, http.StatusServiceUnavailable, code, "Remote upstream is unavailable", "", false)
+					return
+				}
+			}
 			class := backendErrorClass(err)
 			accessBackendFailure(r, class)
 			if options.Gateway != nil {
