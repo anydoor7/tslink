@@ -395,7 +395,9 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		accessAttest(r, who, grant)
 		reason := gatewayDecisionReason(reg, *current, who, now, allowed)
 		if !allowed {
-			deny(reason, current.Requestable)
+			// A requestable app is named only to a caller who may request it.
+			_, canRequest := requestVisitor(reg, who)
+			deny(reason, current.Requestable && canRequest)
 			return
 		}
 		if r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || g.authority == "" {

@@ -117,11 +117,13 @@ func peopleMiddlewareWithDashboard(path string, initial registry.Service, provid
 			accessAttest(r, who, grant)
 			if !decision.Allowed {
 				accessDeny(r, reason)
+				// A requestable app is named only to a caller who may request it.
+				_, canRequest := requestVisitor(reg, who)
 				writeAccessDenial(w, r, accessDenial{
 					Visitor:     gatewayDecisionReason(reg, svc, who, t, false),
 					App:         svc.Name,
 					Visible:     decision.DirectoryVisible,
-					Requestable: svc.Requestable,
+					Requestable: svc.Requestable && canRequest,
 					Dashboard:   denialDashboard(dashboard.address(), reg, who, svc.Name, t),
 				})
 				return

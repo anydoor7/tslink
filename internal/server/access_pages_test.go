@@ -14,6 +14,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/client/tailscale/apitype"
+	"tailscale.com/tailcfg"
 )
 
 // denialEnvelope reads the visitor code and message out of the JSON error
@@ -83,9 +84,15 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 		{name: "browser_navigate", method: http.MethodGet, header: map[string]string{"Sec-Fetch-Mode": "navigate"}, html: true},
 		{name: "browser_head", method: http.MethodHead, header: map[string]string{"Sec-Fetch-Mode": "navigate"}, html: true},
 	}
+	makeRequestable := func(t *testing.T, path string) {
+		if _, err := registry.MutateService(path, "photos", func(s registry.Service) (registry.Service, error) { s.Requestable = true; return s, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cases := []struct {
 		name        string
 		login       string
+		who         *apitype.WhoIsResponse // the caller; whoIsUser(login) when nil
 		setup       func(t *testing.T, path string)
 		whoErr      bool
 		code        string
@@ -97,12 +104,26 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 		requestLink bool
 	}{
 		{name: "no grant", login: "alice", code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true},
-		{name: "no grant, requestable app", login: "alice", code: "no_grant", message: "You do not have access to this app: photos", directLog: "people", gatewayLog: "no_grant", dashboard: true, requestLink: true,
-			setup: func(t *testing.T, path string) {
-				if _, err := registry.MutateService(path, "photos", func(s registry.Service) (registry.Service, error) { s.Requestable = true; return s, nil }); err != nil {
-					t.Fatal(err)
-				}
-			}},
+		// The app is named to a caller who can ask for it, and to nobody else.
+		{name: "no grant, requestable app, caller who can request", login: "alice", who: requestMember("alice"), code: "no_grant", message: "You do not have access to this app: photos", directLog: "people", gatewayLog: "no_grant", dashboard: true, requestLink: true,
+			setup: makeRequestable},
+		{name: "no grant, requestable app, node not described", login: "alice", code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true,
+			setup: makeRequestable},
+		{name: "no grant, requestable app, tagged caller", login: "alice", who: func() *apitype.WhoIsResponse {
+			w := requestMember("alice")
+			w.Node.Tags = []string{"tag:server"}
+			return w
+		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", setup: makeRequestable},
+		{name: "no grant, requestable app, shared-in caller", login: "alice", who: func() *apitype.WhoIsResponse {
+			w := requestMember("alice")
+			w.Node.Sharer = 7
+			return w
+		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true, setup: makeRequestable},
+		{name: "no grant, requestable app, sharee node", login: "alice", who: func() *apitype.WhoIsResponse {
+			w := requestMember("alice")
+			w.Node.Hostinfo = (&tailcfg.Hostinfo{ShareeNode: true}).View()
+			return w
+		}(), code: "no_grant", message: "You do not have access to this app", directLog: "people", gatewayLog: "no_grant", dashboard: true, setup: makeRequestable},
 		// An expired or revoked person has no app left to open, so neither path
 		// sends them to the dashboard.
 		{name: "expired grant", login: "alice", code: "expired", message: "Your access has expired", directLog: "expired", gatewayLog: "expired", later: time.Hour,
@@ -167,7 +188,11 @@ func TestAccessDenialIsTheSameOnBothEntryPaths(t *testing.T) {
 			if tc.whoErr {
 				lc = fakeWhoIsClient(t, nil, os.ErrDeadlineExceeded)
 			} else {
-				lc = fakeWhoIsClient(t, whoIsUser(tc.login, "phone"), nil)
+				who := tc.who
+				if who == nil {
+					who = whoIsUser(tc.login, "phone")
+				}
+				lc = fakeWhoIsClient(t, who, nil)
 			}
 			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("a refused request reached the app") })
 			clock := func() time.Time { return now.Add(tc.later) }

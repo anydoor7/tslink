@@ -18,6 +18,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/coder/websocket"
+	"tailscale.com/tailcfg"
 )
 
 // Exercise both production assembly paths, with loopback tsnet transports and
@@ -42,10 +43,10 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 	originalNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return sentinel }
 	t.Cleanup(func() { newTSNetServerFn = originalNew })
-	for _, scenario := range []string{"allowed", "denied", "denied_browser", "file", "websocket", "backend_error", "upstream_unavailable", "timeout", "closing"} {
+	for _, scenario := range []string{"allowed", "denied", "denied_browser", "denied_ineligible", "file", "websocket", "backend_error", "upstream_unavailable", "timeout", "closing"} {
 		t.Run(scenario, func(t *testing.T) {
 			const upload, download = "upload-body", "download-body"
-			denied := scenario == "denied" || scenario == "denied_browser"
+			denied := scenario == "denied" || scenario == "denied_browser" || scenario == "denied_ineligible"
 			// closing: the backend holds the request until TSLink cuts it, once
 			// per entry path, and the client gets the page TSLink generates.
 			entered := make(chan struct{}, 2)
@@ -131,9 +132,16 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if scenario == "denied_browser" {
+				if scenario == "denied_browser" || scenario == "denied_ineligible" {
 					// A requestable app names itself and offers the request link
 					// to a caller who may ask; the page also links the dashboard.
+					// denied_ineligible: the caller may not ask (WhoIs describes
+					// no node), so the app is not named to them on either path.
+					if scenario == "denied_browser" {
+						who := whoIsUser("alice", "laptop")
+						who.Node.Hostinfo = (&tailcfg.Hostinfo{}).View()
+						f.who.Store(who)
+					}
 					if _, err = registry.MutateService(f.path, "photos", func(s registry.Service) (registry.Service, error) {
 						s.Requestable = true
 						return s, nil
@@ -158,7 +166,11 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = ln.Close() })
-			appNode := &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, whoIsUser("ALICE", "phone"), nil)}, ln: ln}
+			appWho := whoIsUser("ALICE", "phone")
+			if scenario == "denied_browser" {
+				appWho.Node.Hostinfo = (&tailcfg.Hostinfo{}).View()
+			}
+			appNode := &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, appWho, nil)}, ln: ln}
 			installed := newTSNetServerFn
 			newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return appNode }
 			t.Cleanup(func() { newTSNetServerFn = installed })
@@ -208,7 +220,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if denied {
 					wantStatus = http.StatusForbidden
 				}
-				if scenario == "denied_browser" {
+				if scenario == "denied_browser" || scenario == "denied_ineligible" {
 					method, path, body = "GET", "/", ""
 				}
 				if scenario == "closing" {
@@ -227,7 +239,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if scenario == "denied_browser" {
+				if scenario == "denied_browser" || scenario == "denied_ineligible" {
 					req.Header.Set("Sec-Fetch-Mode", "navigate")
 				}
 				type reply struct {
@@ -359,7 +371,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				t.Fatalf("entry paths answered differently:\ndirect:  %q\ngateway: %q", pages[""], pages["portal"])
 			}
 			switch scenario {
-			case "denied", "denied_browser":
+			case "denied", "denied_browser", "denied_ineligible":
 				// The access-log reason is each path's own; what the visitor is
 				// told is not.
 				if direct.Reason != "people" || gateway.Reason != "no_grant" {
@@ -378,6 +390,13 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					if !strings.Contains(pages[""], want) {
 						t.Fatalf("the app node's page lacks %q: %q", want, pages[""])
 					}
+				}
+			}
+			if scenario == "denied_ineligible" {
+				// The app is requestable, but this caller may not request it: the
+				// page names no app, on either path.
+				if strings.Contains(pages[""], "photos") || !strings.Contains(pages[""], "You do not have access to this app") {
+					t.Fatalf("an ineligible caller is told the requestable app's name: %q", pages[""])
 				}
 			}
 			switch scenario {

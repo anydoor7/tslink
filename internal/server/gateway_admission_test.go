@@ -188,7 +188,16 @@ func TestGatewayDenyPrivacyReasonsAndMatchedGrant(t *testing.T) {
 	if _, err := registry.MutateService(f.path, "payroll", func(s registry.Service) (registry.Service, error) { s.Requestable = true; return s, nil }); err != nil {
 		t.Fatal(err)
 	}
+	// A caller whose node WhoIs does not describe cannot ask for the app, so a
+	// requestable app is no more named to them than a hidden one.
 	code, body, _ := gatewayGet(t, c, "8444", "/", map[string]string{"Accept": "text/html"})
+	if code != 403 || strings.Contains(body, "payroll") || !strings.Contains(body, "You do not have access to this app") {
+		t.Fatalf("requestable app named to a caller who cannot request it: %d %s", code, body)
+	}
+	eligible := whoIsUser("alice", "laptop")
+	eligible.Node.Hostinfo = (&tailcfg.Hostinfo{}).View()
+	f.who.Store(eligible)
+	code, body, _ = gatewayGet(t, c, "8444", "/", map[string]string{"Accept": "text/html"})
 	if code != 403 || !strings.Contains(body, "payroll") || !strings.Contains(body, "Request access") {
 		t.Fatalf("requestable app: %d %s", code, body)
 	}
