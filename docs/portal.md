@@ -231,11 +231,15 @@ longer carries the gateway's old `portal route` label). A refusal is 403 with a
 visitor code that is the same on both paths: `no_grant`, `expired`, `revoked`,
 `whois_failed` (the caller could not be identified) or `registry_unavailable`
 (the access policy could not be read). The page names the app only for a caller
-who can see it or ask for it, and links to the dashboard ("Back to your apps",
-plus "Request access" for a requestable app) only while the dashboard is up and
-only for a caller who could open it; a refused caller who could not has no link,
-so an app node reveals nothing about the portal that the caller could not
-already reach. The access log keeps each path's own reason for the same refusal
+who can see it or ask for it: a tagged or shared-in node, or a revoked or guest
+person, cannot ask, so a requestable app is not named to them. The page carries
+no link to the dashboard, because whether a dashboard exists depends on whether
+the gateway runs and a refusal reads the same either way. Access is also
+decided before the request-size limit, on both paths: a refused caller who sends
+an oversized request gets the same 403 as any other refused request, and only a
+caller who may use the app is told the limit (413, which names the app and the
+configured limit). The connection and header limits and the bounded disposal of
+a body nobody read apply to every request first. The access log keeps each path's own reason for the same refusal
 (`people`, `expired` or `acl` on an app node; `no_grant`, `expired` or
 `revoked` on the gateway). Some refusals exist on one path only:
 `cross_origin_blocked`, `route_changed` and the gateway's malformed-request

@@ -75,6 +75,22 @@ exact count of all rejected connections. Close events can fall in a different
 query window from their opens, so `closed` need not equal `connections`.
 MCP, lifecycle and guest audit receipts contribute no traffic counters.
 
+**Known boundary: a caller the gateway drops before TLS.** The two entry paths
+agree on every request the gateway admits, but not on a caller who holds no
+grant it routes (for example a revoked person with no routed app left). The
+gateway's connection gate closes such a connection before any TLS byte, so the
+caller never sends a request: there is no HTTP event, no identity and no person
+or app row, only a rate-limited, unidentified `tcp_open` event with reason
+`conn_gate_drop` (counted in `gate_drops`). The same caller on an app's own node
+gets a 403 and an identified `denied` HTTP event that counts toward that
+person's and app's `denied`, `requests` and `bytes_out`. This is deliberate: the
+gate refuses before TLS so that an unauthorized caller is never answered by the
+gateway, and the drop is intentionally not attributed to a person. Per-person
+and per-app HTTP counts and bytes for a caller with no routed grant therefore
+differ by entry path. A caller who holds at least one routed grant, or whose
+connection was admitted before the grant was revoked, reaches HTTP and gets the
+same identified denial on both paths.
+
 Every filter, including app authority, runs before aggregation. `--limit 1`
 and `--limit 10000` therefore return identical traffic for the same filters.
 Current gateway configuration is not consulted, and switching modes does not
@@ -116,7 +132,7 @@ Service JSON uses `access_log_path_mode`; global JSON uses `access_log.path_mode
 
 Per-app changes reconcile through the registry watcher; global options take effect after restarting `serve`. Disable HTTP/TCP/guest-use recording with `tslink config set access-log-enabled false`. Existing retained history remains queryable until it is evicted. Mutation receipts remain enabled independently; their bounded journal is required for MCP authority changes.
 
-The visitor code in the page a refused request gets is not this reason: the same refusal is `no_grant`, `expired`, `revoked`, `whois_failed` or `registry_unavailable` to the visitor on both entry paths (see the [portal guide](portal.md)). `acl` denotes TSLink's legacy HTTP allow-list; `people` denotes people authorization or an unavailable people registry/identity; `expired` denotes a matched person's expired grant; `limits` denotes HTTP upload/read protections or a TCP connection-cap refusal; `preserve_host_unavailable` denotes the canonical-host refusal. An app's own 403 is still an allowed gateway request. Tailnet-policy packets and incomplete headers rejected before HTTP handler dispatch cannot become HTTP request records. Health probes contact the local backend directly and do not enter this chain; a person opening `/health` through the gateway is logged normally.
+The visitor code in the page a refused request gets is not this reason: the same refusal is `no_grant`, `expired`, `revoked`, `whois_failed` or `registry_unavailable` to the visitor on both entry paths (see the [portal guide](portal.md)). `acl` denotes TSLink's legacy HTTP allow-list; `people` denotes people authorization or an unavailable people registry/identity; `expired` denotes a matched person's expired grant; `limits` denotes HTTP upload/read protections or a TCP connection-cap refusal (access is decided first on both paths, so an oversized request from a refused caller is recorded as the refusal, not as `limits`); `preserve_host_unavailable` denotes the canonical-host refusal. An app's own 403 is still an allowed gateway request. Tailnet-policy packets and incomplete headers rejected before HTTP handler dispatch cannot become HTTP request records. Health probes contact the local backend directly and do not enter this chain; a person opening `/health` through the gateway is logged normally.
 
 HTTP byte counts measure body bytes actually read and response bytes written, excluding HTTP headers and framing. They do not infer the unread part of an early-rejected upload. Upgraded HTTP connections count plaintext stream bytes after hijack, including the upgrade response handshake. TCP counts actual stream bytes. Long-lived streams publish their completed HTTP/close event when the handler/connection finishes.
 
