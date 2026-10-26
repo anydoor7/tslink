@@ -117,12 +117,10 @@ func accessExplainResultForPath(regPath, serviceName string) (AccessExplainResul
 			continue
 		}
 		result := buildAccessExplainResult(svc, reg.People...)
-		if svc.PortalRoute != nil {
-			logs, err := accesslog.Query(filepath.Dir(regPath), accesslog.Filter{App: svc.Name, Limit: 1})
-			result.ReasonsUnavailable = err != nil
-			if err == nil {
-				result.Reasons = logs.Summary.Reasons
-			}
+		logs, err := accesslog.Query(filepath.Dir(regPath), accesslog.Filter{App: svc.Name, Limit: 1})
+		result.ReasonsUnavailable = err != nil
+		if err == nil {
+			result.Reasons = logs.Summary.Reasons
 		}
 		return result, nil
 	}

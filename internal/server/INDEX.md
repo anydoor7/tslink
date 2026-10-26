@@ -106,4 +106,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `wave2_integration_test.go`: portal guest request eligibility, private people enforcement, guest use/revoke audit.
 - `people_test.go`: lifecycle durability waits for post-expiry reconciliation and joins the ticker before reading its registry file.
 - `access_drain_timing_test.go`: synctest regression for joining a delayed writer before inspecting persisted events.
+- `access_traffic_parity_test.go`: real gateway/app handler chains into one isolated writer; HTTP, denial, file, WebSocket and backend-error aggregation parity.
 - `guest_timing_test.go`: real-file corruption and writer contention with virtual response bounds, original-session recovery, and bounded 503-only recovery probes.

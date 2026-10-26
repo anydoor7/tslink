@@ -28,6 +28,7 @@ import (
 )
 
 func fakeMCPActions() mcpActions {
+	emptySummary := accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}, Traffic: accesslog.TrafficSummary{PeopleApps: []accesslog.SubjectAppTraffic{}, Apps: []accesslog.AppTraffic{}}}
 	return mcpActions{
 		extend: func(_ context.Context, args extendArguments) (any, error) {
 			return registry.DurationChange{Service: args.Service, Who: args.Who, Audience: "tailnet_member"}, nil
@@ -42,10 +43,10 @@ func fakeMCPActions() mcpActions {
 			return RequestDecisionResult{Request: registry.AccessRequest{Status: "approved"}}, nil
 		},
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
-			return accesslog.Result{Events: []accesslog.Event{}, Summary: accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}}, nil
+			return accesslog.Result{Events: []accesslog.Event{}, Summary: emptySummary}, nil
 		},
 		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
-			return accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}, nil
+			return emptySummary, nil
 		},
 		portalRouteList: func() (any, error) { return portalRoutesResult{Routes: []tsruntime.GatewayRouteState{}}, nil },
 		portalRouteChange: func(_ context.Context, _ portalRouteArguments, _ bool) (any, error) {
