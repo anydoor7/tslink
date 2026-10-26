@@ -766,10 +766,12 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	}
 	var access []PeopleResult
 	if len(recipients) > 0 {
-		grantAttempted = true
 		if _, keepErr := registry.KeepIfUnchangedContext(ctx, paths.Registry, svc); keepErr != nil {
 			return ShareResult{}, keepErr
 		}
+		// Retention starts with the grant phase, not before the registration
+		// is settled: a failed keep above still rolls back what this call made.
+		grantAttempted = true
 		var grantErr error
 		access, grantErr = grantServiceRecipients(ctx, paths, svc.Name, recipients, params)
 		if grantErr != nil {
