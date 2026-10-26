@@ -224,7 +224,7 @@ A route activation failure is retried with exponential backoff from one to
 A request that TSLink itself answers, rather than the app, gets the same
 response on a gateway route and on the app's own node, so the visitor sees the
 same thing and the access log's `bytes_out` for a person and app does not depend
-on how the request arrived. A browser navigation (`Sec-Fetch-Mode: navigate`, or
+on how the request arrived, apart from those gateway-only refusals. A browser navigation (`Sec-Fetch-Mode: navigate`, or
 an `Accept` that prefers `text/html`) gets a small HTML page; any other client
 gets the JSON error envelope, with `"command": "app request"` (the envelope no
 longer carries the gateway's old `portal route` label). A refusal is 403 with a
@@ -245,7 +245,14 @@ a body nobody read apply to every request first. The access log keeps each path'
 `cross_origin_blocked`, `route_changed` and the gateway's malformed-request
 `no_grant` are gateway-only, and the legacy `--allow` list (`acl`) is app-node
 only, since the gateway routes people-scoped apps; a legacy refusal uses the
-same page and names no app. A request cut because TSLink is closing a route or
+same page and names no app. The gateway-only refusals are deliberate and are the
+only places the two paths decide differently for a caller the gateway admits:
+`cross_origin_blocked` (routes share one hostname and its cookies, while an app
+node has its own origin) and `route_changed` (a gateway route serves the
+configuration it started with and refuses once the registry has moved on). A
+caller with no routed grant is dropped before TLS and never sees a page at all.
+The [access log guide](access-log.md) gives the reason for each and what it does
+to the traffic counters. A request cut because TSLink is closing a route or
 stopping or reloading a node is 503 with visitor code `app_restarting` and the
 same text on both paths (`<app> is being reconfigured; try again`); only the
 access-log reason differs (`route_closed`, `node_closed`). Guest links, PIN and

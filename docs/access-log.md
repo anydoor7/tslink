@@ -39,8 +39,9 @@ visitor response for that failure, so the recorded `bytes_out` is the same too.
 So do a refusal (`denied`) and a request TSLink cuts while closing a route or
 node: the same page on either entry path, with the visitor codes listed in the
 [portal guide](portal.md), so a person's `bytes_out` for an app does not depend
-on the entry path. The reason recorded for the same refusal can still differ by
-path. The one exception is a remote app route that the gateway itself refuses (an
+on the entry path, apart from the intentional gateway-only exceptions listed
+below. The reason recorded for the same refusal can still differ by path. The one
+exception is a remote app route that the gateway itself refuses (an
 untagged gateway, a host outside its tailnet, no such peer, an unreadable
 status): the request is `denied` with the matching `remote_upstream_*` reason and
 status 503, whether the refusal is caught before or while the upstream
@@ -75,21 +76,43 @@ exact count of all rejected connections. Close events can fall in a different
 query window from their opens, so `closed` need not equal `connections`.
 MCP, lifecycle and guest audit receipts contribute no traffic counters.
 
-**Known boundary: a caller the gateway drops before TLS.** The two entry paths
-agree on every request the gateway admits, but not on a caller who holds no
-grant it routes (for example a revoked person with no routed app left). The
-gateway's connection gate closes such a connection before any TLS byte, so the
-caller never sends a request: there is no HTTP event, no identity and no person
-or app row, only a rate-limited, unidentified `tcp_open` event with reason
-`conn_gate_drop` (counted in `gate_drops`). The same caller on an app's own node
-gets a 403 and an identified `denied` HTTP event that counts toward that
-person's and app's `denied`, `requests` and `bytes_out`. This is deliberate: the
-gate refuses before TLS so that an unauthorized caller is never answered by the
-gateway, and the drop is intentionally not attributed to a person. Per-person
-and per-app HTTP counts and bytes for a caller with no routed grant therefore
-differ by entry path. A caller who holds at least one routed grant, or whose
-connection was admitted before the grant was revoked, reaches HTTP and gets the
-same identified denial on both paths.
+**Intentional gateway-only exceptions.** The two entry paths give a caller the
+same decision, the same response and the same person and app HTTP counts and
+bytes for every request, with these deliberate exceptions. Each exists because
+the gateway serves many apps from one hostname and one node, which an app's own
+node does not, and each is a security boundary rather than a gap.
+
+1. **A caller the gateway drops before TLS.** A caller who holds no grant the
+   gateway routes (for example a revoked person with no routed app left) is
+   closed by the connection gate before any TLS byte, so the caller never sends
+   a request: there is no HTTP event, no identity and no person or app row, only
+   a rate-limited, unidentified `tcp_open` event with reason `conn_gate_drop`
+   (counted in `gate_drops`). The same caller on an app's own node gets a 403 and
+   an identified `denied` HTTP event that counts toward that person's and app's
+   `denied`, `requests` and `bytes_out`. The gate refuses before TLS so that an
+   unauthorized caller is never answered by the gateway, and the drop is
+   intentionally not attributed to a person. A caller who holds at least one
+   routed grant, or whose connection was admitted before the grant was revoked,
+   reaches HTTP and gets the same identified denial on both paths.
+2. **`cross_origin_blocked`.** Gateway routes share one hostname across ports, and
+   cookies are not isolated by port, so a page of one app could otherwise make a
+   browser send an authorized caller's request to another app. A cross-origin
+   browser request that is not a top-level GET/HEAD navigation is therefore
+   refused on a gateway route (403, `denied`, reason `cross_origin_blocked`)
+   unless the route was added with `--allow-cross-origin`. An app's own node has
+   its own origin, so the same authorized request is allowed there and counted as
+   allowed. This is checked after the access decision, so it never changes the
+   answer for a caller who is refused.
+3. **`route_changed`.** A gateway route serves the configuration it was started
+   with, while every request re-reads the registry. If the app's target, scope,
+   route or limits have changed since, or the app is gone, the request is refused
+   (403, `denied`, reason `route_changed`) rather than forwarded to a stale
+   upstream under a policy the owner has replaced, until the route is rebuilt. An
+   app's own node is stopped or reloaded instead, and a request it cuts is
+   `node_closed`, so the reason exists only on the gateway.
+
+WebSocket `bytes_out` is observed to be equal on both paths in manual runs but is
+not asserted by the test suite, because frame timing varies.
 
 Every filter, including app authority, runs before aggregation. `--limit 1`
 and `--limit 10000` therefore return identical traffic for the same filters.
