@@ -128,7 +128,7 @@ func TestPortalReadOnlyBounds(t *testing.T) {
 
 func TestPortalConcurrentRegistryWriters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.json")
-	if _, err := Add(path, Service{Name: "photos", Type: TypeProxy, Target: "http://localhost:8000"}); err != nil {
+	if _, err := Add(path, Service{Name: "photos", Type: TypeProxy, Target: "http://localhost:8000", AllowedUsers: []string{"owner"}}); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup

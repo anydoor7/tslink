@@ -9,7 +9,11 @@
 <p align="center">Your phone needs the Tailscale app, signed in to the same tailnet.</p>
 <p align="center">Docs and guides: <a href="https://tslink.md">tslink.md</a></p>
 
-[![MCP Badge](https://lobehub.com/badge/mcp/anydoor7-tslink)](https://lobehub.com/mcp/anydoor7-tslink)
+<p align="center">
+  <a href="https://lobehub.com/mcp/anydoor7-tslink">
+    <img src="https://lobehub.com/badge/mcp/anydoor7-tslink" alt="MCP Badge">
+  </a>
+</p>
 
 <p align="center"><strong>English</strong> · <a href="docs/README.zh-CN.md">简体中文</a> · <a href="docs/README.ja.md">日本語</a> · <a href="docs/README.ko.md">한국어</a> · <a href="docs/README.es.md">Español</a> · <a href="docs/INDEX.md#translated-homepages">More languages</a></p>
 
@@ -83,9 +87,9 @@ For a local MCP client that uses `mcpServers` JSON (other clients: see their MCP
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **One name per dev server.** Each share gets its own private `https://<name>.<tailnet>.ts.net` address at the root path on port 443. A taken name gets a number suffix, so use the URL the agent gets back.
-- **Needs a person for each new app.** In the default setup, each fresh app node needs a person to complete Tailscale enrollment. If the result is `needs_login`, finish sign-in, then run `tslink url <name> --wait` for the exact URL. Separately, a new name can take a while to become reachable: 36 to 38 seconds in our two test runs.
-- **Who can open it.** By default, tailnet devices your policy allows. MCP `share` accepts `allow` to limit it to your login; from the CLI, use `tslink add web --proxy localhost:5173 --allow you@example.com`. Names appear in public certificate logs, so they are not secret.
+- **One address per app.** New installations use the private home gateway: each HTTP/file app gets a stable HTTPS port, such as `https://home.<tailnet>.ts.net:8443/`. Its own app node and URL remain available; `--portal-only` is opt-in. Use the exact URL returned by TSLink.
+- **Enroll the gateway.** Without credentials, finish the gateway's Tailscale sign-in. An untagged gateway can bind its verified account as owner; tagged/OAuth enrollment requires a local `tslink portal enable --owner <login>`. App-node enrollment runs independently and does not hold up a ready gateway route. Existing installations keep their configured paths.
+- **Who can open it.** New gateway apps allow the owner/admins and explicit people grants. `tslink people add <login> --apps web --for 7d --print-links`, CLI `add --allow`, and MCP `add/share.allow` verify membership and prepare any required invitation. Verified members need no device invitation; outsiders accept one gateway invitation. Directory/API failures return incomplete setup. Names still appear in public certificate logs.
 - **Edit, save, see it.** Saving code updates the page on your phone. Your app's own Host and Origin rules can still block requests; Vite needed no `allowedHosts` change in our test, and Next.js is untested and still needs `allowedDevOrigins`.
 - **Clean up.** The agent calls `unshare`, or you run `tslink remove <name>`, always with the name the share result returned. Removal unregisters the share and attempts to delete its tailnet node when TSLink can prove it owns it, so check the result for cleanup or retained-state fields. It does not stop the dev server.
 - **CLI or MCP.** Management commands take `--json` and return versioned results; `tslink mcp` offers app and access operations over MCP.
@@ -143,7 +147,7 @@ Guest links and new public URLs expire and work for web apps only; folders, file
   <img src="docs/assets/service-map-light.svg" alt="One PC or cloud host: CLI/MCP manages a shared daemon and per-app nodes. Private devices connect through encrypted Tailscale transport; optional public HTTPS/Funnel reaches HTTP apps through a guest gate or explicit open publication." width="960">
 </picture>
 
-One background process runs a separate Tailscale node for each app. Tailscale provides the tailnet transport and HTTPS certificates. Private web and file access can be limited by Tailscale identity with `--allow` and people grants; raw TCP relies on your tailnet policy and the app's own login. [Architecture](docs/architecture.md)
+One background process runs the persistent home gateway and keeps a separate Tailscale node for each ordinary app. Disabling the gateway preserves routes and identities; the next authorization uses the individual app nodes. Portal-only apps become unavailable while the gateway is off. Tailscale provides the tailnet transport and HTTPS certificates. Private web and file access can be limited by Tailscale identity with `--allow` and people grants; raw TCP relies on your tailnet policy and the app's own login. [Architecture](docs/architecture.md)
 
 <a id="requirements"></a>
 

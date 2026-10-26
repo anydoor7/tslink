@@ -96,7 +96,7 @@ Registry writes and lifecycle receipts are separate commits; see
 - Structured logging uses `slog` for diagnostics and bounded asynchronous local
   access history for HTTP/file requests and TCP connections. See [access log](access-log.md).
 
-## Optional gateway data path
+## Gateway data path
 
 A persistent portal node owns the directory on 443 and one TLS listener per
 routed HTTP/file app. Admission performs real WhoIs before TLS with bounded
@@ -121,3 +121,7 @@ directory, outside the app-node cleanup ledger. People invitations record a
 separate gateway target kind and exact NodeID. Registry schema 3 protects the
 new routing fields from older readers. Gateway mode is a manually configured
 route catalog, not federated discovery or a cross-host control plane.
+
+New configurations initialize the existing portal/gateway structures under the registry lock. Read-only loaders do not initialize anything; existing registry files or node/runtime/ownership/supervisor evidence prevent automatic initialization. Owner bootstrap uses only the untagged gateway self identity, with a compare-and-set that preserves explicit ownership. Ordinary new HTTP/file services retain their app node and also receive a stable route; PortalOnly remains explicit. Effective gateway mode requires both portal and gateway enabled.
+
+All human authorization adapters use `grantAccess`: validate authority, resolve membership through `Users().List`, commit local grants/routes and legacy preservation atomically, read exact current runtime, then resume the existing invitation state machine. No network wait holds the registry lock. Member access needs no invite; outsiders share one exact gateway NodeID or each exact app NodeID according to effective mode. Local deadlines/tombstones remain the authority at both HTTP entrances. Guest permanent grants require acknowledgment; public/browser tokens remain finite and MCP binding limits still apply.

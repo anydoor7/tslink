@@ -1,6 +1,6 @@
 # Sharing
 
-For sharing several registered apps with a person for a chosen time, use [people](people.md): `tslink people add alice@example.com --apps photos,finance --for 7d`. Existing tailnet members need no token. Add `--invite --print-links` for a single message containing a gateway invite for routed apps and per-app invites for other apps for an outsider; invitation creation requires a user-owned API token. `people remove` denies that login on subsequent private HTTP/file requests even if accepted network shares remain. TCP and public Funnel cannot be person-scoped. Existing `share`, `add --allow` and `invite` commands remain available.
+For sharing several registered apps with a person for a chosen time, use [people](people.md): `tslink people add alice@example.com --apps photos,finance --for 7d`. Membership is verified against the network directory. Use `--print-links` to disclose prepared invitations: outside recipients accept one gateway invitation when the gateway is enabled, or one invitation per app when disabled; invitation creation requires a user-owned API token. `people remove` denies that login on subsequent private HTTP/file requests even if accepted network shares remain. TCP and public Funnel cannot be person-scoped. Existing `share`, `add --allow` and `invite` commands remain available.
 
 People removal saves local denial before cleaning up recorded pending invitations; no-token or partial cleanup reports `complete: false` and `cleanup`. Invitation retries reuse completed IDs; unknown POST outcomes require explicit reconciliation, with no exactly-once guarantee. See the people guide for recovery.
 ## Share once through the gateway
@@ -110,4 +110,4 @@ wiring is separate from these limits and must retain the app's own requirements.
 
 ## Share for a chosen time
 
-People `--for`/`--until`, Funnel `--funnel-ttl` and `extend` use the [unified durations](durations.md). Minimum 1h; guest/public maximum defaults to 7d. New grants default to 24h. `never` needs `--ack-never` and a tailnet-member login. Use `tslink extend photos --person alice@example.com --for 36h` for one app, or omit `--person` for a [Funnel TTL](funnel.md). Expired grants require explicit `--regrant`.
+People `--for`/`--until`, Funnel `--funnel-ttl` and `extend` use the [unified durations](durations.md). Minimum 1h; guest/public maximum defaults to 7d. New grants default to 24h. `never` needs `--ack-never` for a member or device-invited guest; browser links and Funnel remain finite. Use `tslink extend photos --person alice@example.com --for 36h` for one app, or omit `--person` for a [Funnel TTL](funnel.md). Expired grants require explicit `--regrant`.

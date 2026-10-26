@@ -108,6 +108,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+"for":"for", "until":"until", "ack-never":"ack_never", "print-links":"print_links",
 			"requestable": "requestable",
 			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 			"max-request-body":           "request_limits.max_body",

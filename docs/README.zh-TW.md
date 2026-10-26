@@ -73,9 +73,9 @@ AI 代理在 `localhost` 上啟動的 dev server，你的手機連不到。有�
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **每個 dev server 一個名稱。** 每次分享都有自己的私有位址 `https://<name>.<tailnet>.ts.net`，位於根路徑，連接埠 443。名稱被占用時會加上數字後綴，所以請以代理取回的 URL 為準。
-- **每個新應用程式都需要人來操作。** 預設設定下，每個新的應用程式節點都需要人完成一次 Tailscale 登入。如果結果是 `needs_login`，先完成登入，再執行 `tslink url <name> --wait` 取得確切的 URL。另外，新名稱要過一會兒才連得上：我們兩次測試花了 36 到 38 秒。
-- **誰能開啟。** 預設是你的政策允許的 tailnet 裝置。MCP `share` 接受 `allow`，可限制為只有你的登入身分；在命令列請用 `tslink add web --proxy localhost:5173 --allow you@example.com`。名稱會出現在公開的憑證記錄中，所以並不保密。
+- **新安裝預設使用閘道。** 每個私人 HTTP/檔案應用程式自動取得固定連接埠，例如 `https://home.<tailnet>.ts.net:8443/`。既有安裝保留目前模式；各應用程式的節點和 URL 仍保留，`--portal-only` 須明確選擇。
+- **先完成閘道註冊。** 沒有憑證時，未標記的閘道可將已驗證的自身帳號設為 owner；tagged/OAuth 閘道須在本機執行 `tslink portal enable --owner <login>`。背景應用程式節點尚未註冊，不會阻擋已就緒的閘道入口。
+- **依人員授權。** 新閘道應用程式只允許 owner/admin 和明確授權的人。`people add`、`add --allow`、MCP `add/share.allow` 統一驗證成員身分並準備必要邀請；成員不需要裝置邀請，外部訪客接受一次閘道邀請。目錄/API 無法使用時會回傳未完成狀態。
 - **改程式碼，儲存，就看得到。** 儲存程式碼後，手機上的頁面會更新。應用程式自己的 Host 和 Origin 規則仍可能擋下請求：我們的測試中 Vite 不需要修改 `allowedHosts`，Next.js 未測試，仍需要 `allowedDevOrigins`。
 - **清理。** 代理呼叫 `unshare`，或由你執行 `tslink remove <name>`，一律使用 share 結果回傳的名稱。移除會取消註冊這次分享，並在 TSLink 能證明節點屬於自己時，嘗試刪除它在 tailnet 裡的節點，所以請查看結果中的清理或保留狀態欄位。它不會停止 dev server。
 - **CLI 或 MCP。** 管理指令支援 `--json`，回傳帶版本號的結果；`tslink mcp` 透過 MCP 提供應用程式和存取管理操作。

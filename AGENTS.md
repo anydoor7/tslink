@@ -7,6 +7,9 @@ Human contributors should start from [CONTRIBUTING.md](CONTRIBUTING.md).
 
 TSLink is a private Tailscale gateway that exposes local proxy, file, and TCP services through embedded tsnet nodes. It implements the shipped core with per-service microsegmentation, identity-aware HTTP proxying, WireGuard encryption, registry-backed hot reload, and system keychain credential storage. Admin, Docker discovery, middleware, cluster sync, custom-domain ACME, and an exposed `/metrics` endpoint are roadmap items with no shipped package.
 
+New installations default to a persistent home gateway; existing registry/node/runtime/ownership/supervisor state must keep its current mode. Ordinary new private HTTP/file apps receive stable routes and keep their own nodes/URLs; PortalOnly stays opt-in. Human access adapters use the common `grantAccess` action and locked registry mutation, then exact runtime and durable invitation completion. Do not restore allow-only success, `--invite` gating, blind unknown-POST retries, or member-only permanent grants. Device guests may use `never` with acknowledgment; browser/Funnel and scoped binding limits stay finite. First owner bootstrap must use only the untagged gateway self identity.
+
+
 ## Documentation policy
 
 Documentation is English-only. The only translations are the homepage READMEs in `docs/README.<lang>.md`.

@@ -5,6 +5,13 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ## [Unreleased]
 
+### Changed
+
+- New installations default to the persistent home gateway. Existing setups keep their access paths. Private HTTP/file apps gain stable gateway routes while retaining their own nodes/URLs; `--portal-only` remains opt-in. Disabling the portal persists across later starts and registration. Untagged self enrollment can establish the first owner; tagged gateways require an explicit local owner.
+- Human access through people, add/share allow, HTTP/file device invitations, MCP grants and request approval now uses one action: verify membership, preserve existing permissions, prepare routes and complete necessary invitations. People add is additive and retries preserve omitted deadlines. Incomplete setup returns an error with retained state; pending acceptance is a completed owner action.
+- Device-invited guests can receive `never` grants with explicit acknowledgment. Browser guest links and Funnel remain finite; scoped MCP lifetime limits remain enforced.
+- The README MCP badge uses one centered HTML link/image block.
+
 ### Security
 
 - Built with Go 1.27.3, which fixes GO-2026-6809 (CVE-2026-111943): `crypto/x509` `Certificate.Verify` now returns an error for certain intermediate certificates that are no longer trusted. `govulncheck ./...` reported the symbol as reachable from TSLink with Go 1.27.2 and reports no vulnerabilities with Go 1.27.3. The module minimum stays Go 1.27.1; only the `toolchain` directive moves, so builds from source pick up the fix automatically while Go's automatic toolchain selection is enabled. With `GOTOOLCHAIN=local`, install Go 1.27.3 or newer yourself: Go 1.27.1 and 1.27.2 still compile TSLink but keep the vulnerable standard-library code. Staticcheck is updated to 2026.2.2 so it reads Go 1.27.3 export data.
