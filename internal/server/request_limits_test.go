@@ -758,7 +758,7 @@ func TestRequestLimitsTLSAcceptLifecycle(t *testing.T) {
 
 func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 	t.Run("disposal_deadline", assertUploadDisposalDeadline)
-	for _, path := range []string{"file", "file_flush", "acl_denied", "body_limit", "body_close"} {
+	for _, path := range []string{"file", "file_flush", "acl_denied", "access_denied_oversized", "body_limit", "body_close"} {
 		for _, chunked := range []bool{false, true} {
 			for _, complete := range []bool{true, false} {
 				t.Run(fmt.Sprintf("%s/chunked=%v/complete=%v", path, chunked, complete), func(t *testing.T) {
@@ -781,10 +781,19 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 					}
 					t.Cleanup(func() { _ = file.Close() })
 					var handler http.Handler = file
+					var afterAccess func(http.Handler) http.Handler
 					want := http.StatusOK
 					switch path {
 					case "acl_denied":
 						handler = ACLMiddleware([]string{"blocked@example.invalid"}, nil)(handler)
+						want = http.StatusForbidden
+					case "access_denied_oversized":
+						// An app node's own order: the limits wrap the access check and
+						// the declared oversize waits for it. The refused caller gets
+						// the refusal, and the body nobody read is still disposed of
+						// within the bound.
+						svc.RequestLimits.MaxBody = "8B"
+						afterAccess = ACLMiddleware([]string{"blocked@example.invalid"}, nil)
 						want = http.StatusForbidden
 					case "body_limit":
 						svc.RequestLimits.MaxBody = "8B"
@@ -807,6 +816,9 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 					}
 					closed := make(chan struct{})
 					addr, limited, srv := uploadTLSFrontServer(t, svc, handler, false, nil, 1, func(srv *http.Server) {
+						if afterAccess != nil {
+							srv.Handler = AccessLogMiddleware(svc.Name, nil, RequestLimitsAfterAccess(svc, nil, afterAccess, handler))
+						}
 						prior := srv.ConnState
 						srv.ConnState = func(conn net.Conn, state http.ConnState) {
 							prior(conn, state)
@@ -1429,6 +1441,15 @@ func TestRequestLimitsProductionNodePersistsWarningWithoutCompletingPartialSnaps
 		t.Fatal(err)
 	}
 	svc := registry.Service{Name: "photos", Type: registry.TypeFile, Path: t.TempDir(), RequestLimits: &registry.RequestLimits{MaxBody: "8B", HeaderTimeout: "150ms", ReadTimeout: "200ms", IdleTimeout: "300ms"}}
+	// The node answers an oversized request only after its access check, which
+	// reads the registry: the app is registered, so the open app admits the caller.
+	registryPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(registryPath, svc); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.startNodeLocked(context.Background(), svc); err != nil {
 		t.Fatal(err)
 	}

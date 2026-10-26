@@ -43,10 +43,14 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 	originalNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return sentinel }
 	t.Cleanup(func() { newTSNetServerFn = originalNew })
-	for _, scenario := range []string{"allowed", "denied", "denied_browser", "denied_ineligible", "file", "websocket", "backend_error", "upstream_unavailable", "timeout", "closing"} {
+	for _, scenario := range []string{"allowed", "denied", "denied_browser", "denied_ineligible", "denied_oversized", "oversized", "file", "websocket", "backend_error", "upstream_unavailable", "timeout", "closing"} {
 		t.Run(scenario, func(t *testing.T) {
 			const upload, download = "upload-body", "download-body"
-			denied := scenario == "denied" || scenario == "denied_browser" || scenario == "denied_ineligible"
+			denied := scenario == "denied" || scenario == "denied_browser" || scenario == "denied_ineligible" || scenario == "denied_oversized"
+			// oversized: an authorized caller exceeds the body limit and is told so
+			// on both paths; denied_oversized: a caller refused at this app exceeds
+			// it and must be told the refusal, never the limit.
+			oversized := scenario == "oversized" || scenario == "denied_oversized"
 			// closing: the backend holds the request until TSLink cuts it, once
 			// per entry path, and the client gets the page TSLink generates.
 			entered := make(chan struct{}, 2)
@@ -88,6 +92,9 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					<-r.Context().Done()
 					return
 				}
+				if denied || oversized {
+					t.Errorf("a refused request reached the backend")
+				}
 				body, err := io.ReadAll(r.Body)
 				if err != nil || string(body) != upload {
 					t.Errorf("upload %q: %v", body, err)
@@ -119,6 +126,9 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					}
 					if scenario == "file" {
 						s.Type, s.Target, s.Path = registry.TypeFile, "", files
+					}
+					if oversized {
+						s.RequestLimits = &registry.RequestLimits{MaxBody: "8B"}
 					}
 					return s, nil
 				})
@@ -219,6 +229,9 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if denied {
 					wantStatus = http.StatusForbidden
 				}
+				if scenario == "oversized" {
+					wantStatus = http.StatusRequestEntityTooLarge
+				}
 				if scenario == "denied_browser" || scenario == "denied_ineligible" {
 					method, path, body = "GET", "/", ""
 				}
@@ -277,7 +290,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if err != nil || answer.status != wantStatus {
 					t.Fatalf("HTTP %d: %v", answer.status, err)
 				}
-				if !denied && scenario != "upstream_unavailable" && scenario != "timeout" && scenario != "closing" && string(got) != download {
+				if !denied && scenario != "oversized" && scenario != "upstream_unavailable" && scenario != "timeout" && scenario != "closing" && string(got) != download {
 					t.Fatalf("download %q", got)
 				}
 				pages[endpoint.via] = string(got)
@@ -370,11 +383,17 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				t.Fatalf("entry paths answered differently:\ndirect:  %q\ngateway: %q", pages[""], pages["portal"])
 			}
 			switch scenario {
-			case "denied", "denied_browser", "denied_ineligible":
+			case "denied", "denied_browser", "denied_ineligible", "denied_oversized":
 				// The access-log reason is each path's own; what the visitor is
 				// told is not.
 				if direct.Reason != "people" || gateway.Reason != "no_grant" {
 					t.Fatalf("denial reasons: direct=%+v gateway=%+v", direct, gateway)
+				}
+			case "oversized":
+				// Authorized on both paths, so the limit answers on both, with the
+				// same text.
+				if direct.Reason != "limits" || gateway.Reason != "limits" || !strings.Contains(pages[""], "photos") || !strings.Contains(pages[""], "exceeds 8 bytes") {
+					t.Fatalf("limit outcome: direct=%+v gateway=%+v page=%q", direct, gateway, pages[""])
 				}
 			case "closing":
 				if direct != (outcome{http.StatusServiceUnavailable, "allowed", "node_closed", "", direct.BytesOut}) || gateway != (outcome{http.StatusServiceUnavailable, "allowed", "route_closed", "", gateway.BytesOut}) {
@@ -389,6 +408,14 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				// dashboard: whether one exists depends on the gateway.
 				if !strings.Contains(pages[""], "You do not have access to this app: photos") || strings.Contains(pages[""], "href") || strings.Contains(pages[""], "home.tailnet.ts.net") {
 					t.Fatalf("the app node's page: %q", pages[""])
+				}
+			}
+			if scenario == "denied_oversized" {
+				// The refusal says nothing of the limit, nor of the app.
+				for _, leak := range []string{"photos", "exceeds", "bytes", "413", "max-request-body"} {
+					if strings.Contains(pages[""], leak) || strings.Contains(pages["portal"], leak) {
+						t.Fatalf("a refused caller learns %q about the request limit: direct %q gateway %q", leak, pages[""], pages["portal"])
+					}
 				}
 			}
 			if scenario == "denied_ineligible" {
@@ -412,7 +439,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					t.Fatalf("backend failure outcome: direct=%+v gateway=%+v", direct, gateway)
 				}
 			}
-			if denied {
+			if denied || scenario == "oversized" {
 				if p.Denied != 2 || p.LastAllowedAt != nil {
 					t.Fatalf("denied last allowed: %+v", p)
 				}
