@@ -42,9 +42,21 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 	originalNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return sentinel }
 	t.Cleanup(func() { newTSNetServerFn = originalNew })
-	for _, scenario := range []string{"allowed", "denied", "file", "websocket", "backend_error", "upstream_unavailable", "timeout"} {
+	for _, scenario := range []string{"allowed", "denied", "denied_browser", "file", "websocket", "backend_error", "upstream_unavailable", "timeout", "closing"} {
 		t.Run(scenario, func(t *testing.T) {
 			const upload, download = "upload-body", "download-body"
+			denied := scenario == "denied" || scenario == "denied_browser"
+			// closing: the backend holds the request until TSLink cuts it, once
+			// per entry path, and the client gets the page TSLink generates.
+			entered := make(chan struct{}, 2)
+			if scenario == "closing" {
+				// Keep the connection open after the forced close, so the client
+				// reads the page the handler wrote rather than a reset.
+				oldShutdown, oldClose := shutdownHTTPServerFn, closeHTTPServerFn
+				shutdownHTTPServerFn = func(context.Context, *http.Server) error { return context.DeadlineExceeded }
+				closeHTTPServerFn = func(*http.Server) error { return nil }
+				t.Cleanup(func() { shutdownHTTPServerFn, closeHTTPServerFn = oldShutdown, oldClose })
+			}
 			if scenario == "timeout" {
 				// Name resolution of the backend host times out: a genuine
 				// backend timeout on both entry paths, with no network access.
@@ -65,6 +77,14 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					if err == nil {
 						_ = ws.Write(r.Context(), typ, body)
 					}
+					return
+				}
+				if scenario == "closing" {
+					// Read the upload first: only then does the server notice
+					// the proxy dropping the connection and end the context.
+					_, _ = io.Copy(io.Discard, r.Body)
+					entered <- struct{}{}
+					<-r.Context().Done()
 					return
 				}
 				body, err := io.ReadAll(r.Body)
@@ -104,10 +124,20 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if scenario == "denied" {
+				if denied {
 					// Keep permission to another app so the TLS connection gate
 					// admits this person and the request reaches HTTP denial.
 					if _, err = registry.ChangePerson(f.path, "alice", []string{"payroll"}, nil, true, true); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if scenario == "denied_browser" {
+					// A requestable app names itself and offers the request link
+					// to a caller who may ask; the page also links the dashboard.
+					if _, err = registry.MutateService(f.path, "photos", func(s registry.Service) (registry.Service, error) {
+						s.Requestable = true
+						return s, nil
+					}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -143,6 +173,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			appClient := &http.Client{Timeout: testwait.Budget(t)}
 			t.Cleanup(appClient.CloseIdleConnections)
 			received := map[string]int64{}
+			pages := map[string]string{}
 			for _, endpoint := range []struct {
 				via    string
 				url    string
@@ -174,8 +205,14 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if scenario == "file" {
 					method, path, body = "GET", "/sample.txt", ""
 				}
-				if scenario == "denied" {
+				if denied {
 					wantStatus = http.StatusForbidden
+				}
+				if scenario == "denied_browser" {
+					method, path, body = "GET", "/", ""
+				}
+				if scenario == "closing" {
+					wantStatus = http.StatusServiceUnavailable
 				}
 				if scenario == "backend_error" {
 					wantStatus = http.StatusInternalServerError
@@ -190,18 +227,49 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				resp, err := endpoint.client.Do(req)
-				if err != nil {
-					t.Fatal(err)
+				if scenario == "denied_browser" {
+					req.Header.Set("Sec-Fetch-Mode", "navigate")
 				}
-				got, err := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if err != nil || resp.StatusCode != wantStatus {
-					t.Fatalf("HTTP %d: %v", resp.StatusCode, err)
+				type reply struct {
+					status int
+					body   []byte
+					err    error
 				}
-				if scenario != "denied" && scenario != "upstream_unavailable" && scenario != "timeout" && string(got) != download {
+				replies := make(chan reply, 1)
+				go func() {
+					resp, err := endpoint.client.Do(req)
+					if err != nil {
+						replies <- reply{err: err}
+						return
+					}
+					got, err := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					replies <- reply{resp.StatusCode, got, err}
+				}()
+				if scenario == "closing" {
+					testwait.Recv(t, entered, "backend entered")
+					if endpoint.via == "portal" {
+						// TSLink tears the gateway route down.
+						f.s.portalRun.routesMu.Lock()
+						route := f.s.portalRun.routes["photos"]
+						f.s.portalRun.routesMu.Unlock()
+						route.cancel()
+					} else {
+						// TSLink stops the app node while the request runs.
+						f.s.mu.Lock()
+						f.s.stopNodeLocked("photos")
+						f.s.mu.Unlock()
+					}
+				}
+				answer := testwait.Recv(t, replies, "response")
+				got, err := answer.body, answer.err
+				if err != nil || answer.status != wantStatus {
+					t.Fatalf("HTTP %d: %v", answer.status, err)
+				}
+				if !denied && scenario != "upstream_unavailable" && scenario != "timeout" && scenario != "closing" && string(got) != download {
 					t.Fatalf("download %q", got)
 				}
+				pages[endpoint.via] = string(got)
 				// What each client actually received: the recorded bytes_out of
 				// its entry path must equal it, not merely agree with the other.
 				received[endpoint.via] = int64(len(got))
@@ -281,13 +349,36 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					}
 				}
 			}
+			// bytes_out per person and app must not depend on the entry path.
+			// Every scenario except the websocket stream (frame timing) is a
+			// complete response, so the two entries must record the same size.
+			if scenario != "websocket" && (direct.BytesOut != gateway.BytesOut || direct.BytesOut == 0) {
+				t.Fatalf("entry paths record different bytes_out: direct=%+v gateway=%+v", direct, gateway)
+			}
+			if scenario != "websocket" && pages[""] != pages["portal"] {
+				t.Fatalf("entry paths answered differently:\ndirect:  %q\ngateway: %q", pages[""], pages["portal"])
+			}
 			switch scenario {
-			case "allowed", "file", "backend_error", "upstream_unavailable", "timeout":
-				if direct.BytesOut != gateway.BytesOut {
-					t.Fatalf("entry paths record different bytes_out: direct=%+v gateway=%+v", direct, gateway)
+			case "denied", "denied_browser":
+				// The access-log reason is each path's own; what the visitor is
+				// told is not.
+				if direct.Reason != "people" || gateway.Reason != "no_grant" {
+					t.Fatalf("denial reasons: direct=%+v gateway=%+v", direct, gateway)
 				}
-			case "denied":
-				t.Logf("denial responses (not asserted equal): direct=%d bytes, gateway=%d bytes", direct.BytesOut, gateway.BytesOut)
+			case "closing":
+				if direct != (outcome{http.StatusServiceUnavailable, "allowed", "node_closed", "", direct.BytesOut}) || gateway != (outcome{http.StatusServiceUnavailable, "allowed", "route_closed", "", gateway.BytesOut}) {
+					t.Fatalf("closing outcome: direct=%+v gateway=%+v", direct, gateway)
+				}
+				if strings.Contains(pages[""], "_closed") {
+					t.Fatalf("the visitor is told which path closed: %q", pages[""])
+				}
+			}
+			if scenario == "denied_browser" {
+				for _, want := range []string{"You do not have access to this app: photos", "Back to your apps", "Request access", "https://home.tailnet.ts.net"} {
+					if !strings.Contains(pages[""], want) {
+						t.Fatalf("the app node's page lacks %q: %q", want, pages[""])
+					}
+				}
 			}
 			switch scenario {
 			case "upstream_unavailable", "timeout":
@@ -303,7 +394,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 					t.Fatalf("backend failure outcome: direct=%+v gateway=%+v", direct, gateway)
 				}
 			}
-			if scenario == "denied" {
+			if denied {
 				if p.Denied != 2 || p.LastAllowedAt != nil {
 					t.Fatalf("denied last allowed: %+v", p)
 				}

@@ -221,6 +221,32 @@ changes of credential mode or control URL on daemon restart can replace it.
 A route activation failure is retried with exponential backoff from one to
 32 seconds, on sync/retry ticks; another route remains available.
 
+A request that TSLink itself answers, rather than the app, gets the same
+response on a gateway route and on the app's own node, so the visitor sees the
+same thing and the access log's `bytes_out` for a person and app does not depend
+on how the request arrived. A browser navigation (`Sec-Fetch-Mode: navigate`, or
+an `Accept` that prefers `text/html`) gets a small HTML page; any other client
+gets the JSON error envelope, with `"command": "app request"` (the envelope no
+longer carries the gateway's old `portal route` label). A refusal is 403 with a
+visitor code that is the same on both paths: `no_grant`, `expired`, `revoked`,
+`whois_failed` (the caller could not be identified) or `registry_unavailable`
+(the access policy could not be read). The page names the app only for a caller
+who can see it or ask for it, and links to the dashboard ("Back to your apps",
+plus "Request access" for a requestable app) only while the dashboard is up and
+only for a caller who could open it; a refused caller who could not has no link,
+so an app node reveals nothing about the portal that the caller could not
+already reach. The access log keeps each path's own reason for the same refusal
+(`people`, `expired` or `acl` on an app node; `no_grant`, `expired` or
+`revoked` on the gateway). Some refusals exist on one path only:
+`cross_origin_blocked`, `route_changed` and the gateway's malformed-request
+`no_grant` are gateway-only, and the legacy `--allow` list (`acl`) is app-node
+only, since the gateway routes people-scoped apps; a legacy refusal uses the
+same page and names no app. A request cut because TSLink is closing a route or
+stopping or reloading a node is 503 with visitor code `app_restarting` and the
+same text on both paths (`<app> is being reconfigured; try again`); only the
+access-log reason differs (`route_closed`, `node_closed`). Guest links, PIN and
+Funnel guest-gate pages are unchanged.
+
 Status and doctor expose `portal.gateway` with observed persistence, tag and node
 identity, ownership proof, range, route states and a per-run `dropped` connection
 count. Connection-drop logs are rate-limited per gate; the home gate uses the

@@ -54,7 +54,8 @@ model inference and any document processing, as shown in [Local AI](local-ai.md)
   transport; it is not an HTTPS listener.
 - **Optional HTTP allow lists:** with `--allow`, WhoIs must succeed and the
   caller must match, or the HTTP proxy/file request receives 403 before the
-  backend or file handler. [People grants](people.md) additionally enforce
+  backend or file handler. The 403 is the same page the gateway gives for the
+  same refusal ([portal guide](portal.md)). [People grants](people.md) additionally enforce
   named-user app membership, deadlines and revocation. A people-scoped app does
   not become unrestricted when its last grant is removed. Without people policy
   or an allow list, tailnet policy governs reachability; identity headers and logs

@@ -153,14 +153,16 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				return
 			}
 			// TSLink closing the route or node is not the client going away
-			// and not a backend failure: 503, no route-down observation.
+			// and not a backend failure: 503, no route-down observation. The
+			// log keeps route_closed or node_closed; the visitor gets the same
+			// page whichever one it was.
 			if reason, ok := serverCanceled(r, err); ok {
 				accessServerCanceled(r, reason)
+				app := options.App
 				if options.Gateway != nil {
-					gatewayErrorPage(w, r, http.StatusServiceUnavailable, reason, options.Gateway.App+" is being reconfigured; try again", "", false)
-				} else {
-					http.Error(w, "Service unavailable — app is restarting", http.StatusServiceUnavailable)
+					app = options.Gateway.App
 				}
+				appClosingPage(w, r, app)
 				return
 			}
 			// A client that went away is neither a backend failure nor a
@@ -226,9 +228,7 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 // 504 only when the failure is a timeout, 502 otherwise. The body names no
 // URL, address or port.
 func backendFailurePage(w http.ResponseWriter, r *http.Request, err error, app, host string) {
-	if app == "" {
-		app = "The app"
-	}
+	app = appLabel(app)
 	status, message := http.StatusBadGateway, app+" on "+host+" is not reachable right now"
 	if isTimeout(err) {
 		status, message = http.StatusGatewayTimeout, app+" on "+host+" did not respond in time"

@@ -87,16 +87,23 @@ func (g *gatewayGate) admit(ctx context.Context, remote string) bool {
 	if err != nil {
 		return false
 	}
+	return gatewayAdmits(reg, who, g.svc.Name, g.svc.PortalRoute == nil, g.now())
+}
+
+// gatewayAdmits is the connection gate's decision for an identified caller.
+// The dashboard admits a caller who can see an app or request one; an app
+// route admits one who may use some routed app. A non-revoked human
+// administrator passes either. name only scopes the administrator probe.
+func gatewayAdmits(reg *registry.Registry, who *apitype.WhoIsResponse, name string, dashboard bool, now time.Time) bool {
 	tags := gatewayTags(who)
 	// A scoped dummy service admits only non-revoked human administrators.
-	role := registry.Service{Name: g.svc.Name, Type: registry.TypeProxy, PeopleScoped: true}
-	if allowed, _, admin := privateAppAccessAt(reg, role, who.UserProfile.LoginName, tags, g.now()); allowed && admin {
+	role := registry.Service{Name: name, Type: registry.TypeProxy, PeopleScoped: true}
+	if allowed, _, admin := privateAppAccessAt(reg, role, who.UserProfile.LoginName, tags, now); allowed && admin {
 		return true
 	}
-	dashboard := g.svc.PortalRoute == nil
 	_, canRequest := requestVisitor(reg, who)
 	for _, svc := range reg.Services {
-		decision := AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, g.now())
+		decision := AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, now)
 		if dashboard {
 			if decision.DirectoryVisible || (canRequest && svc.Requestable) {
 				return true
@@ -276,7 +283,7 @@ func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
-		_ = json.NewEncoder(w).Encode(output.NewFailureForError("portal route", registry.CodedError{Code: reason, Message: message}))
+		_ = json.NewEncoder(w).Encode(output.NewFailureForError(appResponseCommand, registry.CodedError{Code: reason, Message: message}))
 	}
 }
 
@@ -319,15 +326,20 @@ func sameGatewayTarget(a, b registry.Service) bool {
 func (g *gatewayGate) handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		visible := false
+		var who *apitype.WhoIsResponse
+		var reg *registry.Registry
 		deny := func(reason string, requestable bool) {
 			accessDeny(r, reason)
-			message := gatewayDenyMessage(reason)
-			if (visible || requestable) && (reason == "no_grant" || reason == "expired" || reason == "revoked") {
-				message += ": " + g.svc.Name
+			// The dashboard link follows the same rule as on an app's own
+			// node: given to a caller who could open it, so the page is the
+			// same on both paths for the same person and app.
+			dashboard := ""
+			if who != nil && reg != nil {
+				dashboard = denialDashboard(g.dashboard, reg, who, g.svc.Name, g.now())
 			}
-			gatewayErrorPage(w, r, 403, reason, message, g.dashboard, requestable)
+			writeAccessDenial(w, r, accessDenial{Visitor: reason, App: g.svc.Name, Visible: visible, Requestable: requestable, Dashboard: dashboard})
 		}
-		who := g.who(r.Context(), r.RemoteAddr)
+		who = g.who(r.Context(), r.RemoteAddr)
 		if who == nil && accessGoneBeforeDecision(r) {
 			return
 		}
@@ -336,7 +348,8 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 			return
 		}
 		accessAttest(r, who, nil)
-		reg, err := g.registry()
+		var err error
+		reg, err = g.registry()
 		if err != nil {
 			deny("registry_unavailable", false)
 			return
@@ -407,23 +420,4 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), gatewayWhoKey{}, who)))
 	})
-}
-
-func gatewayDenyMessage(reason string) string {
-	switch reason {
-	case "whois_failed":
-		return "Unable to identify this connection"
-	case "registry_unavailable":
-		return "Access policy is temporarily unavailable"
-	case "cross_origin_blocked":
-		return "Cross-origin request blocked"
-	case "route_changed":
-		return "This route is being reconfigured"
-	case "expired":
-		return "Your access has expired"
-	case "revoked":
-		return "Your access has been revoked"
-	default:
-		return "You do not have access to this app"
-	}
 }
