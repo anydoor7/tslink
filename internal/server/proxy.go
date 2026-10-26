@@ -169,7 +169,9 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			class := backendErrorClass(err)
 			accessBackendFailure(r, class)
 			if options.Gateway != nil {
-				accessDeny(r, "upstream_down")
+				// The request was authorized, so the access event stays allowed
+				// with the 502 and error class, as on a direct app node. The
+				// visitor-facing code is upstream_down; the log reason is not.
 				if options.Gateway.Observe != nil {
 					options.Gateway.Observe(false)
 				}

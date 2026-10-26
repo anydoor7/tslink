@@ -36,6 +36,12 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 		}
 		return bytes.Equal(left, right)
 	}
+	// Every scenario installs its own app-node fake. None may outlive its
+	// subtest, which the sentinel check after the loop proves.
+	sentinel := &fakeTSNetServer{}
+	originalNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return sentinel }
+	t.Cleanup(func() { newTSNetServerFn = originalNew })
 	for _, scenario := range []string{"allowed", "denied", "file", "websocket", "backend_error", "upstream_unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
 			const upload, download = "upload-body", "download-body"
@@ -111,7 +117,9 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = ln.Close() })
 			appNode := &accessListenerFake{fakeTSNetServer: &fakeTSNetServer{localClient: fakeWhoIsClient(t, whoIsUser("ALICE", "phone"), nil)}, ln: ln}
+			installed := newTSNetServerFn
 			newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return appNode }
+			t.Cleanup(func() { newTSNetServerFn = installed })
 			if err = f.s.startNodeLocked(t.Context(), svc); err != nil {
 				t.Fatal(err)
 			}
@@ -200,6 +208,11 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			}
 			var in, out int64
 			vias := map[string]int{}
+			type outcome struct {
+				Status                       int
+				Decision, Reason, ErrorClass string
+			}
+			outcomes := map[string]outcome{}
 			for _, e := range r.Events {
 				if e.Kind != "http" {
 					continue
@@ -210,13 +223,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				if scenario == "upstream_unavailable" && (e.Status != 502 || e.ErrorClass != "connection_refused") {
 					t.Fatalf("backend failure classification: %+v", e)
 				}
-				if scenario == "upstream_unavailable" {
-					// Preserve the existing producer distinction: gateway proxy
-					// failures deny upstream_down, direct proxy failures stay allowed.
-					if e.Via == "portal" && (e.Decision != "denied" || e.Reason != "upstream_down") || e.Via == "" && e.Decision != "allowed" {
-						t.Fatalf("existing failure decision changed: %+v", e)
-					}
-				}
+				outcomes[e.Via] = outcome{e.Status, e.Decision, e.Reason, e.ErrorClass}
 				in += e.BytesIn
 				out += e.BytesOut
 				vias[e.Via]++
@@ -235,15 +242,26 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			if vias[""] != 1 || vias["portal"] != 1 || traffic.HTTP.BytesIn != in || traffic.HTTP.BytesOut != out || !equalJSON(p.HTTPTraffic, traffic.HTTP) || !equalJSON(traffic.Apps[0].HTTPTraffic, traffic.HTTP) {
 				t.Fatalf("two-entry totals: %+v, vias=%v in=%d out=%d", traffic, vias, in, out)
 			}
+			// The same request must yield the same authorization decision, status
+			// and backend classification whichever entry carried it.
+			direct, gateway := outcomes[""], outcomes["portal"]
+			if direct.Status != gateway.Status || direct.Decision != gateway.Decision || direct.ErrorClass != gateway.ErrorClass {
+				t.Fatalf("entry paths disagree: direct=%+v gateway=%+v", direct, gateway)
+			}
+			if scenario == "upstream_unavailable" {
+				// An unreachable backend is an authorized request that failed
+				// downstream: 502 and a backend class, never a denial or a failure
+				// reason. The gateway keeps only the grant reason of any allowed
+				// request, never upstream_down.
+				if direct != (outcome{http.StatusBadGateway, "allowed", "", "connection_refused"}) || gateway.Reason != "granted" {
+					t.Fatalf("backend failure outcome: direct=%+v gateway=%+v", direct, gateway)
+				}
+			}
 			if scenario == "denied" {
 				if p.Denied != 2 || p.LastAllowedAt != nil {
 					t.Fatalf("denied last allowed: %+v", p)
 				}
-			} else if scenario == "upstream_unavailable" {
-				if p.Allowed != 1 || p.Denied != 1 || p.LastAllowedAt == nil {
-					t.Fatalf("transport failure decisions: %+v", p)
-				}
-			} else if p.Allowed != 2 || p.LastAllowedAt == nil {
+			} else if p.Allowed != 2 || p.Denied != 0 || p.LastAllowedAt == nil {
 				t.Fatalf("allowed decisions: %+v", p)
 			}
 			limited, err := accesslog.Query(dir, accesslog.Filter{App: "photos", Limit: 1})
@@ -251,5 +269,8 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 				t.Fatalf("limit changed traffic: %+v, %v", limited, err)
 			}
 		})
+	}
+	if got := newTSNetServerFn(registry.Service{}, "", "", ""); got != tsnetServer(sentinel) {
+		t.Fatalf("a scenario left its tsnet fake installed: %T", got)
 	}
 }

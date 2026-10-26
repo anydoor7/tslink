@@ -22,7 +22,7 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ### Access traffic
 
-- `access log` and MCP `access_summary` add complete filtered HTTP traffic totals by person and app, with separate non-human buckets and TCP counters. Gateway and direct app entries share the same keys; event limits do not reduce totals. Existing audit counts and event schema 1 remain unchanged. `access explain` reads reason counts for direct apps as well as routed apps.
+- `access log` and MCP `access_summary` add complete filtered HTTP traffic totals by person and app, with separate non-human buckets and TCP counters. Gateway and direct app entries share the same keys; event limits do not reduce totals. Existing audit counts and event schema 1 remain unchanged. `access explain` reads reason counts for direct apps as well as routed apps. A request whose app cannot be reached is recorded `allowed` with status 502 and an `error_class` through the gateway, as on a direct app node, instead of `denied` with `upstream_down`; events already written are not rewritten.
 
 ## [0.2.0] - 2026-10-14
 
