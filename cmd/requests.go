@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"io"
@@ -208,9 +209,14 @@ func decideRequestContext(ctx context.Context, path string, args requestDecision
 		if r.Grant != nil {
 			change.ExpiresAt, change.PreviousExpiresAt = r.Grant.ExpiresAt, r.Grant.PreviousExpiresAt
 		}
-		auditErr := mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpLocalActor(), now, change)
-		if auditErr != nil {
-			err = auditErr
+		if auditErr := mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpLocalActor(), now, change); auditErr != nil {
+			if err == nil {
+				err = auditErr
+			} else {
+				// The decision's own failure stays first: a failed receipt must
+				// not hide an invitation or membership error.
+				err = errors.Join(err, auditErr)
+			}
 		}
 	}
 	result := RequestDecisionResult{Request: r, Changed: changed, Access: access}
