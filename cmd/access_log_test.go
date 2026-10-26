@@ -201,7 +201,7 @@ func TestAccessTrafficSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	formatAccessLog(r, &out)
-	for _, want := range []string{"HTTP: 13 requests (10 allowed, 3 denied), 76 bytes in, 135 bytes out", "traffic human alice@example.com app photos: 3 requests", "traffic tagged app photos: 1 requests", "last request 2030-01-02T03:04:20Z, last allowed 2030-01-02T03:04:11Z", "TCP: 2 connections (1 allowed, 1 denied), 2 closed, 100 bytes in, 200 bytes out, 1 recorded gate drops"} {
+	for _, want := range []string{"HTTP: 13 requests (10 allowed, 3 denied), 76 bytes in, 135 bytes out", "traffic human alice@example.com app photos: 3 requests", "traffic tagged app photos: 1 request (1 allowed, 0 denied)", "last request 2030-01-02T03:04:20Z, last allowed 2030-01-02T03:04:11Z", "TCP: 2 connections (1 allowed, 1 denied), 2 closed, 100 bytes in, 200 bytes out, 1 recorded gate drop\n"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}
@@ -398,5 +398,49 @@ func TestAccessTextUnknownDeniedAndOptionUnknown(t *testing.T) {
 	}
 	if err := updateAccessLogOption(&config.GlobalConfig{}, "unknown", "value"); err == nil {
 		t.Fatal("unknown option accepted")
+	}
+}
+
+func TestFormatAccessLogCountsAgreeWithTheirNouns(t *testing.T) {
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	traffic := func(n int, size int64) accesslog.HTTPTraffic {
+		return accesslog.HTTPTraffic{Requests: n, Allowed: n, BytesIn: size, BytesOut: size, LastRequestAt: &at, LastAllowedAt: &at}
+	}
+	render := func(n int, size int64) string {
+		var out bytes.Buffer
+		formatAccessLog(accesslog.Result{Summary: accesslog.Summary{Traffic: accesslog.TrafficSummary{
+			HTTP:       traffic(n, size),
+			PeopleApps: []accesslog.SubjectAppTraffic{{SubjectKind: "human", Login: "alice@example.com", App: "photos", HTTPTraffic: traffic(n, size)}},
+			Apps:       []accesslog.AppTraffic{{App: "photos", HTTPTraffic: traffic(n, size)}},
+			TCP:        accesslog.TCPTraffic{Connections: n, Allowed: n, Closed: n, BytesIn: size, BytesOut: size, GateDrops: n},
+		}}}, &out)
+		return out.String()
+	}
+	for _, tc := range []struct {
+		n     int
+		wants []string
+		bads  []string
+	}{
+		{1, []string{
+			"HTTP: 1 request (1 allowed, 0 denied), 1 byte in, 1 byte out,",
+			"traffic human alice@example.com app photos: 1 request (",
+			"traffic app photos: 1 request (",
+			"TCP: 1 connection (1 allowed, 0 denied), 1 closed, 1 byte in, 1 byte out, 1 recorded gate drop\n",
+		}, []string{"1 requests", "1 bytes", "1 connections", "1 recorded gate drops"}},
+		// Zero and larger counts stay plural.
+		{0, []string{"HTTP: 0 requests (", "0 bytes in, 0 bytes out", "TCP: 0 connections (", "0 recorded gate drops\n"}, nil},
+		{2, []string{"HTTP: 2 requests (", "2 bytes in, 2 bytes out", "TCP: 2 connections (", "2 recorded gate drops\n"}, nil},
+	} {
+		got := render(tc.n, int64(tc.n))
+		for _, want := range tc.wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("count %d: missing %q in %s", tc.n, want, got)
+			}
+		}
+		for _, bad := range tc.bads {
+			if strings.Contains(got, bad) {
+				t.Errorf("count %d: found %q in %s", tc.n, bad, got)
+			}
+		}
 	}
 }

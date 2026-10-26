@@ -105,7 +105,15 @@ func formatAccessLog(r accesslog.Result, out io.Writer) {
 		formatHTTPTraffic("traffic app "+a.App, a.HTTPTraffic, out)
 	}
 	tcp := r.Summary.Traffic.TCP
-	fmt.Fprintf(out, "TCP: %d connections (%d allowed, %d denied), %d closed, %d bytes in, %d bytes out, %d recorded gate drops\n", tcp.Connections, tcp.Allowed, tcp.Denied, tcp.Closed, tcp.BytesIn, tcp.BytesOut, tcp.GateDrops)
+	fmt.Fprintf(out, "TCP: %s (%d allowed, %d denied), %d closed, %s in, %s out, %s\n", countOf(int64(tcp.Connections), "connection", "connections"), tcp.Allowed, tcp.Denied, tcp.Closed, countOf(tcp.BytesIn, "byte", "bytes"), countOf(tcp.BytesOut, "byte", "bytes"), countOf(int64(tcp.GateDrops), "recorded gate drop", "recorded gate drops"))
+}
+
+// countOf writes a count with a noun that agrees with it: "1 request", "2 requests".
+func countOf(n int64, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 func formatHTTPTraffic(label string, h accesslog.HTTPTraffic, out io.Writer) {
@@ -116,7 +124,7 @@ func formatHTTPTraffic(label string, h accesslog.HTTPTraffic, out io.Writer) {
 	if h.LastAllowedAt != nil {
 		allowed = h.LastAllowedAt.Format(time.RFC3339Nano)
 	}
-	fmt.Fprintf(out, "%s: %d requests (%d allowed, %d denied), %d bytes in, %d bytes out, last request %s, last allowed %s\n", label, h.Requests, h.Allowed, h.Denied, h.BytesIn, h.BytesOut, request, allowed)
+	fmt.Fprintf(out, "%s: %s (%d allowed, %d denied), %s in, %s out, last request %s, last allowed %s\n", label, countOf(int64(h.Requests), "request", "requests"), h.Allowed, h.Denied, countOf(h.BytesIn, "byte", "bytes"), countOf(h.BytesOut, "byte", "bytes"), request, allowed)
 }
 func accessHealthForRegistry(path, pidPath, snapshotPath string) accesslog.Health {
 	h := accesslog.ReadHealth(filepath.Dir(path))
