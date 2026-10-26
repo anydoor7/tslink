@@ -1,0 +1,375 @@
+[
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:20Z",
+    "kind": "http",
+    "app": "secret",
+    "identity": {
+      "login": "hidden@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 403,
+    "bytes_in": 0,
+    "bytes_out": 6,
+    "duration_ms": 1,
+    "decision": "denied"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:19Z",
+    "kind": "lifecycle",
+    "app": "photos",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 999,
+    "bytes_out": 999,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:18Z",
+    "kind": "mcp",
+    "app": "",
+    "identity": {
+      "login": "hidden@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 888,
+    "bytes_out": 888,
+    "duration_ms": 1,
+    "decision": "allowed",
+    "mcp": {
+      "id": "example",
+      "principal": "hidden@example.com",
+      "capabilities": {
+        "role": "owner",
+        "apps": [
+          "photos",
+          "secret"
+        ]
+      },
+      "tool": "people_add",
+      "apps": [
+        "photos",
+        "secret"
+      ],
+      "result": {
+        "status": "ok",
+        "code": "ok"
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:17Z",
+    "kind": "guest",
+    "app": "photos",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 777,
+    "bytes_out": 777,
+    "duration_ms": 1,
+    "decision": "allowed",
+    "guest": {
+      "link_id": "example",
+      "app": "photos",
+      "decision": "allowed",
+      "reason": "granted"
+    }
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:16Z",
+    "kind": "tcp_open",
+    "app": "photos",
+    "identity": {
+      "login": "",
+      "node": "",
+      "tags": []
+    },
+    "status": 403,
+    "bytes_in": 333,
+    "bytes_out": 333,
+    "duration_ms": 1,
+    "decision": "denied",
+    "reason": "conn_gate_drop",
+    "via": "portal"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:15Z",
+    "kind": "tcp_close",
+    "app": "database",
+    "identity": {
+      "login": "",
+      "node": "",
+      "tags": []
+    },
+    "status": 403,
+    "bytes_in": 0,
+    "bytes_out": 0,
+    "duration_ms": 1,
+    "decision": "denied",
+    "connection": "two"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:14Z",
+    "kind": "tcp_open",
+    "app": "database",
+    "identity": {
+      "login": "",
+      "node": "",
+      "tags": []
+    },
+    "status": 403,
+    "bytes_in": 666,
+    "bytes_out": 666,
+    "duration_ms": 1,
+    "decision": "denied",
+    "connection": "two"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:13Z",
+    "kind": "tcp_close",
+    "app": "database",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 100,
+    "bytes_out": 200,
+    "duration_ms": 1,
+    "decision": "allowed",
+    "connection": "one"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:12Z",
+    "kind": "tcp_open",
+    "app": "database",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 999,
+    "bytes_out": 999,
+    "duration_ms": 1,
+    "decision": "allowed",
+    "connection": "one"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:11Z",
+    "kind": "http",
+    "app": "old-download",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_out": 12,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:10Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "",
+      "node": "",
+      "tags": [],
+      "remote": "198.51.100.0/24"
+    },
+    "status": 403,
+    "bytes_in": 5,
+    "bytes_out": 6,
+    "duration_ms": 1,
+    "decision": "denied"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:09Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "",
+      "node": "",
+      "tags": [],
+      "remote": "192.0.2.0/24"
+    },
+    "status": 200,
+    "bytes_in": 4,
+    "bytes_out": 5,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:08Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "enrolling@example.com",
+      "node": "worker",
+      "tags": [
+        "tag:worker"
+      ]
+    },
+    "status": 200,
+    "bytes_in": 3,
+    "bytes_out": 4,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:07Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "public",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 2,
+    "bytes_out": 3,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:06Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "\"Alice@example.com\"",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 1,
+    "bytes_out": 2,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:05Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "éloise@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 9,
+    "bytes_out": 11,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:04Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "ÉLOISE@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 8,
+    "bytes_out": 10,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:03Z",
+    "kind": "http",
+    "app": "docs",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 101,
+    "bytes_in": 4,
+    "bytes_out": 9,
+    "duration_ms": 1,
+    "decision": "allowed"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:02Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "",
+      "tags": []
+    },
+    "status": 403,
+    "bytes_in": 0,
+    "bytes_out": 7,
+    "duration_ms": 1,
+    "decision": "denied",
+    "reason": "no_grant"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:01Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": " \tALICE@EXAMPLE.COM\r\n",
+      "node": "phone",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 30,
+    "bytes_out": 40,
+    "duration_ms": 1,
+    "decision": "allowed",
+    "via": "portal"
+  },
+  {
+    "schema_version": 1,
+    "time": "2030-01-02T03:04:00Z",
+    "kind": "http",
+    "app": "photos",
+    "identity": {
+      "login": "alice@example.com",
+      "node": "laptop",
+      "tags": []
+    },
+    "status": 200,
+    "bytes_in": 10,
+    "bytes_out": 20,
+    "duration_ms": 1,
+    "decision": "allowed"
+  }
+]

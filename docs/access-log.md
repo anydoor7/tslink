@@ -12,6 +12,75 @@ tslink access log --since 2030-01-01T00:00:00Z --until 2030-01-02T00:00:00Z --js
 
 The CLI uses the usual versioned result envelope, with `events`, `summary`, and `truncated` under `data`. The read-only MCP tools `access_log` and `access_summary` accept the same filters and return these payloads directly. Both declare `readOnlyHint`; they require no credential, contact no remote service, and create no files or locks. Viewer, app-operator and people-manager scopes may query explicit permitted apps. Filtering happens before counts and event limits. Inventory-only viewers have no access-history app grants. Global or mixed-app receipts are omitted unless every affected app is in scope.
 
+## Traffic summaries
+
+`summary.traffic` separates app traffic from audit event counts. MCP
+`access_summary` returns that same structure as `traffic` alongside the existing
+summary fields. Text output includes HTTP totals, subject/app rows, app totals
+and TCP counters. The original `summary.count`, `people`, `apps`, `reasons` and
+their mixed-event semantics are unchanged; raw events remain schema version 1.
+
+| Field | Meaning |
+|---|---|
+| `traffic.http` | All matching `kind: http` events, including file requests and completed upgrades |
+| `traffic.people_apps[]` | HTTP counters by `subject_kind`, canonical `login` and registry `app` name; non-human rows use `subject` instead of `login` |
+| `traffic.apps[]` | The same HTTP counters grouped by registry `app` name |
+| `traffic.tcp` | `connections`, `allowed`, `denied` from TCP opens; `closed`, `bytes_in`, `bytes_out` from closes; separate `gate_drops` |
+
+Each HTTP total or row has `requests`, `allowed`, `denied`, `bytes_in`,
+`bytes_out`, `last_request_at` and `last_allowed_at`. Times are event timestamps;
+`last_request_at` advances for any result, while `last_allowed_at` advances only
+for allowed events. Missing times are JSON `null`. An allowed backend error is
+still allowed: these counters describe TSLink's authorization decision, not
+successful application responses. Existing gateway proxy transport failures use
+`denied` with `upstream_down`, while direct proxy transport failures stay
+`allowed`; summaries preserve those recorded decisions. Aggregation keys and
+rules are shared across modes, but this existing producer difference remains.
+Empty queries return zero counters and empty
+arrays, not missing traffic fields.
+
+Human rows use `subject_kind: human`. Canonical logins trim only ASCII whitespace
+(`space`, tab, CR, LF, vertical tab and form feed) and lowercase only `A` through
+`Z`. Unicode letters and quotes are preserved. Multiple devices, direct app
+nodes and gateway routes merge into the same `(login, app)` row. `via`, node
+names, URLs, port numbers and the gateway's `home` hostname never enter that
+key. App names are used exactly as recorded, without case conversion.
+
+Non-human requests are collected into one bucket per kind and app:
+`subject_kind` and `subject` are both `tagged`, `public` or `unknown`. Tags take
+precedence over any login left by a legacy producer; tagged traffic is never
+attributed to the enrolling user. The recorded `public` login selects the
+public bucket. Missing or redacted logins select unknown, without guessing from
+node names or IP prefixes. Only distinct `login` values in human rows count as
+identified people. Rows sort by subject kind, login and app; app totals sort by
+app. Bucket and human totals together equal the HTTP total.
+
+TCP opens do not count as HTTP requests, and their byte fields are ignored;
+only close events contribute TCP bytes. `conn_gate_drop` opens contribute only
+to `gate_drops`, which counts recorded, rate-limited diagnostics and is not an
+exact count of all rejected connections. Close events can fall in a different
+query window from their opens, so `closed` need not equal `connections`.
+MCP, lifecycle and guest audit receipts contribute no traffic counters.
+
+Every filter, including app authority, runs before aggregation. `--limit 1`
+and `--limit 10000` therefore return identical traffic for the same filters.
+Current gateway configuration is not consulted, and switching modes does not
+split or reset history. `access explain` reads retained reason counts for both
+routed and direct apps, and reports an unreadable history separately.
+
+Bytes retain the event measurements described below: uploads and downloads
+remain separate; their sum is payload/stream traffic, not WireGuard or billing
+bytes. Summaries cover only retained matching records. Disabled logging,
+retention, drops and `missing_history` still limit coverage; an empty query
+does not prove a whole day had no traffic. A corrupt or unreadable history is
+an error, not a zero-traffic answer.
+
+The portable consumer fixtures are
+[`traffic-events.json`](../internal/accesslog/testdata/traffic-events.json) and
+[`traffic-expected.json`](../internal/accesslog/testdata/traffic-expected.json).
+They include both entry modes, devices, ASCII/Unicode identities, non-human
+buckets, upload/download bytes, legacy missing-upload fields and mixed receipts.
+
 ## Recorded metadata and privacy
 
 Each HTTP request that reaches the service handler produces one `kind: http` event. File services use the same chain. TCP emits `tcp_open` and `tcp_close`, with a connection ID, timestamps, identity and byte counts. Events carry schema version 1, UTC time, app/service, method, status, bytes in/out, duration in milliseconds, allowed/denied decision, optional denial reason and optional matched grant (`person` or `legacy_allow`). A client that goes away while its allowed request is being proxied, before the backend's response starts, is recorded as `decision: allowed`, status `499` and reason `client_canceled`; it is never a 5xx, a denial or a backend observation. Once the response headers have been forwarded, the status the client received is final: a client that goes away during the response body (for example a stream or long poll) keeps the forwarded status, with no cancellation reason and no `error_class`, and causes no health or route-down observation. A client that goes away before TSLink could identify it (during WhoIs) produces no event, because no access decision was made. Requests TSLink cancels itself are not client cancellations, denials or backend failures: those in flight when a gateway route is torn down get reason `route_closed`, and those an app node cuts when it stops or reloads get reason `node_closed`. An app node cuts the requests still running when its graceful shutdown runs out of time; a guest-gated app also ends its active guest requests as soon as it stops, and a valid guest's request ended that way is `node_closed`, with no guest denial event (a grant that expires or is revoked during a request is still denied as `expired` or `revoked`). Before the response starts, such a request is recorded as `decision: allowed` with status `503`; once the response has started, it keeps the forwarded status and adds the reason. It never adds `error_class` or marks the backend down, and a response that completed before the teardown keeps its normal reason. A real backend failure keeps its 502 or 504 status and adds `error_class`: `connection_refused`, `connection_reset`, `tls`, `timeout` or `other`, never a URL, host or address. The combined query also includes `mcp` mutation receipts, `lifecycle` authority changes and `guest` link decisions.

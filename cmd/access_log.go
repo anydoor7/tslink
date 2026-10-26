@@ -91,6 +91,32 @@ func formatAccessLog(r accesslog.Result, out io.Writer) {
 		}
 		fmt.Fprintf(out, "app %s: %d events, last seen %s\n", a.Key, a.Count, last)
 	}
+	formatHTTPTraffic("HTTP", r.Summary.Traffic.HTTP, out)
+	for _, p := range r.Summary.Traffic.PeopleApps {
+		subject := p.Login
+		if subject == "" {
+			subject = p.Subject
+		} else {
+			subject = p.SubjectKind + " " + subject
+		}
+		formatHTTPTraffic(fmt.Sprintf("traffic %s app %s", subject, p.App), p.HTTPTraffic, out)
+	}
+	for _, a := range r.Summary.Traffic.Apps {
+		formatHTTPTraffic("traffic app "+a.App, a.HTTPTraffic, out)
+	}
+	tcp := r.Summary.Traffic.TCP
+	fmt.Fprintf(out, "TCP: %d connections (%d allowed, %d denied), %d closed, %d bytes in, %d bytes out, %d recorded gate drops\n", tcp.Connections, tcp.Allowed, tcp.Denied, tcp.Closed, tcp.BytesIn, tcp.BytesOut, tcp.GateDrops)
+}
+
+func formatHTTPTraffic(label string, h accesslog.HTTPTraffic, out io.Writer) {
+	request, allowed := "never", "never"
+	if h.LastRequestAt != nil {
+		request = h.LastRequestAt.Format(time.RFC3339Nano)
+	}
+	if h.LastAllowedAt != nil {
+		allowed = h.LastAllowedAt.Format(time.RFC3339Nano)
+	}
+	fmt.Fprintf(out, "%s: %d requests (%d allowed, %d denied), %d bytes in, %d bytes out, last request %s, last allowed %s\n", label, h.Requests, h.Allowed, h.Denied, h.BytesIn, h.BytesOut, request, allowed)
 }
 func accessHealthForRegistry(path, pidPath, snapshotPath string) accesslog.Health {
 	h := accesslog.ReadHealth(filepath.Dir(path))
@@ -150,18 +176,50 @@ func init() {
 		mcpToolHints[name] = mcpHints(true, false, true, false)
 		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: name, Description: map[string]string{
 			"access_log":     "Return individual local access events, newest first, with all-match counts and a truncation flag. Use access_log to inspect specific events; use access_summary for counts without event records. The event list is limited; summaries cover all matches. No credentials, network calls or writes; suitable for viewer scopes. Query strings, headers and bodies are absent.",
-			"access_summary": "Aggregate matching local access events into total, allowed and denied counts, per-person and per-app counts with last-seen times, plus per-reason counts when present. Use access_summary for totals and trends; use access_log for individual events. Counts cover all matches regardless of the event limit; denied events do not advance last-seen. No credentials, network calls or writes; suitable for viewer scopes. Query strings, headers and bodies are absent.",
+			"access_summary": "Aggregate matching local access events into audit counts and traffic: HTTP requests, upload/download bytes and last request/allowed times by canonical login and app, with separate public/tagged/unknown buckets and TCP counters. Use access_summary for totals and trends; use access_log for individual events. Summaries cover all matches regardless of the event limit; denied events do not advance last allowed access. No credentials, network calls or writes; suitable for viewer scopes. Query strings, headers and bodies are absent.",
 		}[name], InputSchema: objectSchema(map[string]any{
 			"app": map[string]any{"type": "string"}, "who": map[string]any{"type": "string"}, "since": map[string]any{"type": "string"}, "until": map[string]any{"type": "string"}, "decision": map[string]any{"type": "string", "enum": []string{"allowed", "denied"}}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 10000},
 		}), OutputSchema: accessLogOutputSchema(name)})
 	}
 }
 func accessLogOutputSchema(name string) map[string]any {
-	summary := nestedObjectSchema("Counts, per-person counts and per-app counts/last-seen for all matching events; denied events never advance last-seen.")
+	summary := objectSchema(map[string]any{"count": map[string]any{"type": "integer"}, "allowed": map[string]any{"type": "integer"}, "denied": map[string]any{"type": "integer"}, "people": map[string]any{"type": "array"}, "apps": map[string]any{"type": "array"}, "reasons": map[string]any{"type": "array"}, "traffic": accessTrafficOutputSchema()}, "count", "allowed", "denied", "people", "apps", "traffic")
 	if name == "access_summary" {
-		return objectSchema(map[string]any{"count": map[string]any{"type": "integer"}, "allowed": map[string]any{"type": "integer"}, "denied": map[string]any{"type": "integer"}, "people": map[string]any{"type": "array"}, "apps": map[string]any{"type": "array"}}, "count", "allowed", "denied", "people", "apps")
+		return summary
 	}
 	return objectSchema(map[string]any{"events": map[string]any{"type": "array", "items": nestedObjectSchema("Version 1 privacy-preserving access event.")}, "summary": summary, "truncated": map[string]any{"type": "boolean"}}, "events", "summary", "truncated")
+}
+
+func accessTrafficOutputSchema() map[string]any {
+	httpSchema := func(extra map[string]any, required ...string) map[string]any {
+		props := map[string]any{}
+		for _, field := range []string{"requests", "allowed", "denied", "bytes_in", "bytes_out"} {
+			props[field] = map[string]any{"type": "integer"}
+			required = append(required, field)
+		}
+		for _, field := range []string{"last_request_at", "last_allowed_at"} {
+			props[field] = map[string]any{"type": []string{"string", "null"}, "format": "date-time"}
+			required = append(required, field)
+		}
+		for field, schema := range extra {
+			props[field] = schema
+		}
+		return objectSchema(props, required...)
+	}
+	tcp := map[string]any{}
+	fields := []string{"connections", "allowed", "denied", "closed", "bytes_in", "bytes_out", "gate_drops"}
+	for _, field := range fields {
+		tcp[field] = map[string]any{"type": "integer"}
+	}
+	return objectSchema(map[string]any{
+		"http": httpSchema(nil),
+		"people_apps": map[string]any{"type": "array", "items": httpSchema(map[string]any{
+			"subject_kind": map[string]any{"type": "string", "enum": []string{"human", "tagged", "public", "unknown"}},
+			"login":        map[string]any{"type": "string"}, "subject": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"},
+		}, "subject_kind", "app")},
+		"apps": map[string]any{"type": "array", "items": httpSchema(map[string]any{"app": map[string]any{"type": "string"}}, "app")},
+		"tcp":  objectSchema(tcp, fields...),
+	}, "http", "people_apps", "apps", "tcp")
 }
 
 func init() {

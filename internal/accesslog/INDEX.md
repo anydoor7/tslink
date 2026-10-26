@@ -2,7 +2,8 @@
 
 - `event.go`: typed event/writer schema, validated options, identity/address/path sanitization.
 - `store.go`: bounded asynchronous queue, daily rotating JSONL, writer lock, crash recovery, eviction and health snapshots.
-- `query.go`: read-only filters and all-match summaries.
+- `query.go`: read-only filters, compatible mixed-event summaries and all-match HTTP/subject-app/TCP traffic.
+- `query_traffic_test.go`, `testdata/`: shared consumer golden contract, filter/limit/authority isolation, raw-history preservation and empty/error controls.
 - `sync_unix.go`, `sync_windows.go`: platform directory-sync boundary.
 - `store_test.go`, `failure_test.go`, `special_unix_test.go`, `testmain_test.go`: privacy, filters, clock, retention/cap, queue/lifecycle, process crash and filesystem failures.
 

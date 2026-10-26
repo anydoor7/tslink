@@ -13,6 +13,10 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 - `tslink invite list` no longer reports `invite_response_invalid` for a service whose device has no invitations. Tailscale answers that listing with JSON `null` instead of an empty array; it is now read as an empty list, so the service shows `checked: true` with `invite_count: 0` and the result is `complete: true` when nothing else fails. Blank, partial and malformed bodies, and a `null` devices listing, are still incomplete. The people flows that wait for proof that an invitation is gone (replacement, removal, `--reconcile-invite app=none`) accept the same `null` as that proof.
 
+### Access traffic
+
+- `access log` and MCP `access_summary` add complete filtered HTTP traffic totals by person and app, with separate non-human buckets and TCP counters. Gateway and direct app entries share the same keys; event limits do not reduce totals. Existing audit counts and event schema 1 remain unchanged. `access explain` reads reason counts for direct apps as well as routed apps.
+
 ## [0.2.0] - 2026-10-14
 
 Portal gateway mode: a person outside your tailnet accepts one device share, of the portal node, and you decide which apps they can use, on this host or on others, without sending more invitations. Gateway mode is opt-in; per-app sharing is unchanged and remains the default.
