@@ -276,7 +276,7 @@ func TestReReviewAmbiguousLinkCandidates(t *testing.T) {
 			reconcile["photos"] = id
 		}
 		r, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Reconcile: reconcile}, true)
-		if e != nil || r.Complete || r.Invites[0].Code != "invite_reconciliation_required" || len(r.Invites[0].ReconcileIDs) != 2 {
+		if e == nil || r.Complete || r.Invites[0].Code != "invite_reconciliation_required" || len(r.Invites[0].ReconcileIDs) != 2 {
 			t.Fatal(r, e)
 		}
 	}
@@ -340,13 +340,19 @@ func TestReReviewExpiredInviteRecovery(t *testing.T) {
 	api.mu.Unlock()
 	reviewRefreshProof(t, paths)
 	r, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, PrintLinks: true}, true)
-	if e != nil || r.Complete || r.Invites[0].Code != "invite_link_unavailable" {
+	if e != nil || !r.Complete || r.Invites[0].ID == first.Invites[0].ID {
 		t.Fatal(r, e)
 	}
-	recovered, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, PrintLinks: true, Reconcile: map[string]string{"photos": "none"}}, true)
-	t.Logf("explicit verified absence recovery complete=%t invites=%+v err=%v", recovered.Complete, recovered.Invites, e)
+	recovered, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", PrintLinks: true}, true)
+	t.Logf("verified absence recovery complete=%t invites=%+v err=%v", recovered.Complete, recovered.Invites, e)
 	if e != nil || !recovered.Complete {
 		t.Error("confirmed absent completed invite has no non-destructive recovery", recovered.Invites, e)
+	}
+	api.mu.Lock()
+	posts := api.posts["photos"]
+	api.mu.Unlock()
+	if posts != 2 || recovered.Invites[0].ID != r.Invites[0].ID {
+		t.Fatal("retry sent a duplicate replacement", posts, recovered.Invites)
 	}
 	if !reflect.DeepEqual(first.Person.Grants, recovered.Person.Grants) {
 		t.Fatal("replacement altered deadline/grants", first.Person.Grants, recovered.Person.Grants)
@@ -385,6 +391,10 @@ func TestReReviewDeletedNodeReAdd(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/devices") {
 			io.WriteString(w, `{"devices":[{"nodeId":"n2","hostname":"finance"}]}`)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v2/device/n2/device-invites" {
+			io.WriteString(w, `[{"id":"2001","inviteUrl":"https://login.tailscale.com/admin/invite/REVIEW-FAKE-2001"}]`)
 			return
 		}
 		t.Errorf("unexpected API call %s %s", r.Method, r.URL.Path)
@@ -441,8 +451,20 @@ func TestReReviewMCPContracts(t *testing.T) {
 	for _, c := range calls {
 		reviewRefreshProof(t, paths)
 		res, e := callMCPTool(context.Background(), actions, c.name, json.RawMessage(c.args))
-		if e != nil || res.IsError {
+		if e != nil {
 			t.Fatal(c.name, res, e)
+		}
+		if c.name == "people_add" || c.name == "people_update" {
+			failure := decodeMCPFailureText(t, mcpResultText(t, res))
+			if !res.IsError || failure["data"] == nil {
+				t.Fatal("incomplete create must expose a recoverable error", failure)
+			}
+			validateAgainstToolOutputSchema(t, c.name, failure["data"])
+			rows = append(rows, map[string]any{"tool": c.name, "error": failure})
+			continue
+		}
+		if res.IsError {
+			t.Fatal(c.name, mcpResultText(t, res))
 		}
 		payload := mcpResultStructured(t, res)
 		validateAgainstToolOutputSchema(t, c.name, payload)
@@ -856,6 +878,7 @@ func TestPeopleReplacementConcurrentRemovalOverRealHTTP(t *testing.T) {
 func TestPeopleDeletedTargetRetiresUnknownAttempt(t *testing.T) {
 	paths := peopleTestPaths(t)
 	api := reviewPeopleAPI(t, paths)
+	originalAPI := os.Getenv(tailapi.APIBaseURLEnv)
 	api.dropOnce = "photos"
 	first, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
 	if err == nil || first.Invites[0].State != registry.PersonInviteUnknown {
@@ -877,6 +900,8 @@ func TestPeopleDeletedTargetRetiresUnknownAttempt(t *testing.T) {
 	if err != nil || p.Invites[0].NodeID != "n1" || p.Invites[0].State != registry.PersonInviteTargetGone {
 		t.Fatal(p, err)
 	}
+	// The old node is gone; the independent finance target remains available.
+	t.Setenv(tailapi.APIBaseURLEnv, originalAPI)
 	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"finance"}}, false); err != nil {
 		t.Fatal("unknown dead target blocked re-add", err)
 	}

@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/anydoor7/tslink/internal/output"
 	"io"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/anydoor7/tslink/internal/mcpaudit"
+	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -263,6 +264,9 @@ func TestGrantAccessBundlePermanentAndDisclosure(t *testing.T) {
 			if posts, _ := f.counts(); posts != want {
 				t.Fatal("bundle target dedup", posts, want)
 			}
+			if len(got.Invites) != want {
+				t.Fatal("duplicate bundle invitation results", got.Invites)
+			}
 			p, _ := readPerson(f.paths.Registry, "alice")
 			for _, g := range p.Grants {
 				if g.ExpiresAt != nil {
@@ -306,5 +310,63 @@ func TestGrantAccessUnknownMembershipHasNoEffects(t *testing.T) {
 	failure := output.NewFailureForError("people add", err)
 	if failure.OK || failure.Error.Data == nil {
 		t.Fatal("partial state absent from error envelope", failure)
+	}
+}
+
+func TestGrantAccessAuditsInheritedLegacyGrants(t *testing.T) {
+	paths := peopleTestPaths(t)
+	grantTestEnvironment(t, tailapi.MembershipMember)
+	for _, app := range []string{"photos", "finance"} {
+		svc, err := loadPersistedService(paths.Registry, app)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.AllowedUsers = []string{"alice"}
+		if _, err := registry.Add(paths.Registry, svc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, changes := mcpaudit.Collect(context.Background())
+	got, err := changePeople(ctx, paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false)
+	if err != nil || !got.Complete || len(*changes) != 2 {
+		t.Fatal(got, err, *changes)
+	}
+	seen := map[string]bool{}
+	for _, change := range *changes {
+		if change.Action != "people_inherit_legacy" || change.Subject != "alice" || change.ExpiresAt != nil {
+			t.Fatal("incorrect inheritance receipt", change)
+		}
+		seen[change.App] = true
+	}
+	if !seen["photos"] || !seen["finance"] {
+		t.Fatal("missing inherited app", *changes)
+	}
+	if _, err := changePeople(ctx, paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false); err != nil || len(*changes) != 2 {
+		t.Fatal("retry emitted duplicate inheritance", err, *changes)
+	}
+}
+
+func TestGrantAccessRejectsChangedMembershipContext(t *testing.T) {
+	f := newGatewayInviteFixture(t)
+	peopleMembershipFn = func(context.Context, string, string) (tailapi.Membership, error) {
+		svc, err := loadPersistedService(f.paths.Registry, "photos")
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.ControlURL = "https://different.example.invalid"
+		if _, err := registry.Add(f.paths.Registry, svc); err != nil {
+			t.Fatal(err)
+		}
+		return tailapi.MembershipMember, nil
+	}
+	if _, err := changePeople(context.Background(), f.paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false); err == nil {
+		t.Fatal("used membership proof from the previous control plane")
+	}
+	reg, err := registry.Load(f.paths.Registry)
+	if err != nil || len(reg.People) != 0 {
+		t.Fatal("grant committed after network context changed", reg, err)
+	}
+	if posts, _ := f.counts(); posts != 0 {
+		t.Fatal("shared after network context changed", posts)
 	}
 }

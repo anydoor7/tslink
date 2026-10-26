@@ -175,6 +175,9 @@ type PersonLifetimeOptions struct {
 	PrepareAccess   bool
 	PreserveRevoked bool
 	Tool            string
+	// InheritedGrants receives the legacy grants captured under the write lock.
+	// Callers may audit them only after the enclosing transaction succeeds.
+	InheritedGrants *[]PersonGrant
 	// Authorize runs against pre-mutation state under the registry write lock.
 	Authorize func(*Registry, string) error
 	Value     *string
@@ -237,6 +240,9 @@ func changePersonInRegistry(ctx context.Context, reg *Registry, who string, apps
 		}
 		if options != nil && options.PrepareAccess && index < 0 {
 			result = inheritedLegacyPerson(reg, login)
+			if options.InheritedGrants != nil {
+				*options.InheritedGrants = append([]PersonGrant(nil), result.Grants...)
+			}
 		}
 		// The first device invite turns member-designated access into guest
 		// access. Omitted expiry cannot carry permanent/overlong grants across

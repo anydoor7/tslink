@@ -37,7 +37,9 @@ func priorGatewayInstallation() (bool, error) {
 	}
 	cfg, err := config.LoadGlobalConfig()
 	if err != nil {
-		return false, err
+		// An unreadable existing configuration cannot prove a fresh install.
+		// Preserve serve's established control-URL fallback without migrating it.
+		return true, nil
 	}
 	if cfg.MCP != nil && cfg.MCP.Enabled && cfg.MCP.NodeName == registry.DefaultPortalHostname {
 		return false, output.ErrConflict("portal hostname is already used by the MCP node")
@@ -46,6 +48,9 @@ func priorGatewayInstallation() (bool, error) {
 }
 
 func initializeDefaultGateway(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	path, err := config.RegistryPath()
 	if err != nil {
 		return err

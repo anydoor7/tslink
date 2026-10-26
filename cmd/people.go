@@ -10,6 +10,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -254,6 +255,7 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 		return PeopleResult{}, err
 	}
 	controlURL := global.ControlURL
+	appControlURLs := map[string]string{}
 	for _, app := range apps {
 		found := false
 		for _, svc := range reg.Services {
@@ -261,6 +263,7 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 				continue
 			}
 			found = true
+			appControlURLs[app] = svc.ControlURL
 			if !registry.PeopleServiceSupported(svc) || svc.Funnel || svc.GuestGate {
 				return PeopleResult{}, registry.CodedError{Code: "people_service_unsupported", Message: app + " cannot apply per-person private app access (TCP and public/browser access use their existing settings)"}
 			}
@@ -329,6 +332,9 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 		needsOwner = needsOwner || !known
 		for _, svc := range current.Services {
 			for _, app := range apps {
+				if svc.Name == app && svc.ControlURL != appControlURLs[app] {
+					return output.ErrConflict("network settings changed while checking membership; retry the same command")
+				}
 				if svc.Name == app && registry.GatewayEnabled(current) && svc.PortalRoute == nil {
 					needsOwner = true
 				}
@@ -357,7 +363,8 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 	if err := authorize(reg, login); err != nil {
 		return PeopleResult{}, err
 	}
-	options := registry.PersonLifetimeOptions{Context: ctx, Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: authorize, PrepareAccess: true, PreserveRevoked: intent.PreserveRevoked, Tool: intent.Tool}
+	var inherited []registry.PersonGrant
+	options := registry.PersonLifetimeOptions{Context: ctx, Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: authorize, PrepareAccess: true, PreserveRevoked: intent.PreserveRevoked, Tool: intent.Tool, InheritedGrants: &inherited}
 	var p registry.Person
 	if intent.Commit != nil {
 		p, err = intent.Commit(options)
@@ -366,6 +373,12 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 	}
 	if err != nil {
 		return PeopleResult{}, err
+	}
+	for _, grant := range inherited {
+		if err := mcpaudit.RecordChange(ctx, paths.Registry, mcpaudit.Surface(ctx), mcpaudit.LocalActor(), now,
+			mcpaudit.Change{Action: "people_inherit_legacy", App: grant.App, Subject: login, ExpiresAt: grant.ExpiresAt}); err != nil {
+			return PeopleResult{}, err
+		}
 	}
 	for app := range args.Replace {
 		if app != gatewayInviteKey && !registry.PersonGrantActiveAt(p, app, now) {
