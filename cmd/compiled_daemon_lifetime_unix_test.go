@@ -19,6 +19,25 @@ import (
 	"github.com/anydoor7/tslink/internal/testwait"
 )
 
+// seedExistingEmptyInstallation makes configDir an existing, empty install
+// instead of a first run.
+//
+// A config directory with no registry, no node state and no supervisor
+// evidence is a first run, and a real `tslink serve` in one initializes the
+// default home gateway and starts its tailnet node (registry.initializeGateway).
+// Starting a node reads host facts through tailscale (on Linux that runs
+// `loginctl list-sessions`) and reaches for the control plane. A test that
+// launches the compiled serve daemon only to observe its process lifetime owns
+// none of that, so it starts from an installation serve leaves alone: an
+// existing empty registry is explicitly not a first run.
+func seedExistingEmptyInstallation(t *testing.T, configDir string) {
+	t.Helper()
+	regPath := filepath.Join(configDir, "registry.json")
+	if err := os.WriteFile(regPath, []byte(`{"schema_version":1,"services":[]}`), 0o600); err != nil {
+		t.Fatalf("seed existing empty registry: %v", err)
+	}
+}
+
 func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	configDir := t.TempDir()
 	// This test owns the daemon's process lifetime, not the default gateway: a
