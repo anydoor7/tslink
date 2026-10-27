@@ -31,6 +31,15 @@ func lifetimeSchema(public bool) map[string]any {
 	return map[string]any{"type": "string", "description": description, "examples": []string{"1h", "8h", "24h", "3d", "7d", "90m", "1w", "1d12h", "until 2030-06-01T18:00:00Z"}}
 }
 
+// allowLifetimeSchema is the lifetime of add/share human allow recipients.
+// Unlike people_add they have no 24h default: an allow list never expired.
+func allowLifetimeSchema() map[string]any {
+	schema := lifetimeSchema(false)
+	description := "Limit human allow recipients to this lifetime (descending unique units w,d,h,m,s,ms,us,ns) or until <RFC3339|YYYY-MM-DD|YYYY-MM-DDTHH:MM>. Local unless offset given; DST gaps/folds require an offset. Minimum 1h. Presets: " + duration.Suggestions + ". Omitted: a recipient this call newly allows has no expiry and an existing grant keeps its deadline; a binding that expires or cannot create permanent grants gets 24h. Explicit never requires ack_never for members and device-invited guests; finite guest grants retain the configured maximum."
+	schema["description"] = description
+	return schema
+}
+
 func init() {
 	mcpToolHints["extend"] = mcpHints(false, true, false, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{

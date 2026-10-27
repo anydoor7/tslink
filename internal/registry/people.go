@@ -185,6 +185,16 @@ type PersonLifetimeOptions struct {
 	Audience  duration.Audience
 	AckNever  bool
 	Now       time.Time
+	// PermanentDefault makes a grant created without an explicit Value
+	// permanent instead of 24h. It is the historical meaning of an explicit
+	// allow list (`add --allow`, MCP add/share allow), whose entries never
+	// expired; the allow list itself is the acknowledgement that Value "never"
+	// would otherwise need as AckNever. It applies only to grants this call
+	// creates, never to an existing grant, and only where the caller's
+	// authority could create a permanent grant at all: an MCP session that
+	// cannot (any reduced role, or a binding with an expiry) gets the 24h
+	// default, which the same scope check then accepts or refuses.
+	PermanentDefault bool
 }
 
 func ChangePersonContext(ctx context.Context, path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (Person, error) {
@@ -244,6 +254,14 @@ func changePersonInRegistry(ctx context.Context, reg *Registry, who string, apps
 				*options.InheritedGrants = append([]PersonGrant(nil), result.Grants...)
 			}
 		}
+		// A permanent default is its own acknowledgement (see PermanentDefault).
+		ackNever, permanentDefault := false, false
+		if options != nil {
+			ackNever = options.AckNever
+			if options.Value == nil && options.PermanentDefault && permanentDefaultPermitted(ctx, options.Now) {
+				ackNever, permanentDefault = true, true
+			}
+		}
 		// The first device invite turns member-designated access into guest
 		// access. Omitted expiry cannot carry permanent/overlong grants across
 		// that boundary. Invitation retries with recorded history retain F1's
@@ -255,7 +273,7 @@ func changePersonInRegistry(ctx context.Context, reg *Registry, who string, apps
 					selected = selected || app == g.App
 				}
 				if selected {
-					if err := options.Policy.Check(duration.Lifetime{Deadline: g.ExpiresAt, Never: g.ExpiresAt == nil}, duration.Guest, options.AckNever, options.Now); err != nil {
+					if err := options.Policy.Check(duration.Lifetime{Deadline: g.ExpiresAt, Never: g.ExpiresAt == nil}, duration.Guest, ackNever, options.Now); err != nil {
 						return CodedError{Code: errcode.UsageError, Message: "first guest invitation requires --for/--until within guest policy: " + err.Error()}
 					}
 				}
@@ -287,8 +305,10 @@ func changePersonInRegistry(ctx context.Context, reg *Registry, who string, apps
 			value := "24h"
 			if options.Value != nil {
 				value = *options.Value
+			} else if permanentDefault {
+				value = "never"
 			}
-			l, err := options.Policy.Resolve(value, audience, options.AckNever, options.Now, time.Local)
+			l, err := options.Policy.Resolve(value, audience, ackNever, options.Now, time.Local)
 			if err != nil {
 				return CodedError{Code: errcode.UsageError, Message: err.Error()}
 			}

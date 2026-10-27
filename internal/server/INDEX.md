@@ -108,3 +108,4 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `access_drain_timing_test.go`: synctest regression for joining a delayed writer before inspecting persisted events.
 - `access_traffic_parity_test.go`: real gateway/app handler chains into one isolated writer; HTTP, denial, file, WebSocket and backend-error aggregation parity.
 - `guest_timing_test.go`: real-file corruption and writer contention with virtual response bounds, original-session recovery, and bounded 503-only recovery probes.
+- `app_node_owner_access_test.go`: the portal owner and admins reach a people-scoped app on its own node without a grant, with the gateway on or off; strangers and a tagged node carrying the owner login are refused.

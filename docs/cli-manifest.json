@@ -528,7 +528,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Acknowledge permanent access for a member or device-invited guest"
+          "usage": "Acknowledge an explicit --for never (omitting --for already means no expiry)"
         },
         {
           "name": "ack-unlimited-request-body",
@@ -582,7 +582,7 @@
           "name": "for",
           "type": "string",
           "scope": "local",
-          "usage": "Human --allow grant lifetime; default 24h for new grants; never requires --ack-never"
+          "usage": "Limit human --allow access to this long, e.g. 7d; omitted means no expiry, as --allow always was; an explicit never requires --ack-never"
         },
         {
           "name": "force-unsafe-public",
@@ -799,7 +799,7 @@
           "name": "until",
           "type": "string",
           "scope": "local",
-          "usage": "Human --allow grant deadline; conflicts with --for"
+          "usage": "Limit human --allow access to this date/time; conflicts with --for"
         },
         {
           "name": "wait",

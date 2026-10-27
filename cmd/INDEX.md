@@ -152,3 +152,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - [mcp_tool_annotations_test.go](mcp_tool_annotations_test.go): wire-level title and safety-hint coverage and behavior checks.
 
 - `grant_access_test.go`: unified authorization matrix and explicit member/runtime command fixtures.
+- `add_allow_lifetime_test.go`: `add --allow` and MCP add/share allow recipients are permanent unless `--for`/`--until` limits them, re-adds never move an existing grant, `people add` keeps 24h, and a binding that expires never mints a permanent grant.
+- `add_without_allow_test.go`: the access `add NAME --proxy P` leaves without `--allow` with the gateway on, turned off, and on a registry without a portal.

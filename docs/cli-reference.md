@@ -86,7 +86,7 @@ pending startup and is applied before readiness is reported.
 
 ### Add Command Flags
 
-Without `--recipe`, `tslink add` with an existing name replaces that service: existing access, routes, tags, Funnel, ephemeral and control URL settings remain unless explicitly changed. Human `--allow` entries use the common authorization action. The JSON result lists `replaced_fields` and warns when access or the node identity changed. To change only an existing app's health check, use `tslink health set`.
+Without `--recipe`, `tslink add` with an existing name replaces that service: existing access, routes, tags, Funnel, ephemeral and control URL settings remain unless explicitly changed. Human `--allow` entries use the common authorization action but keep the meaning `--allow` has always had: a person named there keeps access until removed, and no `--ack-never` is needed. `--for`/`--until` limit them, and an explicit `--for never` still needs `--ack-never`. `tslink people add` is the command whose default is 24h. Re-adding the same `--allow` never shortens an existing grant; a grant created by `people add` keeps its deadline. The JSON result lists `replaced_fields` and warns when access or the node identity changed. To change only an existing app's health check, use `tslink health set`.
 
 | Flag | Description |
 |------|-------------|
@@ -98,6 +98,9 @@ Without `--recipe`, `tslink add` with an existing name replaces that service: ex
 | `--ephemeral` | Ephemeral node, auto-removed from tailnet when stopped |
 | `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
 | `--allow user@,tag:x` | HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth |
+| `--for <lifetime>`, `--until <date/time>` | Limit the human `--allow` recipients to this long or until this time ([durations](durations.md)); omitted means no expiry, as `--allow` always was. Needs a human `--allow` recipient. An explicit `--for never` requires `--ack-never` |
+| `--ack-never` | Acknowledge an explicit `--for never`; omitting `--for` already means no expiry |
+| `--print-links` | Include the bearer invitation links prepared for outside `--allow` recipients |
 | `--control-url URL` | Per-service control server override, e.g. Headscale. TSLink never sends an auth key minted from a stored Tailscale credential to another control server: with such a credential stored, the service is refused with `credential_control_url_mismatch` |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
 | `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |

@@ -57,9 +57,9 @@ func init() {
 			continue
 		}
 		props := d.InputSchema["properties"].(map[string]any)
-		props["for"], props["until"] = lifetimeSchema(false), map[string]any{"type": "string", "description": "Human allow recipient deadline; conflicts with for."}
+		props["for"], props["until"] = allowLifetimeSchema(), map[string]any{"type": "string", "description": "Limit human allow recipients to this deadline; conflicts with for."}
 		props["ack_never"], props["print_links"] = map[string]any{"type": "boolean"}, map[string]any{"type": "boolean"}
-		props["allow"].(map[string]any)["description"] = "Human recipients use the common access action: membership verification, app grants and necessary invitations. New grants default to 24h; never requires ack_never. tag: entries remain machine ACLs. New installations use the gateway; existing installs preserve their mode. Refused for TCP and public Funnel."
+		props["allow"].(map[string]any)["description"] = "Human recipients use the common access action: membership verification, app grants and necessary invitations. A recipient named here keeps access without an expiry unless for or until limits it (people_add defaults to 24h); an explicit never requires ack_never, and a binding that cannot create permanent grants gets the 24h default instead. tag: entries remain machine ACLs. New installations use the gateway; existing installs preserve their mode. Refused for TCP and public Funnel."
 		d.OutputSchema["properties"].(map[string]any)["access"] = map[string]any{"type": "array", "items": peopleResultSchema()}
 	}
 

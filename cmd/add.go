@@ -579,7 +579,7 @@ func grantServiceRecipients(ctx context.Context, paths sharePaths, app string, r
 	}
 	var failed error
 	for _, login := range recipients {
-		result, err := grantAccess(ctx, paths, grantAccessIntent{Arguments: peopleArguments{Who: login, Apps: []string{app}, For: params.For, Until: params.Until, AckNever: params.AckNever, PrintLinks: params.PrintLinks}, PreserveRevoked: true, Tool: params.AccessTool})
+		result, err := grantAccess(ctx, paths, grantAccessIntent{Arguments: peopleArguments{Who: login, Apps: []string{app}, For: params.For, Until: params.Until, AckNever: params.AckNever, PrintLinks: params.PrintLinks}, PreserveRevoked: true, PermanentDefault: true, Tool: params.AccessTool})
 		results = append(results, result)
 		if err != nil {
 			failed = err
@@ -793,7 +793,10 @@ func init() {
 If a service with the same name already exists, add replaces its backend
 settings while preserving existing access, routes, tags, Funnel, ephemeral
 and control URL settings unless explicitly changed. Human --allow entries
-use the same access action as people add; new grants default to 24h.
+use the same access action as people add, but keep the meaning --allow has
+always had: a person named here keeps access until removed. --for or --until
+limits it (people add, by contrast, defaults to 24h). Re-adding never shortens
+an existing grant.
 The result lists replaced_fields and any existing access/identity findings.
 
 Examples:
@@ -1012,9 +1015,9 @@ Examples:
 		},
 	}
 
-	addCmd.Flags().String("for", "", "Human --allow grant lifetime; default 24h for new grants; never requires --ack-never")
-	addCmd.Flags().String("until", "", "Human --allow grant deadline; conflicts with --for")
-	addCmd.Flags().Bool("ack-never", false, "Acknowledge permanent access for a member or device-invited guest")
+	addCmd.Flags().String("for", "", "Limit human --allow access to this long, e.g. 7d; omitted means no expiry, as --allow always was; an explicit never requires --ack-never")
+	addCmd.Flags().String("until", "", "Limit human --allow access to this date/time; conflicts with --for")
+	addCmd.Flags().Bool("ack-never", false, "Acknowledge an explicit --for never (omitting --for already means no expiry)")
 	addCmd.Flags().Bool("print-links", false, "Include bearer invitation links for --allow recipients")
 	addCmd.Flags().Bool("requestable", false, "Let human tailnet members ask for this app from the portal; discloses its name; default off")
 	addCmd.Flags().String("remote", "", "HTTPS MagicDNS upstream in the gateway tailnet; implies --portal-only")

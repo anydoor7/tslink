@@ -145,8 +145,13 @@ type grantAccessIntent struct {
 	Arguments       peopleArguments
 	Update          bool
 	PreserveRevoked bool
-	Tool            string
-	Commit          func(registry.PersonLifetimeOptions) (registry.Person, error)
+	// PermanentDefault is set by the explicit allow-list entry points (`add
+	// --allow`, MCP add/share allow): a grant they create without a lifetime
+	// is permanent, as their allow list always was. People add, requests and
+	// device invitations keep the 24h default.
+	PermanentDefault bool
+	Tool             string
+	Commit           func(registry.PersonLifetimeOptions) (registry.Person, error)
 }
 
 func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, update bool) (PeopleResult, error) {
@@ -364,7 +369,7 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 		return PeopleResult{}, err
 	}
 	var inherited []registry.PersonGrant
-	options := registry.PersonLifetimeOptions{Context: ctx, Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: authorize, PrepareAccess: true, PreserveRevoked: intent.PreserveRevoked, Tool: intent.Tool, InheritedGrants: &inherited}
+	options := registry.PersonLifetimeOptions{Context: ctx, Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: authorize, PrepareAccess: true, PreserveRevoked: intent.PreserveRevoked, PermanentDefault: intent.PermanentDefault, Tool: intent.Tool, InheritedGrants: &inherited}
 	var p registry.Person
 	if intent.Commit != nil {
 		p, err = intent.Commit(options)
