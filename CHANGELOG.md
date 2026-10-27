@@ -3,7 +3,15 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
-## [Unreleased]
+## [0.3.0] - 2026-10-27
+
+Gateway mode by default, and one action to give someone access. New installations start the persistent home gateway: a person outside your tailnet accepts one device share and you choose which apps they can use. Granting access is the same action in either mode: TSLink checks whether the person is in your tailnet, keeps what they already have, and completes the routes and invitations it needs. Access totals count each person's traffic per app the same way whether a request came through the gateway or an app's own node.
+
+### Upgrade
+
+- Homebrew: `brew upgrade --cask anydoor7/tap/tslink`. Scoop: `scoop update; scoop update tslink`. Other installs: download the new archive or package from this release.
+- If TSLink runs as a background service, run `tslink install` again after upgrading so the service starts the new binary.
+- Existing installations, including empty registries, keep their current mode; nothing is migrated. To use the gateway on an existing setup, run `tslink portal enable --owner <login> --gateway` (see the [portal guide](docs/portal.md)).
 
 ### Changed
 
