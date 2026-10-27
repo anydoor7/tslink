@@ -163,6 +163,10 @@ func writeInviteCreate(out io.Writer, command string, invite tailapi.Invite, isJ
 		output.WriteJSON(out, output.NewSuccess(command, data))
 		return nil
 	}
+	if invite.Grant != nil {
+		fmt.Fprintln(out, invite.Message)
+		return nil
+	}
 	if invite.Emailed {
 		fmt.Fprintf(out, humanText("→ Created %s invite %s and asked Tailscale to email %s\n"), invite.Kind, invite.ID, invite.Recipient)
 		return nil
@@ -198,6 +202,44 @@ func inviteDeviceCreate(ctx context.Context, regPath, pidPath, snapshotPath, ser
 	}
 	if strings.TrimSpace(email) == "" {
 		return tailapi.Invite{}, output.ErrUsage("email is required")
+	}
+	reg, _, err := registry.Preflight(regPath)
+	if os.IsNotExist(err) {
+		return tailapi.Invite{}, output.ErrNotFound("service not found: " + service)
+	}
+	if err != nil {
+		return tailapi.Invite{}, err
+	}
+	for _, svc := range reg.Services {
+		if svc.Name != service || svc.Type == registry.TypeTCP {
+			continue
+		}
+		// Sharing a device never carried a deadline: the person's access came
+		// from the app's allow list, which does not expire. The command has no
+		// lifetime flag, so a grant it creates is permanent (as `add --allow`
+		// does), one that exists is left as it is, and a caller that could not
+		// create a permanent grant keeps the 24h default.
+		result, err := grantAccess(ctx, sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath}, grantAccessIntent{
+			Arguments:       peopleArguments{Who: email, Apps: []string{service}, PrintLinks: printLink, EmailInvite: !printLink, MultiUse: multiUse, AllowExitNode: allowExitNode},
+			PreserveRevoked: true, PermanentDefault: true, Tool: "invite_device",
+		})
+		if err != nil {
+			return tailapi.Invite{}, err
+		}
+		person, err := readPerson(regPath, result.Person.Login)
+		if err != nil {
+			return tailapi.Invite{}, err
+		}
+		inv := tailapi.Invite{Kind: tailapi.InviteKindDevice, Service: service, Recipient: person.Login, Grant: &person, Message: result.Message}
+		if len(result.Access) > 0 {
+			inv.AccessState = result.Access[0].AccessState
+		}
+		if len(result.Invites) > 0 {
+			v := result.Invites[0]
+			inv.ID, inv.TargetKind, inv.InviteURL = v.ID, v.TargetKind, v.InviteURL
+			inv.Accepted, inv.Emailed = v.State == registry.PersonInviteAccepted, !printLink
+		}
+		return inv, nil
 	}
 	target, err := inviteDeviceTargetForService(regPath, pidPath, snapshotPath, service)
 	if err != nil {
@@ -454,7 +496,15 @@ func init() {
 	deviceCmd := &cobra.Command{
 		Use:   "device <service> <email>",
 		Short: "Share a TSLink-owned service device with an external user",
-		Args:  cobra.ExactArgs(2),
+		Long: `Share a TSLink-owned service device with an external user.
+
+For an HTTP or file app this also saves the person's access to it, through the
+same action as people add. Sharing a device has never carried a deadline, so a
+grant this command creates has no expiry; a grant the person already has keeps
+its deadline, and an app already on their allow list stays as it was. To limit
+the access use people add with --for or --until, or tslink extend; this command
+has no lifetime flag. A TCP service is shared on the network only.`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return inviteDeviceRun(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], devicePrintLink, deviceMultiUse, deviceAllowExitNode, jsonOutput(cmd))
 		},

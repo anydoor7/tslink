@@ -42,9 +42,10 @@ func TestReReviewCrashHelper(t *testing.T) {
 	inviteIsRunningFn = func(string) bool { return true }
 	inviteReadPIDFn = func(string) (int, error) { return 42, nil }
 	invitePIDModTimeFn = func(string) (time.Time, error) { return now, nil }
+	grantTestEnvironment(t, tailapi.MembershipGuest)
 	reviewRefreshProof(t, paths)
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if err != nil || len(result.Invites) != 1 {
+	if len(result.Invites) != 1 || ((err == nil) != result.Complete) {
 		t.Fatal(result, err)
 	}
 	fmt.Printf("DURABLE:%s\n", result.Invites[0].State)
@@ -214,7 +215,7 @@ func TestReReviewCrashStateMatrix(t *testing.T) {
 				return
 			}
 			result, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true}, true)
-			if e != nil {
+			if (e == nil) != result.Complete {
 				t.Fatal(result, e)
 			}
 			mu.Lock()
@@ -262,7 +263,7 @@ func TestReReviewAmbiguousLinkCandidates(t *testing.T) {
 	api := reviewPeopleAPI(t, paths)
 	api.dropOnce = "photos"
 	first, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if e != nil || first.Complete {
+	if e == nil || first.Complete {
 		t.Fatal(first, e)
 	}
 	api.mu.Lock()
@@ -275,7 +276,7 @@ func TestReReviewAmbiguousLinkCandidates(t *testing.T) {
 			reconcile["photos"] = id
 		}
 		r, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Reconcile: reconcile}, true)
-		if e != nil || r.Complete || r.Invites[0].Code != "invite_reconciliation_required" || len(r.Invites[0].ReconcileIDs) != 2 {
+		if e == nil || r.Complete || r.Invites[0].Code != "invite_reconciliation_required" || len(r.Invites[0].ReconcileIDs) != 2 {
 			t.Fatal(r, e)
 		}
 	}
@@ -339,13 +340,19 @@ func TestReReviewExpiredInviteRecovery(t *testing.T) {
 	api.mu.Unlock()
 	reviewRefreshProof(t, paths)
 	r, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, PrintLinks: true}, true)
-	if e != nil || r.Complete || r.Invites[0].Code != "invite_link_unavailable" {
+	if e != nil || !r.Complete || r.Invites[0].ID == first.Invites[0].ID {
 		t.Fatal(r, e)
 	}
-	recovered, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, PrintLinks: true, Reconcile: map[string]string{"photos": "none"}}, true)
-	t.Logf("explicit verified absence recovery complete=%t invites=%+v err=%v", recovered.Complete, recovered.Invites, e)
+	recovered, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", PrintLinks: true}, true)
+	t.Logf("verified absence recovery complete=%t invites=%+v err=%v", recovered.Complete, recovered.Invites, e)
 	if e != nil || !recovered.Complete {
 		t.Error("confirmed absent completed invite has no non-destructive recovery", recovered.Invites, e)
+	}
+	api.mu.Lock()
+	posts := api.posts["photos"]
+	api.mu.Unlock()
+	if posts != 2 || recovered.Invites[0].ID != r.Invites[0].ID {
+		t.Fatal("retry sent a duplicate replacement", posts, recovered.Invites)
 	}
 	if !reflect.DeepEqual(first.Person.Grants, recovered.Person.Grants) {
 		t.Fatal("replacement altered deadline/grants", first.Person.Grants, recovered.Person.Grants)
@@ -384,6 +391,10 @@ func TestReReviewDeletedNodeReAdd(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/devices") {
 			io.WriteString(w, `{"devices":[{"nodeId":"n2","hostname":"finance"}]}`)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v2/device/n2/device-invites" {
+			io.WriteString(w, `[{"id":"2001","inviteUrl":"https://login.tailscale.com/admin/invite/REVIEW-FAKE-2001"}]`)
 			return
 		}
 		t.Errorf("unexpected API call %s %s", r.Method, r.URL.Path)
@@ -440,8 +451,20 @@ func TestReReviewMCPContracts(t *testing.T) {
 	for _, c := range calls {
 		reviewRefreshProof(t, paths)
 		res, e := callMCPTool(context.Background(), actions, c.name, json.RawMessage(c.args))
-		if e != nil || res.IsError {
+		if e != nil {
 			t.Fatal(c.name, res, e)
+		}
+		if c.name == "people_add" || c.name == "people_update" {
+			failure := decodeMCPFailureText(t, mcpResultText(t, res))
+			if !res.IsError || failure["data"] == nil {
+				t.Fatal("incomplete create must expose a recoverable error", failure)
+			}
+			validateAgainstToolOutputSchema(t, c.name, failure["data"])
+			rows = append(rows, map[string]any{"tool": c.name, "error": failure})
+			continue
+		}
+		if res.IsError {
+			t.Fatal(c.name, mcpResultText(t, res))
 		}
 		payload := mcpResultStructured(t, res)
 		validateAgainstToolOutputSchema(t, c.name, payload)
@@ -548,7 +571,7 @@ func TestPeopleReplaceRefusesLiveOrWrongAttempt(t *testing.T) {
 				api.dropOnce = "photos"
 			}
 			first, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-			if err != nil {
+			if (err == nil) != first.Complete {
 				t.Fatal(first, err)
 			}
 			id := "1001"
@@ -562,7 +585,7 @@ func TestPeopleReplaceRefusesLiveOrWrongAttempt(t *testing.T) {
 			}
 			reviewRefreshProof(t, paths)
 			result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": id}}, true)
-			if err != nil || result.Complete || result.Invites[0].Code != "conflict" {
+			if err == nil || result.Complete || result.Invites[0].Code != "conflict" {
 				t.Fatal(result, err)
 			}
 			api.mu.Lock()
@@ -581,7 +604,6 @@ func TestPeopleReplaceValidationAndTaxonomy(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range []peopleArguments{
-		{Who: "alice", Replace: map[string]string{"photos": "1001"}},
 		{Who: "alice", Invite: true, Apps: []string{"photos"}, Replace: map[string]string{"photos": "1001"}},
 		{Who: "alice", Invite: true, Replace: map[string]string{"photos": "none"}},
 		{Who: "alice", Invite: true, Replace: map[string]string{"bad/": "1001"}},
@@ -602,7 +624,6 @@ func TestPeopleReplaceValidationAndTaxonomy(t *testing.T) {
 		{"people_add", `{"who":"bad login","apps":["photos"]}`, "usage_error", 2},
 		{"people_add", `{"who":"bob","apps":["missing"]}`, "not_found", 5},
 		{"people_update", `{"who":"missing","for":"never","ack_never":true}`, "not_found", 5},
-		{"people_add", `{"who":"alice","apps":["photos"]}`, "conflict", 4},
 		{"people_remove", `{"who":"bad login"}`, "usage_error", 2},
 	}
 	for _, tc := range cases {
@@ -646,7 +667,7 @@ func TestPeopleReplacementUnknownSuccessorRequiresReconciliation(t *testing.T) {
 	args := peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": id}}
 	reviewRefreshProof(t, paths)
 	result, err := changePeople(context.Background(), paths, args, true)
-	if err != nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
+	if err == nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(result, err)
 	}
 	p, err := readPerson(paths.Registry, "alice")
@@ -655,7 +676,7 @@ func TestPeopleReplacementUnknownSuccessorRequiresReconciliation(t *testing.T) {
 	}
 	reviewRefreshProof(t, paths)
 	result, err = changePeople(context.Background(), paths, args, true)
-	if err != nil || result.Complete || result.Invites[0].Code != "invite_reconciliation_required" {
+	if err == nil || result.Complete || result.Invites[0].Code != "invite_reconciliation_required" {
 		t.Fatal("replacement retry bypassed ambiguity", result, err)
 	}
 	args.Replace = nil
@@ -725,7 +746,7 @@ func TestPeopleReplacementListingFailuresPreserveAttempt(t *testing.T) {
 			t.Setenv(tailapi.APIBaseURLEnv, api.URL)
 			reviewRefreshProof(t, paths)
 			result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": first.Invites[0].ID}}, true)
-			if err != nil || result.Complete || result.Invites[0].Code == "" {
+			if err == nil || result.Complete || result.Invites[0].Code == "" {
 				t.Fatal(result, err)
 			}
 			current, err := readPerson(paths.Registry, "alice")
@@ -836,7 +857,7 @@ func TestPeopleReplacementConcurrentRemovalOverRealHTTP(t *testing.T) {
 	close(release)
 	result := <-done
 	err = <-errs
-	if err != nil || !result.Person.Revoked || result.Complete {
+	if err == nil || !result.Person.Revoked || result.Complete {
 		t.Fatal(result, err)
 	}
 	removed, err = removePeople(paths.Registry, "alice")
@@ -857,9 +878,10 @@ func TestPeopleReplacementConcurrentRemovalOverRealHTTP(t *testing.T) {
 func TestPeopleDeletedTargetRetiresUnknownAttempt(t *testing.T) {
 	paths := peopleTestPaths(t)
 	api := reviewPeopleAPI(t, paths)
+	originalAPI := os.Getenv(tailapi.APIBaseURLEnv)
 	api.dropOnce = "photos"
 	first, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if err != nil || first.Invites[0].State != registry.PersonInviteUnknown {
+	if err == nil || first.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(first, err)
 	}
 	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -878,6 +900,8 @@ func TestPeopleDeletedTargetRetiresUnknownAttempt(t *testing.T) {
 	if err != nil || p.Invites[0].NodeID != "n1" || p.Invites[0].State != registry.PersonInviteTargetGone {
 		t.Fatal(p, err)
 	}
+	// The old node is gone; the independent finance target remains available.
+	t.Setenv(tailapi.APIBaseURLEnv, originalAPI)
 	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"finance"}}, false); err != nil {
 		t.Fatal("unknown dead target blocked re-add", err)
 	}
@@ -904,7 +928,7 @@ func TestPeopleReplaceDeadlineBetweenRetirementAndPending(t *testing.T) {
 	}
 	reviewRefreshProof(t, paths)
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": first.Invites[0].ID}}, true)
-	if err != nil || result.Complete || result.Invites[0].Code != "conflict" {
+	if err == nil || result.Complete || result.Invites[0].Code != "conflict" {
 		t.Fatal("expired grant sent successor", result, err)
 	}
 	p, err := readPerson(paths.Registry, "alice")
@@ -946,7 +970,7 @@ func TestPeopleReconcileSaveRefusesConcurrentRevocation(t *testing.T) {
 	t.Setenv(tailapi.APIBaseURLEnv, api.URL)
 	reviewRefreshProof(t, paths)
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Reconcile: map[string]string{"photos": "none"}}, true)
-	if err != nil || result.Complete || !result.Person.Revoked || result.Invites[0].Code != "conflict" {
+	if err == nil || result.Complete || !result.Person.Revoked || result.Invites[0].Code != "conflict" {
 		t.Fatal(result, err)
 	}
 	p, err := readPerson(paths.Registry, "alice")
@@ -978,7 +1002,7 @@ func TestPeopleUnknownPostStateWriteFailureKeepsSending(t *testing.T) {
 	defer api.Close()
 	t.Setenv(tailapi.APIBaseURLEnv, api.URL)
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if err != nil || result.Complete || result.Invites[0].Code != "invite_state_failed" {
+	if err == nil || result.Complete || result.Invites[0].Code != "invite_state_failed" {
 		t.Fatal(result, err)
 	}
 	p, err := readPerson(paths.Registry, "alice")

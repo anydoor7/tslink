@@ -171,7 +171,13 @@ func ChangePersonWithLifetime(path, who string, apps []string, update bool, opti
 }
 
 type PersonLifetimeOptions struct {
-	Context context.Context
+	Context         context.Context
+	PrepareAccess   bool
+	PreserveRevoked bool
+	Tool            string
+	// InheritedGrants receives the legacy grants captured under the write lock.
+	// Callers may audit them only after the enclosing transaction succeeds.
+	InheritedGrants *[]PersonGrant
 	// Authorize runs against pre-mutation state under the registry write lock.
 	Authorize func(*Registry, string) error
 	Value     *string
@@ -179,6 +185,16 @@ type PersonLifetimeOptions struct {
 	Audience  duration.Audience
 	AckNever  bool
 	Now       time.Time
+	// PermanentDefault makes a grant created without an explicit Value
+	// permanent instead of 24h. It is the historical meaning of an explicit
+	// allow list (`add --allow`, MCP add/share allow), whose entries never
+	// expired; the allow list itself is the acknowledgement that Value "never"
+	// would otherwise need as AckNever. It applies only to grants this call
+	// creates, never to an existing grant, and only where the caller's
+	// authority could create a permanent grant at all: an MCP session that
+	// cannot (any reduced role, or a binding with an expiry) gets the 24h
+	// default, which the same scope check then accepts or refuses.
+	PermanentDefault bool
 }
 
 func ChangePersonContext(ctx context.Context, path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (Person, error) {
@@ -186,6 +202,21 @@ func ChangePersonContext(ctx context.Context, path, who string, apps []string, e
 }
 
 func changePerson(ctx context.Context, path, who string, apps []string, expiry *time.Time, changeExpiry, update bool, options *PersonLifetimeOptions) (result Person, err error) {
+	err = withLockContext(ctx, path, func() error {
+		reg, err := loadForMutation(path)
+		if err != nil {
+			return err
+		}
+		result, err = changePersonInRegistry(ctx, reg, who, apps, expiry, changeExpiry, update, options)
+		if err != nil {
+			return err
+		}
+		return save(path, reg)
+	})
+	return result, err
+}
+
+func changePersonInRegistry(ctx context.Context, reg *Registry, who string, apps []string, expiry *time.Time, changeExpiry, update bool, options *PersonLifetimeOptions) (result Person, err error) {
 	if !update && len(apps) == 0 {
 		return result, CodedError{Code: errcode.UsageError, Message: "apps must include at least one private HTTP or file service"}
 	}
@@ -193,11 +224,8 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 	if err != nil {
 		return result, err
 	}
-	err = withLockContext(ctx, path, func() error {
-		reg, err := loadForMutation(path)
-		if err != nil {
-			return err
-		}
+	err = func() error {
+		before := cloneAccessRegistry(reg)
 		if options != nil && options.Authorize != nil {
 			if err := options.Authorize(reg, login); err != nil {
 				return err
@@ -214,29 +242,46 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 		if update && (index < 0 || result.Revoked) {
 			return CodedError{Code: errcode.NotFound, Message: fmt.Sprintf("person not found: %s", login)}
 		}
-		if !update && index >= 0 && !result.Revoked {
+		if options == nil && !update && index >= 0 && !result.Revoked {
 			return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("person already exists: %s; use people update", login)}
+		}
+		if options != nil && options.PreserveRevoked && result.Revoked {
+			return CodedError{Code: errcode.Conflict, Message: "person is revoked; restore access explicitly with people add"}
+		}
+		if options != nil && options.PrepareAccess && index < 0 {
+			result = inheritedLegacyPerson(reg, login)
+			if options.InheritedGrants != nil {
+				*options.InheritedGrants = append([]PersonGrant(nil), result.Grants...)
+			}
+		}
+		// A permanent default is its own acknowledgement (see PermanentDefault).
+		ackNever, permanentDefault := false, false
+		if options != nil {
+			ackNever = options.AckNever
+			if options.Value == nil && options.PermanentDefault && permanentDefaultPermitted(ctx, options.Now) {
+				ackNever, permanentDefault = true, true
+			}
 		}
 		// The first device invite turns member-designated access into guest
 		// access. Omitted expiry cannot carry permanent/overlong grants across
 		// that boundary. Invitation retries with recorded history retain F1's
 		// deadline preservation semantics.
-		if options != nil && update && options.Audience == duration.Guest && !PersonIsGuest(result) && options.Value == nil {
+		if options != nil && index >= 0 && !result.Revoked && options.Audience == duration.Guest && !PersonIsGuest(result) && options.Value == nil {
 			for _, g := range result.Grants {
 				selected := apps == nil || (len(apps) == 1 && apps[0] == "all")
 				for _, app := range apps {
 					selected = selected || app == g.App
 				}
 				if selected {
-					if err := options.Policy.Check(duration.Lifetime{Deadline: g.ExpiresAt, Never: g.ExpiresAt == nil}, duration.Guest, false, options.Now); err != nil {
+					if err := options.Policy.Check(duration.Lifetime{Deadline: g.ExpiresAt, Never: g.ExpiresAt == nil}, duration.Guest, ackNever, options.Now); err != nil {
 						return CodedError{Code: errcode.UsageError, Message: "first guest invitation requires --for/--until within guest policy: " + err.Error()}
 					}
 				}
 			}
 		}
 		var newAppExpiry *time.Time
-		needsDefault := !update
-		if options != nil && update && apps != nil {
+		needsDefault := index < 0 || result.Revoked
+		if options != nil && apps != nil {
 			for _, app := range apps {
 				if app == "all" {
 					for _, svc := range reg.Services {
@@ -251,33 +296,38 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 		}
 		if options != nil && (options.Value != nil || needsDefault) {
 			audience := options.Audience
+			if audience == "" {
+				audience = duration.TailnetMember
+			}
 			if PersonIsGuest(result) {
 				audience = duration.Guest
 			}
 			value := "24h"
 			if options.Value != nil {
 				value = *options.Value
+			} else if permanentDefault {
+				value = "never"
 			}
-			l, err := options.Policy.Resolve(value, audience, options.AckNever, options.Now, time.Local)
+			l, err := options.Policy.Resolve(value, audience, ackNever, options.Now, time.Local)
 			if err != nil {
 				return CodedError{Code: errcode.UsageError, Message: err.Error()}
 			}
 			newAppExpiry = l.Deadline
-			if changeExpiry || !update {
+			if changeExpiry {
 				expiry, changeExpiry = l.Deadline, true
 			}
 		}
 		previous := result.Grants
-		if !update {
+		if !update && (index < 0 || result.Revoked) {
 			for _, op := range result.Invites {
 				if !PersonInviteTerminal(op) {
 					return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("pending invite cleanup for %s; retry people remove before adding again", login)}
 				}
 			}
-			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites, Guest: result.Guest}
+			result = Person{Login: login, Grants: previous, Invites: result.Invites, Guest: result.Guest}
 		}
+		selected := map[string]bool{}
 		if apps != nil {
-			selected := map[string]bool{}
 			all := len(apps) == 1 && apps[0] == "all"
 			if all {
 				for _, svc := range reg.Services {
@@ -308,10 +358,17 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 					return CodedError{Code: errcode.NotFound, Message: fmt.Sprintf("service not found: %s", app)}
 				}
 			}
+			if !update {
+				for _, old := range previous {
+					if _, ok := selected[old.App]; !ok {
+						selected[old.App] = false
+					}
+				}
+			}
 			result.Grants = []PersonGrant{}
 			for app := range selected {
 				g := PersonGrant{App: app, ExpiresAt: newAppExpiry}
-				if update {
+				if update || options != nil {
 					for _, old := range previous {
 						if old.App == app {
 							g = old
@@ -325,6 +382,9 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 		}
 		if changeExpiry {
 			for i := range result.Grants {
+				if apps != nil && !selected[result.Grants[i].App] {
+					continue
+				}
 				result.Grants[i].ExpiresAt = expiry
 				result.Grants[i].Expired = false
 			}
@@ -334,8 +394,11 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 			if update {
 				tool = "people_update"
 			}
+			if options.Tool != "" {
+				tool = options.Tool
+			}
 			for _, grant := range result.Grants {
-				if changeExpiry || !personHasGrant(Person{Grants: previous}, grant.App) {
+				if (changeExpiry && (apps == nil || selected[grant.App])) || !personHasGrant(Person{Grants: previous}, grant.App) {
 					if err := authorizeLifetime(ctx, tool, grant.App, duration.Lifetime{Deadline: grant.ExpiresAt, Never: grant.ExpiresAt == nil}, options.Now); err != nil {
 						return err
 					}
@@ -344,6 +407,32 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 		}
 		if options != nil && options.Audience == duration.Guest {
 			result.Guest = true
+		}
+		if options != nil && options.PrepareAccess {
+			for i := range reg.Services {
+				svc := &reg.Services[i]
+				if apps != nil && !selected[svc.Name] {
+					continue
+				}
+				if !personHasGrant(result, svc.Name) {
+					continue
+				}
+				if svc.Funnel || svc.GuestGate {
+					return CodedError{Code: "people_service_unsupported", Message: "public and browser-guest apps use their existing access settings"}
+				}
+				if GatewayEnabled(reg) {
+					if err := defaultGatewayRoute(reg, svc); err != nil {
+						return err
+					}
+				} else {
+					if svc.PortalOnly {
+						return CodedError{Code: "endpoint_unavailable", Message: svc.Name + " is unavailable while its home is off"}
+					}
+					if !legacyLoginAllowed(svc.AllowedUsers, login) {
+						svc.AllowedUsers = append(svc.AllowedUsers, login)
+					}
+				}
+			}
 		}
 		// Scope is sticky, including after the final grant is removed. An empty
 		// people list must never turn a formerly private app back into allow-all.
@@ -360,8 +449,24 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 			reg.People[index] = result
 		}
 		sort.Slice(reg.People, func(i, j int) bool { return reg.People[i].Login < reg.People[j].Login })
-		return save(path, reg)
-	})
+		if options != nil && options.PrepareAccess {
+			changedApps := map[string]bool{}
+			for app, explicit := range selected {
+				if explicit {
+					changedApps[app] = true
+				}
+			}
+			if apps == nil || update {
+				for _, grant := range previous {
+					changedApps[grant.App] = true
+				}
+			}
+			if err := preserveAccessExcept(before, reg, login, changedApps, options.Now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}()
 	return result, err
 }
 
@@ -541,4 +646,178 @@ func PeopleAccessAt(reg *Registry, svc Service, login string, tags []string, now
 		return false, true
 	}
 	return false, false
+}
+
+func cloneAccessRegistry(reg *Registry) *Registry {
+	copy := *reg
+	copy.Services = append([]Service(nil), reg.Services...)
+	for i := range copy.Services {
+		copy.Services[i].AllowedUsers = append([]string(nil), reg.Services[i].AllowedUsers...)
+	}
+	copy.People = append([]Person(nil), reg.People...)
+	for i := range copy.People {
+		copy.People[i].Grants = append([]PersonGrant(nil), reg.People[i].Grants...)
+	}
+	return &copy
+}
+
+func legacyLoginAllowed(allow []string, login string) bool {
+	for _, entry := range allow {
+		canonical, err := NormalizePerson(entry)
+		if err == nil && !strings.HasPrefix(canonical, "tag:") && canonical == login {
+			return true
+		}
+	}
+	return false
+}
+
+// Inherit only enumerated legacy rights. Never infer a permanent "all" grant
+// from an open service, or rebuild an existing person's revoked/expired grant.
+func inheritedLegacyPerson(reg *Registry, login string) Person {
+	p := Person{Login: login, Grants: []PersonGrant{}}
+	for _, svc := range reg.Services {
+		if PeopleServiceSupported(svc) && legacyLoginAllowed(svc.AllowedUsers, login) {
+			p.Grants = append(p.Grants, PersonGrant{App: svc.Name})
+		}
+	}
+	return p
+}
+
+// The finite policy vocabulary (people, explicit allow entries and admins),
+// plus unknown human/machine controls, exhausts this evaluator's branches.
+// Any access change outside the requested human/app pairs aborts the write.
+func preserveAccessExcept(before, after *Registry, login string, apps map[string]bool, now time.Time) error {
+	logins := map[string]bool{"tslink-unknown-human": true}
+	tags := map[string]bool{"tag:tslink-unknown-machine": true}
+	for _, reg := range []*Registry{before, after} {
+		for _, p := range reg.People {
+			logins[p.Login] = true
+		}
+		if reg.Portal != nil {
+			for _, who := range append([]string{reg.Portal.Owner}, reg.Portal.Admins...) {
+				if who != "" {
+					logins[who] = true
+				}
+			}
+		}
+		for _, svc := range reg.Services {
+			for _, entry := range svc.AllowedUsers {
+				if strings.HasPrefix(entry, "tag:") {
+					tags[entry] = true
+				} else if who, err := NormalizePerson(entry); err == nil {
+					logins[who] = true
+				}
+			}
+		}
+	}
+	if login != "" {
+		logins[login] = true
+	}
+	conflicts := []string{}
+	for _, old := range before.Services {
+		if !PeopleServiceSupported(old) {
+			continue
+		}
+		var next *Service
+		for i := range after.Services {
+			if after.Services[i].Name == old.Name {
+				next = &after.Services[i]
+				break
+			}
+		}
+		if next == nil {
+			continue
+		}
+		changed := false
+		for who := range logins {
+			if who == login && apps[old.Name] {
+				continue
+			}
+			a, _, _ := PrivateAppAccessAt(before, old, who, nil, now)
+			b, _, _ := PrivateAppAccessAt(after, *next, who, nil, now)
+			changed = changed || a != b
+		}
+		for tag := range tags {
+			a, _, _ := PrivateAppAccessAt(before, old, "tslink-unknown-human", []string{tag}, now)
+			b, _, _ := PrivateAppAccessAt(after, *next, "tslink-unknown-human", []string{tag}, now)
+			changed = changed || a != b
+		}
+		if changed {
+			conflicts = append(conflicts, old.Name)
+		}
+	}
+	if len(conflicts) > 0 {
+		sort.Strings(conflicts)
+		return CodedError{Code: errcode.Conflict, Message: "access setup would change existing access to " + strings.Join(conflicts, ", ") + "; set the intended access list before retrying"}
+	}
+	return nil
+}
+
+func PrivateAppAccessAt(reg *Registry, svc Service, login string, tags []string, now time.Time) (bool, *time.Time, bool) {
+	allowed, authoritative := PeopleAccessAt(reg, svc, login, tags, now)
+	canonical, err := ResolvePersonLoginIn(reg, login)
+	if err != nil {
+		return allowed, nil, false
+	}
+	var person *Person
+	if len(tags) == 0 {
+		for i := range reg.People {
+			if reg.People[i].Login == canonical {
+				person = &reg.People[i]
+				if person.Revoked {
+					return false, nil, false
+				}
+				break
+			}
+		}
+		if reg.Portal != nil {
+			for _, admin := range append([]string{reg.Portal.Owner}, reg.Portal.Admins...) {
+				if canonical == admin {
+					return true, nil, true
+				}
+			}
+		}
+	}
+	if !authoritative {
+		allowed = LegacyAccessAllowed(login, tags, svc.AllowedUsers)
+	}
+	if allowed && person != nil {
+		for _, grant := range person.Grants {
+			if grant.App == svc.Name {
+				return true, grant.ExpiresAt, false
+			}
+		}
+	}
+	return allowed, nil, false
+}
+
+func LegacyAccessAllowed(login string, nodeTags []string, allowedUsers []string) bool {
+	if !utf8.ValidString(login) {
+		return false
+	}
+	if len(allowedUsers) == 0 {
+		return true
+	}
+
+	normalizedLogin, loginErr := NormalizePerson(login)
+	for _, entry := range allowedUsers {
+		entry = strings.TrimSpace(entry)
+		// Check tag match: entry is "tag:xxx" and caller's node has that tag
+		if strings.HasPrefix(entry, "tag:") {
+			for _, t := range nodeTags {
+				if t == entry {
+					return true
+				}
+			}
+			continue
+		}
+
+		// Check email/login match
+		canonical, err := NormalizePerson(entry)
+		if loginErr == nil && err == nil && normalizedLogin == canonical {
+			return true
+		}
+	}
+
+	return false
 }

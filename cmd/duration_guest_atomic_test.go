@@ -22,6 +22,7 @@ func TestGuestPolicyAppliesDuringFirstInvitation(t *testing.T) {
 	for _, name := range []string{"first_invitation_without_concurrent_extension", "first_invitation_rejects_concurrent_permanent_extension", "first_invitation_rejects_concurrent_permanent_people_update", "grant_change_before_send_fails_closed", "partial_remote_response_keeps_guest_classification"} {
 		t.Run(name, func(t *testing.T) {
 			paths, now := durationCommandPaths(t)
+			grantTestEnvironment(t, tailapi.MembershipGuest)
 			restoreInviteCommandSeams(t)
 			inviteIsRunningFn = func(string) bool { return true }
 			inviteReadPIDFn = func(string) (int, error) { return 42, nil }
@@ -60,13 +61,13 @@ func TestGuestPolicyAppliesDuringFirstInvitation(t *testing.T) {
 					go func() {
 						var err error
 						if name == "first_invitation_rejects_concurrent_permanent_people_update" {
-							_, err = changePeople(context.Background(), paths, peopleArguments{Who: "alice", For: ptrString("never"), AckNever: true, Now: now}, true)
+							_, err = changePeople(context.Background(), paths, peopleArguments{Who: "alice", For: ptrString("never"), AckNever: false, Now: now}, true)
 						} else {
 							value := "never"
 							if name == "grant_change_before_send_fails_closed" {
 								value = "4d"
 							}
-							_, err = extendLifetime(paths.Registry, extendArguments{Service: "photos", Who: "alice", For: ptrString(value), AckNever: true}, now)
+							_, err = extendLifetime(paths.Registry, extendArguments{Service: "photos", Who: "alice", For: ptrString(value), AckNever: false}, now)
 						}
 						done <- err
 					}()
@@ -75,18 +76,15 @@ func TestGuestPolicyAppliesDuringFirstInvitation(t *testing.T) {
 						if concurrentErr != nil {
 							t.Fatal(concurrentErr)
 						}
-					} else if concurrentErr == nil || !strings.Contains(concurrentErr.Error(), "only for tailnet-member") {
+					} else if concurrentErr == nil || !strings.Contains(concurrentErr.Error(), "ack") {
 						t.Errorf("concurrent permanent change must reject guest policy: %v", concurrentErr)
 					}
 				}
 				return now
 			}
 			result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", For: ptrString("3d"), Invite: true, Now: now}, true)
-			if err != nil {
-				t.Fatal(err)
-			}
 			expectComplete := name != "grant_change_before_send_fails_closed" && name != "partial_remote_response_keeps_guest_classification"
-			if result.Complete != expectComplete {
+			if result.Complete != expectComplete || (err == nil) != expectComplete {
 				t.Fatalf("runtime chain: error=%v complete=%v posts=%d", err, result.Complete, posts.Load())
 			}
 			reg, err := registry.Load(paths.Registry)

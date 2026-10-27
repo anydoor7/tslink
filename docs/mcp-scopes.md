@@ -138,13 +138,15 @@ are stored. Protocol-level unknown tools never execute a mutation.
 The owner reads it with `tslink mcp-audit --json` (the normal versioned envelope)
 or `mcp_audit`. A failed intent write refuses mutation with
 `mcp_audit_unavailable`; a failed completion write explicitly says mutation may
-have occurred. Concurrent writers serialize through a file lock; lock waiting is
+have occurred. When the tool itself had already failed, that failure keeps its
+own code, next steps and data and stays first in the message, and the missing
+receipt is added to it instead of replacing it. Concurrent writers serialize through a file lock; lock waiting is
 bounded. Partial/corrupt, special-file or oversized journals are preserved and
 refused. `status` shows value-free bindings; `doctor` reports risky bindings.
 
 `access_log` and `access_summary` combine the mutation journal with daemon access events, filtering before aggregation and truncation. Reduced roles need explicit app grants; inventory alone does not expose history. The shared duration parser accepts `90m`, `1d12h` and `until <date/time>` with presets `1h`, `8h`, `24h`, `3d`, `7d`. Guest/public defaults remain bounded to 7d; configured audience limits, `max_duration` and binding expiry all apply. Capability-binding lifetimes may be shorter than the 1h grant minimum.
 
-`guest_create`, `guest_list`, `guest_show` and `guest_revoke` remain owner-role tools; creating a guest cannot outlive an expiring owner binding. `people_add`/`people_update`, including their QR arguments, also remain owner-role tools. `extend` permits operators/managers to change an in-scope person's grant; only an owner can select Funnel. Reduced roles cannot change protected portal-owner/admin people records.
+`guest_create`, `guest_list`, `guest_show` and `guest_revoke` remain owner-role tools; creating a guest cannot outlive an expiring owner binding. `people_add`/`people_update`, including their QR arguments, also remain owner-role tools. `extend` permits operators/managers to change an in-scope person's grant; only an owner can select Funnel. Reduced roles cannot change protected portal-owner/admin people records. `add`/`share` are owner-role tools. Their `allow` recipients are permanent when `for` is omitted and the owner binding has no expiry; under a binding with an expiry an omitted `for` gives 24h (refused when the binding ends sooner) and an explicit `never` is refused.
 
 Request decisions require an owner or people-manager role. Remote calls additionally require the current unrevoked human portal owner, checked under the same registry lock as the decision. A tagged principal cannot approve. A people-manager binding can further restrict that owner to listed apps and finite durations; an unrelated manager does not gain approval rights. Local scoped stdio retains the trusted host identity but still applies role, app and duration restrictions. Listing is annotated mutating because expiry/retention maintenance can write the request ledger. Guest list/show and access-log queries remain read-only.
 

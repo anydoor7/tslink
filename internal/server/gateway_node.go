@@ -290,7 +290,11 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 		return
 	}
 	defer closer.Close()
-	handler = gate.handler(RequestLimitsMiddleware(svc, nil, handler))
+	// Authorization decides every answer, but the limits still come first so a
+	// refused request's unread body is disposed of within the owner's read
+	// bound, as on an app's own node. The caller may hold a grant to another
+	// route, so the gate admitted the connection.
+	handler = RequestLimitsAfterAccess(svc, nil, gate.handler, handler)
 	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, nil, run.now, handler)
 	logged := handler
 	handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

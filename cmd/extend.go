@@ -89,7 +89,7 @@ func newExtendCmd() *cobra.Command {
 	c.Flags().StringVar(&relative, "for", "", "New lifetime from now; presets "+duration.Suggestions+"; relative or 'until <date/time>'")
 	c.Flags().StringVar(&until, "until", "", "Absolute deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM; local unless offset supplied")
 	c.Flags().BoolVar(&regrant, "regrant", false, "Explicitly reactivate an expired grant or Funnel TTL; revoked people stay revoked")
-	c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent tailnet-member access; never refused for public/guest")
+	c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent member or device-invited guest access; public/browser access stays finite")
 	return c
 }
 

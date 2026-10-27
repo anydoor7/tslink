@@ -118,18 +118,18 @@ func TestPeopleUnknownPostReconciliationAndCrashRecovery(t *testing.T) {
 	api.dropOnce = "photos"
 	args := peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}
 	first, err := changePeople(context.Background(), paths, args, false)
-	if err != nil || first.Complete || first.Invites[0].State != registry.PersonInviteUnknown {
+	if err == nil || first.Complete || first.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(first, err)
 	}
 	reviewRefreshProof(t, paths)
 	args.Apps = nil
 	retry, err := changePeople(context.Background(), paths, args, true)
-	if err != nil || retry.Complete || retry.Invites[0].Code != "invite_reconciliation_required" || len(retry.Invites[0].ReconcileIDs) != 1 {
+	if err == nil || retry.Complete || retry.Invites[0].Code != "invite_reconciliation_required" || len(retry.Invites[0].ReconcileIDs) != 1 {
 		t.Fatal(retry, err)
 	}
 	args.Reconcile = map[string]string{"photos": "none"}
 	refused, err := changePeople(context.Background(), paths, args, true)
-	if err != nil || refused.Complete || refused.Invites[0].Code != "invite_reconciliation_required" {
+	if err == nil || refused.Complete || refused.Invites[0].Code != "invite_reconciliation_required" {
 		t.Fatal(refused, err)
 	}
 	args.Reconcile = map[string]string{"photos": "1001"}
@@ -172,7 +172,7 @@ func TestPeopleUnknownPostReconciliationAndCrashRecovery(t *testing.T) {
 	args.Reconcile = nil
 	args.PrintLinks = false
 	retry, err = changePeople(context.Background(), paths, args, true)
-	if err != nil || retry.Complete || retry.Invites[0].Code != "invite_reconciliation_required" {
+	if err == nil || retry.Complete || retry.Invites[0].Code != "invite_reconciliation_required" {
 		t.Fatal("sending was retried after restart", retry, err)
 	}
 	removed, err := removePeople(paths.Registry, "alice")
@@ -211,8 +211,8 @@ func TestPeopleRemovalDuringStalledPostAndConcurrentRetry(t *testing.T) {
 	done := make(chan PeopleResult, 1)
 	go func() {
 		v, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-		if e != nil {
-			t.Error(e)
+		if (e == nil) != v.Complete {
+			t.Error("incomplete create must fail", e)
 		}
 		done <- v
 	}()
@@ -226,7 +226,7 @@ func TestPeopleRemovalDuringStalledPostAndConcurrentRetry(t *testing.T) {
 	}()
 	reviewRefreshProof(t, paths)
 	retry, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true}, true)
-	if e != nil || retry.Complete || retry.Invites[0].Code != "people_invite_busy" {
+	if e == nil || retry.Complete || retry.Invites[0].Code != "people_invite_busy" {
 		t.Fatal(retry, e)
 	}
 	removed, e := removePeople(paths.Registry, "alice")
@@ -285,7 +285,7 @@ func TestPeopleInviteContextCancellationBeforeAndAfterPOST(t *testing.T) {
 	testwait.Recv(t, entered, "invitation operation reached POST")
 	cancel()
 	testwait.Recv(t, done, "cancelled POST finished")
-	if e != nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
+	if e == nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(result, e)
 	}
 	p, e := readPerson(paths.Registry, "alice")
@@ -296,7 +296,7 @@ func TestPeopleInviteContextCancellationBeforeAndAfterPOST(t *testing.T) {
 	before, stop := context.WithCancel(context.Background())
 	stop()
 	result, e = changePeople(before, paths, peopleArguments{Who: "bob", Apps: []string{"photos"}, Invite: true}, false)
-	if e != nil || result.Complete || result.Invites[0].State != registry.PersonInvitePending {
+	if e == nil || result.Complete || len(result.Invites) != 0 {
 		t.Fatal("cancelled pre-POST operation must be retryable", result, e)
 	}
 }
@@ -367,7 +367,7 @@ func TestPeopleInviteResultSaveFailureRequiresReconciliation(t *testing.T) {
 	defer api.Close()
 	t.Setenv(tailapi.APIBaseURLEnv, api.URL)
 	first, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if e != nil || first.Complete || first.Invites[0].Code != "invite_state_failed" || first.Invites[0].ID != "1001" {
+	if e == nil || first.Complete || first.Invites[0].Code != "invite_state_failed" || first.Invites[0].ID != "1001" {
 		t.Fatal("failed result save was hidden", first, e)
 	}
 	if e := os.WriteFile(paths.Registry, sending, 0600); e != nil {
@@ -375,7 +375,7 @@ func TestPeopleInviteResultSaveFailureRequiresReconciliation(t *testing.T) {
 	}
 	reviewRefreshProof(t, paths)
 	retried, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true}, true)
-	if e != nil || retried.Complete || retried.Invites[0].Code != "invite_reconciliation_required" {
+	if e == nil || retried.Complete || retried.Invites[0].Code != "invite_reconciliation_required" {
 		t.Fatal("restored unfinished operation POSTed again", retried, e)
 	}
 }
@@ -401,7 +401,7 @@ func TestPeopleUnknownInviteCannotAdoptAnotherPersonsID(t *testing.T) {
 	api := reviewPeopleAPI(t, paths)
 	api.dropOnce = "photos"
 	first, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
-	if e != nil || first.Complete {
+	if e == nil || first.Complete {
 		t.Fatal(first, e)
 	}
 	if _, e := registry.ChangePerson(paths.Registry, "bob", []string{"photos"}, nil, false, false); e != nil {
@@ -412,7 +412,7 @@ func TestPeopleUnknownInviteCannotAdoptAnotherPersonsID(t *testing.T) {
 	}
 	reviewRefreshProof(t, paths)
 	attempt, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Reconcile: map[string]string{"photos": "1001"}}, true)
-	if e != nil || attempt.Complete || attempt.Invites[0].Code != "invite_reconciliation_conflict" {
+	if e == nil || attempt.Complete || attempt.Invites[0].Code != "invite_reconciliation_conflict" {
 		t.Fatal("another person's ID was adopted", attempt, e)
 	}
 	api.mu.Lock()
@@ -528,18 +528,18 @@ func TestPeopleFinishedInvitationReuseAndUnavailableLinks(t *testing.T) {
 	delete(api.pending, "1001")
 	api.mu.Unlock()
 	missing, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, PrintLinks: true}, true)
-	if e != nil || missing.Complete || missing.Invites[0].Code != "invite_link_unavailable" {
+	if e != nil || !missing.Complete || missing.Invites[0].ID == "1001" {
 		t.Fatal(missing, e)
 	}
 	t.Setenv("TSLINK_API_KEY", "")
 	failed, e := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, PrintLinks: true}, true)
-	if e != nil || failed.Complete || failed.Invites[0].Code != "invite_reconciliation_failed" {
+	if e == nil || failed.Complete || failed.Invites[0].Code != "invite_reconciliation_failed" {
 		t.Fatal(failed, e)
 	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if api.posts["photos"] != 1 {
-		t.Fatal("completed invitation re-created", api.posts)
+	if api.posts["photos"] != 2 {
+		t.Fatal("missing invitation must be replaced exactly once", api.posts)
 	}
 }
 

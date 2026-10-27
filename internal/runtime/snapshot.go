@@ -85,12 +85,14 @@ func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
 
 // PortalState is runtime evidence for the independent Tailnet portal node.
 type PortalState struct {
-	Gateway  *GatewayState `json:"gateway,omitempty"`
-	Enabled  bool          `json:"enabled"`
-	Hostname string        `json:"hostname,omitempty"`
-	State    string        `json:"state"`
-	URL      string        `json:"url,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Message         string        `json:"message,omitempty"`
+	UnavailableApps []string      `json:"unavailable_apps,omitempty"`
+	Gateway         *GatewayState `json:"gateway,omitempty"`
+	Enabled         bool          `json:"enabled"`
+	Hostname        string        `json:"hostname,omitempty"`
+	State           string        `json:"state"`
+	URL             string        `json:"url,omitempty"`
+	Error           string        `json:"error,omitempty"`
 }
 
 type GatewayState struct {

@@ -524,6 +524,13 @@
       "short": "Register a local service or file directory",
       "flags": [
         {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge an explicit --for never (omitting --for already means no expiry)"
+        },
+        {
           "name": "ack-unlimited-request-body",
           "type": "bool",
           "default": "false",
@@ -570,6 +577,12 @@
           "default": "false",
           "scope": "local",
           "usage": "Register as ephemeral node (removed on disconnect)"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Limit human --allow access to this long, e.g. 7d; omitted means no expiry, as --allow always was; an explicit never requires --ack-never"
         },
         {
           "name": "force-unsafe-public",
@@ -703,6 +716,13 @@
           "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
         },
         {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Include bearer invitation links for --allow recipients"
+        },
+        {
           "name": "proxy",
           "type": "string",
           "scope": "local",
@@ -774,6 +794,12 @@
             "--dir",
             "--tcp"
           ]
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Limit human --allow access to this date/time; conflicts with --for"
         },
         {
           "name": "wait",
@@ -1378,7 +1404,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Acknowledge permanent tailnet-member access; never refused for public/guest"
+          "usage": "Acknowledge permanent member or device-invited guest access; public/browser access stays finite"
         },
         {
           "name": "for",
@@ -2480,7 +2506,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Acknowledge permanent access for a tailnet member; refused for device-invited guests"
+          "usage": "Acknowledge permanent access for a member or device-invited guest"
         },
         {
           "name": "apps",
@@ -2499,7 +2525,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
+          "usage": "Compatibility option; necessary invitations are always prepared"
         },
         {
           "name": "json",
@@ -2513,10 +2539,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Explicitly include bearer invitation links in output and the guide",
-          "requires": [
-            "--invite"
-          ]
+          "usage": "Explicitly include bearer invitation links in output and the guide"
         },
         {
           "name": "qr",
@@ -2531,7 +2554,6 @@
           "scope": "local",
           "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
           "requires": [
-            "--invite",
             "--print-links"
           ]
         },
@@ -2661,7 +2683,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Acknowledge permanent access for a tailnet member; refused for device-invited guests"
+          "usage": "Acknowledge permanent access for a member or device-invited guest"
         },
         {
           "name": "apps",
@@ -2680,7 +2702,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
+          "usage": "Compatibility option; necessary invitations are always prepared"
         },
         {
           "name": "json",
@@ -2694,10 +2716,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Explicitly include bearer invitation links in output and the guide",
-          "requires": [
-            "--invite"
-          ]
+          "usage": "Explicitly include bearer invitation links in output and the guide"
         },
         {
           "name": "qr",
@@ -2712,7 +2731,6 @@
           "scope": "local",
           "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
           "requires": [
-            "--invite",
             "--print-links"
           ]
         },
@@ -2727,20 +2745,14 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway; requires --invite",
-          "requires": [
-            "--invite"
-          ]
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; @gateway selects the gateway"
         },
         {
           "name": "replace-invite",
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines; requires --invite",
-          "requires": [
-            "--invite"
-          ],
+          "usage": "Owner-confirmed app=recorded-id (or @gateway=recorded-id) replacement after remote absence; preserves grants/deadlines",
           "conflicts": [
             "--apps",
             "--for"
@@ -2888,9 +2900,8 @@
         {
           "name": "hostname",
           "type": "string",
-          "default": "home",
           "scope": "local",
-          "usage": "Portal node hostname"
+          "usage": "Portal node hostname (new portals default to home)"
         },
         {
           "name": "json",
@@ -2903,7 +2914,7 @@
           "name": "owner",
           "type": "string",
           "scope": "local",
-          "usage": "Owner's verified Tailscale login (required)"
+          "usage": "Account that will manage your apps; omission preserves the current owner"
         }
       ],
       "json_result_fields": {
@@ -3097,7 +3108,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Acknowledge permanent member access; guests remain finite"
+          "usage": "Acknowledge permanent member or device-invited guest access"
         },
         {
           "name": "for",
@@ -3895,6 +3906,10 @@
       "exit_code": 3,
       "description": "app or visitor cannot request access"
     },
+    "access_setup_incomplete": {
+      "exit_code": 1,
+      "description": "local access setup or required network sharing is incomplete; retry the same action"
+    },
     "allow_unsupported_for_tcp": {
       "exit_code": 2,
       "description": "HTTP allow lists do not apply to raw TCP"
@@ -3934,6 +3949,10 @@
     "daemon_supervision_unverified": {
       "exit_code": 1,
       "description": "a daemon is running but its supervisor could not be verified, so TSLink does not take it over"
+    },
+    "endpoint_unavailable": {
+      "exit_code": 1,
+      "description": "the requested app has no usable independent endpoint while its gateway is disabled"
     },
     "enrollment_required": {
       "exit_code": 3,
@@ -4131,6 +4150,10 @@
       "exit_code": 3,
       "description": "MCP identity scope refuses this app, tool, duration or expired binding"
     },
+    "membership_unknown": {
+      "exit_code": 1,
+      "description": "recipient membership could not be verified from the complete network directory"
+    },
     "not_found": {
       "exit_code": 5,
       "description": "requested object was not found"
@@ -4222,6 +4245,10 @@
     "portal_upstream_invalid": {
       "exit_code": 2,
       "description": "invalid gateway upstream mode or target"
+    },
+    "recipient_unavailable": {
+      "exit_code": 3,
+      "description": "recipient network account is suspended, unapproved or otherwise unavailable"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

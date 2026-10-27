@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/anydoor7/tslink/internal/registry"
 )
@@ -14,40 +12,15 @@ import (
 // matches any entry in the allowedUsers list.
 // If allowedUsers is empty, all callers are allowed (no restriction).
 func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
-	if !utf8.ValidString(login) {
-		return false
-	}
-	if len(allowedUsers) == 0 {
-		return true
-	}
-
-	normalizedLogin, loginErr := registry.NormalizePerson(login)
-	for _, entry := range allowedUsers {
-		entry = strings.TrimSpace(entry)
-		// Check tag match: entry is "tag:xxx" and caller's node has that tag
-		if strings.HasPrefix(entry, "tag:") {
-			for _, t := range nodeTags {
-				if t == entry {
-					return true
-				}
-			}
-			continue
-		}
-
-		// Check email/login match
-		canonical, err := registry.NormalizePerson(entry)
-		if loginErr == nil && err == nil && normalizedLogin == canonical {
-			return true
-		}
-	}
-
-	return false
+	return registry.LegacyAccessAllowed(login, nodeTags, allowedUsers)
 }
 
 // ACLMiddleware returns an HTTP middleware that enforces access control.
 // allowedUsers is a list of email addresses and/or "tag:xxx" entries.
 // If allowedUsers is empty, all requests are allowed.
-// It uses the Tailscale LocalClient WhoIs to identify the caller.
+// It uses the Tailscale LocalClient WhoIs to identify the caller. A refusal is
+// answered like any other app refusal (writeAccessDenial); the legacy list has
+// no gateway counterpart, so it names no app and links to no dashboard.
 func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +32,7 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 			if localClient == nil {
 				slog.Warn("acl: no local client available")
 				accessDeny(r, "acl")
-				writeAccessDenied(w, "access denied: unable to identify caller")
+				writeAccessDenial(w, r, accessDenial{Visitor: "whois_failed"})
 				return
 			}
 
@@ -70,13 +43,13 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 			if err != nil {
 				slog.Warn("acl: failed to identify caller", "error", err)
 				accessDeny(r, "acl")
-				writeAccessDenied(w, "access denied: unable to identify caller")
+				writeAccessDenial(w, r, accessDenial{Visitor: "whois_failed"})
 				return
 			}
 			if whois == nil || whois.UserProfile == nil {
 				slog.Warn("acl: caller identity missing user profile")
 				accessDeny(r, "acl")
-				writeAccessDenied(w, "access denied: unable to identify caller")
+				writeAccessDenial(w, r, accessDenial{Visitor: "whois_failed"})
 				return
 			}
 
@@ -90,7 +63,7 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 			if !isAllowed(login, nodeTags, allowedUsers) {
 				slog.Info("acl: access denied", "login", login)
 				accessDeny(r, "acl")
-				writeAccessDenied(w, "access denied")
+				writeAccessDenial(w, r, accessDenial{Visitor: "no_grant"})
 				return
 			}
 

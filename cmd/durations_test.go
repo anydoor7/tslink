@@ -151,8 +151,8 @@ func TestPeopleUntilAndDurationPolicyConfig(t *testing.T) {
 	if _, err := runDurationRoot(t, "people", "update", "alice", "--for", "1h", "--until", "2030-01-02"); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatal(err)
 	}
-	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", For: ptrString("never"), Invite: true, AckNever: true}, true); err == nil {
-		t.Fatal("guest never admitted")
+	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", For: ptrString("never"), Invite: true, AckNever: false}, true); err == nil {
+		t.Fatal("never admitted without acknowledgment")
 	}
 	if err := config.SaveGlobalConfig(config.GlobalConfig{Durations: &config.DurationPolicyConfig{PublicMax: "14d"}}); err != nil {
 		t.Fatal(err)
@@ -252,6 +252,7 @@ func TestCompiledExtendAlwaysUsesStableJSON(t *testing.T) {
 
 func TestFirstGuestInvitationRuntimeRefusesPermanentControlPasses(t *testing.T) {
 	paths, now := durationCommandPaths(t)
+	grantTestEnvironment(t, tailapi.MembershipGuest)
 	restoreInviteCommandSeams(t)
 	inviteIsRunningFn = func(string) bool { return true }
 	inviteReadPIDFn = func(string) (int, error) { return 42, nil }

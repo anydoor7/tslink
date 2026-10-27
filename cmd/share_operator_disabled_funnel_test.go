@@ -107,7 +107,11 @@ func TestFunnelShareDoesNotRearmAnOperatorDisabledRecord(t *testing.T) {
 			}
 			// The failure object is the text of the result (A3-1).
 			failure := decodeMCPFailureText(t, result["content"].([]any)[0].(map[string]any)["text"].(string))
-			if message, _ := failure["message"].(string); !strings.Contains(message, strings.ReplaceAll(postureConflict, `\"`, `"`)) {
+			if tc.name == "funnel share without public_ack" {
+				if failure["code"] != "funnel_public_ack_required" {
+					t.Fatal("missing public acknowledgment was not refused", failure)
+				}
+			} else if message, _ := failure["message"].(string); !strings.Contains(message, strings.ReplaceAll(postureConflict, `\"`, `"`)) {
 				t.Fatalf("funnel share of an operator-disabled record = %v, want a posture conflict", failure)
 			}
 			if after, _ := readRegistryBytes(t, filepath.Dir(regPath)); !bytes.Equal(after, before) {

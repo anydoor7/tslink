@@ -20,7 +20,9 @@ const (
 	templateTagPolicy          = "Built-ins intentionally use the uniform tag tag:tslink for private template services."
 )
 
-var templateAddIfMissingFn = registry.AddIfMissing
+var templateAddIfMissingFn = func(path string, svc registry.Service) (bool, error) {
+	return addDefaultService(context.Background(), path, svc, false)
+}
 
 type templateServiceSpec struct {
 	Summary string
@@ -285,7 +287,7 @@ func applyTemplateContext(ctx context.Context, name, regPath string, dryRun bool
 		add := templateAddIfMissingFn
 		if _, scoped := mcpscope.FromContext(ctx); scoped {
 			add = func(path string, svc registry.Service) (bool, error) {
-				return registry.AddIfMissingContext(ctx, path, svc)
+				return addDefaultService(ctx, path, svc, false)
 			}
 		}
 		created, err := add(regPath, svc)

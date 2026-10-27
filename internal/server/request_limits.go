@@ -62,12 +62,66 @@ func (s *serviceLimitWarnings) snapshot() []inspect.WarningView {
 // RequestLimitsMiddleware streams the original body. Deadlines are renewed
 // before each read, so backend backpressure is not counted as client idleness.
 // No response writer wrapper is introduced: Flush, Hijack and 1xx remain intact.
+// A request that declares a body over the limit is refused with 413 at once.
 func RequestLimitsMiddleware(service registry.Service, report func(inspect.WarningView), next http.Handler) http.Handler {
+	return requestLimits(service, report, false, next)
+}
+
+// RequestLimitsAfterAccess is RequestLimitsMiddleware for a backend that sits
+// behind an access check, so the caller is told about the limit only once the
+// check lets them through. A caller who is refused gets the refusal, never
+// the 413 and its app name and configured limit, whatever the size of the
+// request: the gateway decides access before limits, and an app's own node
+// must answer the same request the same way.
+//
+// Everything that protects the connection is unchanged and still comes first:
+// the connection and header budgets, full duplex, the read-idle budget and the
+// bounded disposal of a body nobody read (which a refusal, like a 413, leaves
+// unread). Only the answer to a declared oversize waits for the access check.
+func RequestLimitsAfterAccess(service registry.Service, report func(inspect.WarningView), access func(http.Handler) http.Handler, backend http.Handler) http.Handler {
+	return requestLimits(service, report, true, access(requestRefusalGate(backend)))
+}
+
+// requestRefusal is a refusal of the request itself that a limit decided on
+// sight of its headers and that is answered once the caller is let through.
+type requestRefusal struct {
+	status  int
+	message string
+	report  func() // the owner's warning and log, raised only for a caller let through
+}
+
+type requestRefusalKey struct{}
+
+func (p *requestRefusal) answer(w http.ResponseWriter, r *http.Request) {
+	if p.report != nil {
+		p.report()
+	}
+	accessDeny(r, "limits")
+	http.Error(w, p.message, p.status)
+}
+
+// requestRefusalGate answers a request that limits refused on its headers and
+// whose caller the access check has since let through.
+func requestRefusalGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if refusal, ok := r.Context().Value(requestRefusalKey{}).(*requestRefusal); ok {
+			refusal.answer(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func requestLimits(service registry.Service, report func(inspect.WarningView), afterAccess bool, next http.Handler) http.Handler {
 	limits, err := registry.ResolveRequestLimits(service.RequestLimits)
 	if err != nil {
+		refusal := &requestRefusal{status: http.StatusServiceUnavailable, message: err.Error()}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			accessDeny(r, "limits")
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			if afterAccess {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestRefusalKey{}, refusal)))
+				return
+			}
+			refusal.answer(w, r)
 		})
 	}
 	readIdle, _ := time.ParseDuration(limits.ReadTimeout)
@@ -105,10 +159,12 @@ func RequestLimitsMiddleware(service registry.Service, report func(inspect.Warni
 		defer wrapped.Close()
 		if limits.MaxBodyBytes >= 0 && r.ContentLength > limits.MaxBodyBytes {
 			e := &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service.Name, limits.MaxBodyBytes), limit: fmt.Sprint(limits.MaxBodyBytes), status: http.StatusRequestEntityTooLarge}
-			reject(e)
-			accessDeny(r, "limits")
-			http.Error(w, e.message, e.status)
-			return
+			refusal := &requestRefusal{status: e.status, message: e.message, report: func() { reject(e) }}
+			if !afterAccess {
+				refusal.answer(w, r)
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), requestRefusalKey{}, refusal))
 		}
 		next.ServeHTTP(w, r)
 	})

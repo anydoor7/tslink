@@ -44,6 +44,10 @@ func newPortalFixture(t *testing.T) portalFixture {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "registry.json")
+	portal := &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner", Admins: []string{"admin"}}
+	if err := registry.SetPortal(path, portal); err != nil {
+		t.Fatal(err)
+	}
 	for _, svc := range []registry.Service{
 		{Name: "photos", Type: registry.TypeProxy, Target: "http://127.0.0.1:8001"},
 		{Name: "secret-payroll", Type: registry.TypeProxy, Target: "http://127.0.0.1:8002", AllowedUsers: []string{"legacy", "tag:robot"}},
@@ -56,10 +60,6 @@ func newPortalFixture(t *testing.T) portalFixture {
 	now.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
 	expires := time.Unix(0, now.Load()).Add(time.Hour)
 	if _, err := registry.ChangePerson(path, "alice", []string{"photos"}, &expires, true, false); err != nil {
-		t.Fatal(err)
-	}
-	portal := &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner", Admins: []string{"admin"}}
-	if err := registry.SetPortal(path, portal); err != nil {
 		t.Fatal(err)
 	}
 	who := &atomic.Pointer[apitype.WhoIsResponse]{}

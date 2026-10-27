@@ -56,6 +56,10 @@ type Code struct {
 }
 
 var table = []Code{
+	{"access_setup_incomplete", ExitError, Command, "local access setup or required network sharing is incomplete; retry the same action"},
+	{"endpoint_unavailable", ExitError, Command, "the requested app has no usable independent endpoint while its gateway is disabled"},
+	{"membership_unknown", ExitError, Command, "recipient membership could not be verified from the complete network directory"},
+	{"recipient_unavailable", ExitAuth, Command, "recipient network account is suspended, unapproved or otherwise unavailable"},
 	{"remote_upstream_requires_tag", ExitConflict, Service, "remote upstream requires an observed tagged gateway"},
 	{"gateway_invite_stale", ExitConflict, Command, "gateway invitation targets a replaced node; explicit owner retirement is required"},
 	{"remote_upstream_not_peer", ExitConflict, Service, "remote upstream is not a gateway netstack peer"},

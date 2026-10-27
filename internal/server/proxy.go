@@ -25,7 +25,10 @@ import (
 type LocalClient = local.Client
 
 type ProxyOptions struct {
-	Gateway      *GatewayProxyOptions
+	Gateway *GatewayProxyOptions
+	// App names the app in the response a visitor gets when its backend fails
+	// on a direct app node. Through the gateway, Gateway.App does.
+	App          string
 	Dialer       UpstreamDialer
 	PreserveHost bool
 	// CanonicalHost reads the receiving node's trusted runtime name. It must
@@ -150,14 +153,16 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				return
 			}
 			// TSLink closing the route or node is not the client going away
-			// and not a backend failure: 503, no route-down observation.
+			// and not a backend failure: 503, no route-down observation. The
+			// log keeps route_closed or node_closed; the visitor gets the same
+			// page whichever one it was.
 			if reason, ok := serverCanceled(r, err); ok {
 				accessServerCanceled(r, reason)
+				app := options.App
 				if options.Gateway != nil {
-					gatewayErrorPage(w, r, http.StatusServiceUnavailable, reason, options.Gateway.App+" is being reconfigured; try again", "", false)
-				} else {
-					http.Error(w, "Service unavailable — app is restarting", http.StatusServiceUnavailable)
+					app = options.Gateway.App
 				}
+				appClosingPage(w, r, app)
 				return
 			}
 			// A client that went away is neither a backend failure nor a
@@ -166,22 +171,34 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				accessClientCanceled(w, r)
 				return
 			}
+			if options.Gateway != nil {
+				// The gateway refusing a remote upstream by policy, such as a
+				// tag removed after the request passed the gate, is the same
+				// restriction the gate records: denied with its reason and 503.
+				// It is not a backend failure and never an allowed request.
+				if code, ok := remoteUpstreamRefusal(err); ok {
+					accessDeny(r, code)
+					if options.Gateway.Observe != nil {
+						options.Gateway.Observe(false)
+					}
+					gatewayErrorPage(w, r, http.StatusServiceUnavailable, code, "Remote upstream is unavailable", "")
+					return
+				}
+			}
+			// A genuine backend failure of an authorized request stays allowed
+			// with its 502 or 504 and an error class, as on every entry path.
 			class := backendErrorClass(err)
 			accessBackendFailure(r, class)
+			app, host := options.App, "this host"
 			if options.Gateway != nil {
-				accessDeny(r, "upstream_down")
 				if options.Gateway.Observe != nil {
 					options.Gateway.Observe(false)
 				}
-				gatewayErrorPage(w, r, http.StatusBadGateway, "upstream_down", options.Gateway.App+" on "+options.Gateway.HostLabel+" is not reachable right now", "", false)
-				return
-			}
-			slog.Error("proxy error", "code", "backend_request_failed", "error_class", class)
-			if isTimeout(err) {
-				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)
+				app, host = options.Gateway.App, options.Gateway.HostLabel
 			} else {
-				http.Error(w, "Service unavailable — backend is offline", http.StatusBadGateway)
+				slog.Error("proxy error", "code", "backend_request_failed", "error_class", class)
 			}
+			backendFailurePage(w, r, err, app, host)
 		},
 	}
 	if options.Gateway != nil {
@@ -202,6 +219,21 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 		}
 		proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), canonicalProxyHostKey{}, host)))
 	}), nil
+}
+
+// backendFailurePage answers an authorized request whose backend failed. The
+// direct app node and the gateway share it, so the same failure yields the
+// same status, headers and body on either entry path and the access log's
+// bytes_out cannot differ by path. The visitor-facing code is upstream_down;
+// 504 only when the failure is a timeout, 502 otherwise. The body names no
+// URL, address or port.
+func backendFailurePage(w http.ResponseWriter, r *http.Request, err error, app, host string) {
+	app = appLabel(app)
+	status, message := http.StatusBadGateway, app+" on "+host+" is not reachable right now"
+	if isTimeout(err) {
+		status, message = http.StatusGatewayTimeout, app+" on "+host+" did not respond in time"
+	}
+	gatewayErrorPage(w, r, status, "upstream_down", message, "")
 }
 
 type canonicalProxyHostKey struct{}

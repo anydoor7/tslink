@@ -132,8 +132,8 @@ func (p Policy) Check(l Lifetime, audience Audience, acknowledgeNever bool, now 
 		if l.Deadline != nil {
 			return lifetimeError("never cannot have a deadline")
 		}
-		if audience != TailnetMember {
-			return lifetimeError("never is allowed only for tailnet-member grants")
+		if audience == Public {
+			return lifetimeError("never is allowed only for member or device-invited guest grants; public access must be finite")
 		}
 		if !acknowledgeNever {
 			return lifetimeError("never requires explicit --ack-never (MCP ack_never)")

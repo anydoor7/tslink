@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
@@ -368,12 +369,23 @@ func TestGatewayOfflineAndPreserveHost(t *testing.T) {
 	if code != 502 || !strings.Contains(body, "upstream_down") {
 		t.Fatal(code, body)
 	}
-	for _, e := range f.events.all() {
-		if e.Reason == "upstream_down" && e.Via == "portal" {
-			return
+	// An unreachable backend is an authorized request that failed downstream:
+	// the same allowed 502 with a backend class a direct app node records.
+	var failed []accesslog.Event
+	testwait.Until(t, "offline gateway events", func() bool {
+		failed = failed[:0]
+		for _, e := range f.events.all() {
+			if e.Via == "portal" && e.Status == http.StatusBadGateway {
+				failed = append(failed, e)
+			}
+		}
+		return len(failed) == 2
+	})
+	for _, e := range failed {
+		if e.Decision != "allowed" || e.Reason == "upstream_down" || e.ErrorClass != "connection_refused" {
+			t.Fatalf("offline event: %+v", e)
 		}
 	}
-	t.Fatal("offline event missing")
 }
 
 func TestGatewayPortalOnlyFileAndDashboard(t *testing.T) {

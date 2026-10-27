@@ -172,7 +172,7 @@ func TestPeopleQRFailurePathsAndCommand(t *testing.T) {
 
 func TestPeopleQRCommandReadyPortal(t *testing.T) {
 	paths := peopleTestPaths(t)
-	if _, err := changePortal(paths, portalArguments{Owner: "owner"}, true); err != nil {
+	if _, err := changePortal(paths, portalArguments{Owner: "owner", Gateway: false, GatewaySet: true}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false); err != nil {

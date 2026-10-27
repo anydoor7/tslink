@@ -7,7 +7,7 @@ lifetimes use one grammar and one policy in `internal/duration`.
 | --- | --- |
 | Relative | `90m`, `36h`, `3d`, `1w`, `1d12h`, `1.5h` |
 | Absolute | `until 2030-06-01`, `until 2030-06-01T18:00`, `until 2030-06-01T18:00:00Z` |
-| Permanent | `never`, only for a tailnet-member grant with `--ack-never` (MCP `ack_never: true`) |
+| Permanent | `never`, for member or device-invited guest grants with `--ack-never` (MCP `ack_never: true`) |
 
 Relative components must use unique units in descending order:
 `w,d,h,m,s,ms,us,ns`. Decimal components are allowed; arithmetic is exact to
@@ -28,9 +28,9 @@ Invalid leap days and deadlines at or before the operation time are refused.
 Stored deadlines remain absolute UTC timestamps, unaffected by later TZ changes.
 
 Every new share/access lifetime is at least **1h** from the operation time.
-Guests and public Funnel have a default maximum of **7 x 24h**. Exactly 7d
+Finite guest grants and public Funnel have a default maximum of **7 x 24h**. Exactly 7d
 works; 7d plus 1s does not. Tailnet members have no finite maximum beyond the
-parser's representable range. New people grants and Funnel default to 24h.
+parser's representable range. New `people add` grants and Funnel default to 24h. Recipients of `add --allow`, of the MCP `add`/`share` `allow` field and of `invite device` (CLI and MCP, which have no lifetime flag) default to no expiry, as an allow list always did; for `add --allow`, `--for`/`--until` limit them.
 If the configured maximum is below 24h, give an explicit lifetime within it.
 
 The owner can set the guest/public maximum in their isolated or normal
@@ -46,22 +46,9 @@ types and unknown keys are refused on both load and save. Invalid configuration
 fails duration changes; it never silently falls back to 7d. Config changes apply
 to subsequent operations, without retroactively rewriting stored deadlines.
 
-People without a guest marker or device invitation history are owner-designated tailnet-member
-logins. `--invite`, or any recorded device invitation history for that person,
-uses guest policy, including later updates and extensions. This is deliberately
-conservative: membership is not inferred from acceptance of an invite.
-`never` is refused for guests and all public exposure even with acknowledgement.
-Already persisted permanent state is read and preserved losslessly; new public
-`never` requests are refused. Existing updates that omit expiry retain deadlines,
-including legacy permanent grants; newly added apps get a finite 24h deadline.
+The access action verifies membership using the complete network user directory. Device-invited guests retain their guest classification for later finite updates and extensions; invitation acceptance alone is not proof of membership. Members and device guests may use `never` with `--ack-never`. Browser guest links and public Funnel always remain finite. Existing updates that omit expiry preserve deadlines, including legacy permanent grants; newly added apps default to 24h. `add --allow` is the exception for its own recipients: omitting `--for` creates a permanent grant without `--ack-never` (the allow list is the acknowledgement), re-adding never shortens or lengthens a grant that exists, and an explicit `--for never` still needs `--ack-never`. `invite device` (which has no lifetime flag) gives a grant it creates the same permanent default and leaves a grant that exists alone. A caller that could not create a permanent grant with an explicit `never` (an MCP binding with an expiry, or a reduced role) does not get one by omission either: it keeps the 24h default, which its binding expiry and `max_duration` accept or refuse like any explicit 24h.
 
-The first `--invite` on existing member grants also checks retained deadlines
-against guest policy; supply a finite `--for`/`--until` if they were permanent,
-too long or under 1h remaining. Guest classification is saved atomically with
-those grants before remote work, even if an invitation fails or is deferred.
-Later updates and extensions use that durable classification; it survives removal
-and re-addition. Invitation retries preserve existing deadlines. A grant or
-classification change during an invite send transition returns `conflict` before sending.
+When an existing member is first classified as a guest, retained finite deadlines must fit guest policy; retained permanent grants require acknowledgement. Guest classification is saved atomically with grants before remote work, even when sharing is incomplete. Retries preserve deadlines, and concurrent grant changes before invitation sending fail with `conflict`.
 
 ## Set a new deadline
 

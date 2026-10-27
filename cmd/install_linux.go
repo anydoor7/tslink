@@ -134,6 +134,10 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := initializeDefaultGateway(ctx); err != nil {
+		return err
+	}
+
 	exe, err := linuxExecutablePathFn()
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)

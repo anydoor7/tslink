@@ -14,6 +14,8 @@ import (
 
 const peopleInviteTimeout = 15 * time.Second
 
+var peopleListInvitesFn = tailapi.ListDeviceInvitesForTarget
+
 func peopleInviteCode(err error, fallback string) string {
 	if code, ok := registry.ErrorCode(err); ok {
 		return code
@@ -134,12 +136,11 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		if target.Kind == registry.InviteTargetGateway && existing.TargetKind == registry.InviteTargetGateway {
 			same = true
 		}
-		if same && registry.PersonInviteLive(existing) {
+		if same && registry.PersonInviteLive(existing) && (expected == nil || existing.Attempt > op.Attempt) {
 			op = existing
 			target = personInviteTarget(existing)
 			previous := existing
 			expected = &previous
-			break
 		}
 	}
 	if expected != nil && target.Kind == registry.InviteTargetGateway && target.NodeID != currentTarget.NodeID {
@@ -171,7 +172,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
 	}
 	save := func(next registry.PersonInvite, reset bool) error {
-		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Context: peopleMutationContext(ctx), Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset, ExpectedGrant: expectedGrant})
+		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Context: peopleMutationContext(ctx), Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset, ReplacementConfirmed: reset, ExpectedGrant: expectedGrant})
 		if err == nil {
 			previous := next
 			expected = &previous
@@ -181,7 +182,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	// Replacement is bound to the old ID, so retrying the same owner request
 	// can never replace its newly created successor a second time.
 	replaceID := args.Replace[inviteTargetKey(target)]
-	replace := replaceID != "" && op.State == registry.PersonInviteComplete && op.ID == replaceID
+	replace := replaceID != "" && (op.State == registry.PersonInviteComplete || op.State == registry.PersonInviteAccepted) && op.ID == replaceID
 	if replaceID != "" && !replace {
 		retired := false
 		for _, old := range p.Invites {
@@ -198,7 +199,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	// additionally requires the whole device invite list to be empty.
 	replaceAbsent := op.State == registry.PersonInviteComplete && reconcileID == "none"
 	if replace || replaceAbsent {
-		invites, err := tailapi.ListDeviceInvitesForTarget(ctx, target)
+		invites, err := peopleListInvitesFn(ctx, target)
 		if err != nil {
 			return peopleInviteFailure(op, err, "invite_reconciliation_failed")
 		}
@@ -209,7 +210,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		}
 		retired := op
 		retired.State = registry.PersonInviteReplaced
-		if err := save(retired, false); err != nil {
+		if err := save(retired, true); err != nil {
 			return peopleInviteFailure(op, err, "invite_state_failed")
 		}
 		p.Invites = append(p.Invites, retired)
@@ -239,10 +240,31 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		if err := save(op, op.State == registry.PersonInvitePending); err != nil {
 			return peopleInviteFailure(op, err, "invite_state_failed")
 		}
-	} else if op.State == registry.PersonInviteComplete && args.PrintLinks {
-		invites, err = tailapi.ListDeviceInvitesForTarget(ctx, target)
+	} else if op.State == registry.PersonInviteComplete || op.State == registry.PersonInviteAccepted {
+		invites, err = peopleListInvitesFn(ctx, target)
 		if err != nil {
 			return peopleInviteFailure(op, err, "invite_reconciliation_failed")
+		}
+	}
+	if op.State == registry.PersonInviteComplete || op.State == registry.PersonInviteAccepted {
+		found := false
+		for _, inv := range invites {
+			if inv.ID != op.ID {
+				continue
+			}
+			found = true
+			if inv.Accepted && op.State != registry.PersonInviteAccepted {
+				op.State = registry.PersonInviteAccepted
+				if err := save(op, false); err != nil {
+					return peopleInviteFailure(op, err, "invite_state_failed")
+				}
+			}
+		}
+		if !found {
+			next := args
+			next.Replace = map[string]string{inviteTargetKey(target): op.ID}
+			next.Reconcile = nil
+			return resumePeopleInvite(ctx, path, login, currentTarget, next)
 		}
 	}
 	if op.State == registry.PersonInviteAccepted {
@@ -272,7 +294,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	if err := save(op, false); err != nil {
 		return peopleInviteFailure(op, err, "invite_state_failed")
 	}
-	inv, createErr := inviteCreateDeviceFn(ctx, target, login, true, false, false)
+	inv, createErr := inviteCreateDeviceFn(ctx, target, login, !args.EmailInvite, args.MultiUse, args.AllowExitNode)
 	if createErr != nil {
 		op.State = registry.PersonInvitePending
 		var unknown *tailapi.DeviceInviteOutcomeUnknown
@@ -401,7 +423,7 @@ func reconcilePeopleInvite(ctx context.Context, path, login string, op registry.
 	if err := gatewayInviteProof(path, personInviteTarget(op)); err != nil {
 		return op, nil, err
 	}
-	invites, err := tailapi.ListDeviceInvitesForTarget(ctx, personInviteTarget(op))
+	invites, err := peopleListInvitesFn(ctx, personInviteTarget(op))
 	if err != nil {
 		return op, nil, err
 	}

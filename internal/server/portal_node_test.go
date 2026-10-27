@@ -22,7 +22,29 @@ import (
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/views"
 )
+
+func TestPortalOwnerUsesOnlyUntaggedSelf(t *testing.T) {
+	status := &ipnstate.Status{Self: &ipnstate.PeerStatus{UserID: 42}, User: map[tailcfg.UserID]tailcfg.UserProfile{42: {LoginName: " Self@Example.com "}, 99: {LoginName: "other@example.com"}}}
+	if got := portalSelfLogin(status); got != "self@example.com" {
+		t.Fatal("wrong self owner", got)
+	}
+	tags := views.SliceOf([]string{"tag:gateway"})
+	status.Self.Tags = &tags
+	if got := portalSelfLogin(status); got != "" {
+		t.Fatal("tagged gateway claimed human owner", got)
+	}
+	status.Self.Tags = nil
+	delete(status.User, 42)
+	if got := portalSelfLogin(status); got != "" {
+		t.Fatal("gateway used peer identity", got)
+	}
+	status.Self = nil
+	if got := portalSelfLogin(status); got != "" {
+		t.Fatal("missing self claimed owner", got)
+	}
+}
 
 func TestPortalNodeFailurePaths(t *testing.T) {
 	for _, kind := range []string{"funnel", "mcp-collision", "directory-file", "default-tag", "credential-control-url", "auth", "up", "up-stall", "local-client", "listener", "cancelled", "interactive"} {

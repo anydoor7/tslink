@@ -10,13 +10,14 @@ import (
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // TestReplacingAddReportsWhatItDropped is A1's run4: re-running add to change
 // the port silently dropped the allow list and the tags, opening the service
-// to every tailnet member. Replace stays the contract; the result now says
-// what it replaced.
+// to every tailnet member. Unspecified access and identity now stay intact.
 func TestReplacingAddReportsWhatItDropped(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	regPath := stubAddWritePaths(t)
 	paths := mcpSharePaths(t)
 	paths.Registry = regPath
@@ -46,19 +47,22 @@ func TestReplacingAddReportsWhatItDropped(t *testing.T) {
 	if second.Created {
 		t.Fatal("second add reports created")
 	}
-	if want := []string{"allowed_users", "tags", "target"}; !reflect.DeepEqual([]string(second.ReplacedFields), want) {
+	if want := []string{"target"}; !reflect.DeepEqual([]string(second.ReplacedFields), want) {
 		t.Fatalf("replaced_fields = %v, want %v", second.ReplacedFields, want)
 	}
 	byCode := map[string]string{}
 	for _, warning := range second.Warnings {
 		byCode[warning.Code] = warning.Message
 	}
-	access, ok := byCode[inspect.WarningCodeAccessChangedOnReplace]
-	if !ok || !strings.Contains(access, "allowed_users") || !strings.Contains(access, "tags") {
-		t.Fatalf("warnings = %+v, want %s naming allowed_users and tags", second.Warnings, inspect.WarningCodeAccessChangedOnReplace)
+	if _, ok := byCode[inspect.WarningCodeAccessChangedOnReplace]; ok {
+		t.Fatal("preserved access reported as dropped", second.Warnings)
 	}
-	if identity, ok := byCode[inspect.WarningCodeIdentityResetOnReplace]; !ok || !strings.Contains(identity, "tags") {
-		t.Fatalf("warnings = %+v, want %s naming tags", second.Warnings, inspect.WarningCodeIdentityResetOnReplace)
+	if _, ok := byCode[inspect.WarningCodeIdentityResetOnReplace]; ok {
+		t.Fatal("preserved identity reported as reset", second.Warnings)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil || len(reg.Services) != 1 || !reflect.DeepEqual(reg.Services[0].Tags, []string{"tag:web"}) || len(reg.People) != 1 {
+		t.Fatal("re-add lost identity/access", reg, err)
 	}
 
 	// Repeating the same settings replaces nothing.
@@ -88,7 +92,7 @@ func TestAddHelpSaysItReplaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(command.Long, "add replaces it") || !strings.Contains(command.Long, "replaced_fields") {
+	if !strings.Contains(command.Long, "preserving existing access") || !strings.Contains(command.Long, "replaced_fields") {
 		t.Fatalf("add --help does not say it replaces an existing service:\n%s", command.Long)
 	}
 }

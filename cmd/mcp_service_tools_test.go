@@ -108,6 +108,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+			"for": "for", "until": "until", "ack-never": "ack_never", "print-links": "print_links",
 			"requestable": "requestable",
 			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 			"max-request-body":           "request_limits.max_body",
@@ -730,6 +731,7 @@ func mcpLoadService(t *testing.T, regPath, name string) registry.Service {
 // allow-list, which leaves the service readable by every tailnet member. The assertion is on the persisted registry entry, not
 // on the tool's reply.
 func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
@@ -748,11 +750,11 @@ func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("share with allow: %v", err)
 	}
-	if result.Status != shareStatusReady || result.URL != "https://guarded.tail.ts.net" {
+	if result.Status != shareStatusReady || result.URL != "https://guarded.tail.test.ts.net" {
 		t.Fatalf("share result = %+v", result)
 	}
 	svc := mcpLoadService(t, paths.Registry, "guarded")
-	if len(svc.AllowedUsers) != 2 || svc.AllowedUsers[0] != "person@example.com" || svc.AllowedUsers[1] != "tag:ops" {
+	if len(svc.AllowedUsers) != 1 || svc.AllowedUsers[0] != "tag:ops" || len(result.Access) != 1 || !result.Access[0].Complete {
 		t.Fatalf("persisted allow-list = %v, want the normalized principals", svc.AllowedUsers)
 	}
 	if len(svc.Tags) != 1 || svc.Tags[0] != "tag:tslink" {
@@ -762,13 +764,11 @@ func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
 		t.Fatalf("private share persisted public exposure: %+v", svc)
 	}
 
-	// An unqualified share still records no allow-list, so the audit's
-	// "readable by every tailnet member" reading of that state stays true and
-	// the allow parameter is demonstrably the thing that changes it.
+	// A new unqualified app is routed and scoped, with no implicit human grant.
 	if _, err := actions.share(context.Background(), shareRequest{Target: "3001", Name: "open", Ephemeral: true}); err != nil {
 		t.Fatalf("share without allow: %v", err)
 	}
-	if open := mcpLoadService(t, paths.Registry, "open"); len(open.AllowedUsers) != 0 {
+	if open := mcpLoadService(t, paths.Registry, "open"); len(open.AllowedUsers) != 0 || !open.PeopleScoped || open.PortalRoute == nil {
 		t.Fatalf("share without allow persisted %v", open.AllowedUsers)
 	}
 }
@@ -1013,6 +1013,7 @@ func TestMCPAddArgumentTranslation(t *testing.T) {
 // own path over the same params and requires the same verdict, because both
 // call buildService and resolveAddService.
 func TestMCPAddSharesTheCLIAdmissionGate(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	actions := defaultMCPActions(paths, io.Discard)
@@ -1022,11 +1023,11 @@ func TestMCPAddSharesTheCLIAdmissionGate(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 	result, ok := value.(AddResult)
-	if !ok || result.Name != "web" || !result.Created || !result.URLPending {
+	if !ok || result.Name != "web" || !result.Created || result.URLPending || len(result.Access) != 1 || !result.Access[0].Complete {
 		t.Fatalf("add result = %T(%+v)", value, value)
 	}
 	svc := mcpLoadService(t, paths.Registry, "web")
-	if len(svc.AllowedUsers) != 1 || svc.AllowedUsers[0] != "person@example.com" {
+	if len(svc.AllowedUsers) != 0 || !svc.PeopleScoped {
 		t.Fatalf("persisted allow-list = %v", svc.AllowedUsers)
 	}
 
@@ -1215,7 +1216,7 @@ func TestMCPInviteToolsUseTheCLIInviteFunctions(t *testing.T) {
 	writeGlobalConfigFixture(t, `{"mcp":{"allow_elevated_invites":true}}`)
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
-	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeTCP, Target: "localhost:3000", Port: 3000}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
 	}
 

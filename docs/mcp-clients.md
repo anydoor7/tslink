@@ -127,7 +127,7 @@ registered in `cmd/mcp.go`; the client receives the full text.
 | `doctor` | Run local TSLink diagnostics and return findings by severity. |
 | `logs` | Read recent lines from the local TSLink daemon log. |
 | `invite_user` | Sends a real Tailscale invitation. Confirm the address and role with the user. A role other than `member` needs `mcp.allow_elevated_invites: true` in `config.json`. |
-| `invite_device` | Sends a real device-sharing invitation outside the tailnet. Confirm the service and address with the user. `allow_exit_node: true` needs `mcp.allow_elevated_invites: true` in `config.json`. |
+| `invite_device` | Sends a real device-sharing invitation outside the tailnet. Confirm the service and address with the user. For an HTTP or file service it also saves the recipient's access with no expiry (a grant they already have keeps its deadline; a binding with an expiry gets a 24h grant or a refusal); use `people_add` with `for`/`until` to limit it. `allow_exit_node: true` needs `mcp.allow_elevated_invites: true` in `config.json`. |
 | `invite_list` | List open tailnet user invitations and TSLink-owned device invitations. |
 | `invite_revoke` | Cancels a real outstanding invitation on the user's tailnet, so confirm with the user before calling this. |
 | `invite_resend` | Sends another real invitation email to the original recipient, so confirm with the user before calling this. |

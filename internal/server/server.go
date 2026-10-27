@@ -2376,6 +2376,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 		identity = NewStaticIdentityResolver(lc)
 		h, err2 := NewProxyHandlerWithOptions(svc.Target, identity, ProxyOptions{
+			App:          svc.Name,
 			PreserveHost: svc.PreserveHost,
 			CanonicalHost: func() string {
 				return canonicalHostFor(tsnetSrv, runtimeHost)
@@ -2405,7 +2406,10 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		return fmt.Errorf("unknown service type %q", svc.Type)
 	}
 
-	var guestPrivate http.Handler
+	// access is the node's access check for tailnet callers, nil for a Funnel
+	// node, which has none. guestPath is the people file a guest-gated node's
+	// guest gate reads.
+	var access func(http.Handler) http.Handler
 	var guestPath string
 
 	// ACL middleware: enforce per-service access control
@@ -2423,11 +2427,9 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		if err != nil {
 			return err
 		}
+		access = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)
 		if svc.GuestGate {
-			guestPrivate = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
 			guestPath = peoplePath
-		} else {
-			handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
 		}
 	}
 
@@ -2459,12 +2461,21 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	limitedHandler := RequestLimitsMiddleware(svc, reportLimit, handler)
+	// A caller who is not let through is told so, not the request limit: the
+	// limits wrap the access check and answer an oversized request only after
+	// it (the gateway decides access before limits too).
+	var limitedPrivate http.Handler
+	if access != nil {
+		limitedPrivate = RequestLimitsAfterAccess(svc, reportLimit, access, handler)
+	} else {
+		limitedPrivate = RequestLimitsMiddleware(svc, reportLimit, handler)
+	}
 	if svc.GuestGate {
-		handler = newGuestGate(guestPath, svc, serverNowFn, s.accessWriter, RequestLimitsMiddleware(svc, reportLimit, guestPrivate), limitedHandler)
+		// A guest is authenticated by the guest gate before the limits apply.
+		handler = newGuestGate(guestPath, svc, serverNowFn, s.accessWriter, limitedPrivate, RequestLimitsMiddleware(svc, reportLimit, handler))
 		handlerCloser = handler.(*guestGate)
 	} else {
-		handler = limitedHandler
+		handler = limitedPrivate
 	}
 	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, handler)
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv"
 )
@@ -77,6 +79,162 @@ func TestAccessLogCLIAndMCP(t *testing.T) {
 	formatAccessHealth(h, &out)
 	if !strings.Contains(out.String(), "drops=0") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestAccessTrafficSurfaces(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../internal/accesslog/testdata/traffic-events.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []json.RawMessage
+	if err = json.Unmarshal(raw, &events); err != nil {
+		t.Fatal(err)
+	}
+	var lines bytes.Buffer
+	for _, e := range events {
+		if err = json.Compact(&lines, e); err != nil {
+			t.Fatal(err)
+		}
+		lines.WriteByte('\n')
+	}
+	if err = os.MkdirAll(filepath.Join(dir, "access-log"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "access-log", "2030-01-02-000000.jsonl"), lines.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wantRaw, err := os.ReadFile("../internal/accesslog/testdata/traffic-expected.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want any
+	if err = json.Unmarshal(wantRaw, &want); err != nil {
+		t.Fatal(err)
+	}
+	logCmd, _, err := rootCmd.Find([]string{"access", "log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = logCmd.Flags().Set("limit", "1"); err != nil {
+		t.Fatal(err)
+	}
+	rootCmd.PersistentFlags().Set("json", "true")
+	t.Cleanup(func() {
+		logCmd.Flags().Set("limit", "100")
+		rootCmd.PersistentFlags().Set("json", "false")
+	})
+	stdout := captureStdout(t, func() {
+		if err := logCmd.RunE(logCmd, nil); err != nil {
+			t.Error(err)
+		}
+	})
+	var envelope map[string]any
+	if err = json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	data := envelope["data"].(map[string]any)
+	if envelope["schema_version"] != float64(1) || len(data["events"].([]any)) != 1 || !reflect.DeepEqual(data["summary"].(map[string]any)["traffic"], want) {
+		t.Fatal(stdout)
+	}
+	if err = validateMCPJSONSchema(accessLogOutputSchema("access_log"), data, "$"); err != nil {
+		t.Fatal(err)
+	}
+	paths := mcpSharePaths(t)
+	paths.Registry = filepath.Join(dir, "registry.json")
+	var out bytes.Buffer
+	actions := defaultMCPActions(paths, &out)
+	for _, tool := range []string{"access_log", "access_summary"} {
+		result, err := callMCPTool(context.Background(), actions, tool, json.RawMessage(`{"limit":1}`))
+		if err != nil || result.IsError {
+			t.Fatal(tool, result, err)
+		}
+		b, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err = json.Unmarshal(b, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if err = validateMCPJSONSchema(accessLogOutputSchema(tool), payload, "$"); err != nil {
+			t.Fatal(err)
+		}
+		summary := payload
+		if tool == "access_log" {
+			summary = payload["summary"].(map[string]any)
+		}
+		if !reflect.DeepEqual(summary["traffic"], want) {
+			t.Fatalf("%s: %s", tool, b)
+		}
+	}
+	// Exercise the actual MCP scope-to-query path, not only Filter in isolation.
+	for _, apps := range [][]string{{"docs"}, {}} {
+		session := mcpscope.Session{Who: "viewer", Scope: mcpscope.Scope{Role: "viewer", Apps: apps, Inventory: true}}
+		actions.session = &session
+		for _, tool := range []string{"access_log", "access_summary"} {
+			result, err := callMCPTool(context.Background(), actions, tool, json.RawMessage(`{"limit":1}`))
+			if err != nil || result.IsError {
+				t.Fatal(tool, result, err)
+			}
+			b, _ := json.Marshal(result.StructuredContent)
+			var payload map[string]any
+			if err = json.Unmarshal(b, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if tool == "access_log" {
+				payload = payload["summary"].(map[string]any)
+			}
+			http := payload["traffic"].(map[string]any)["http"].(map[string]any)
+			if http["requests"] != float64(len(apps)) || strings.Contains(string(b), "hidden@example.com") || strings.Contains(string(b), "photos") || strings.Contains(string(b), "secret") {
+				t.Fatalf("scope leaked: %s", b)
+			}
+		}
+	}
+	r, err := readAccessLogAt(dir, accessLogArguments{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	formatAccessLog(r, &out)
+	for _, want := range []string{"HTTP: 13 requests (10 allowed, 3 denied), 76 bytes in, 135 bytes out", "traffic human alice@example.com app photos: 3 requests", "traffic tagged app photos: 1 request (1 allowed, 0 denied)", "last request 2030-01-02T03:04:20Z, last allowed 2030-01-02T03:04:11Z", "TCP: 2 connections (1 allowed, 1 denied), 2 closed, 100 bytes in, 200 bytes out, 1 recorded gate drop\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %s", want, out.String())
+		}
+	}
+}
+
+func TestAccessExplainReasonsWithoutRoute(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	dir, _ := config.Dir()
+	path := filepath.Join(dir, "registry.json")
+	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://127.0.0.1:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	s, err := accesslog.New(dir, accesslog.Options{}, func() time.Time { return at })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Record(accesslog.Event{App: "photos", Kind: "http", Decision: "denied", Reason: "expired"}) {
+		t.Fatal("record dropped")
+	}
+	s.Close()
+	<-s.Done()
+	r, err := accessExplainResultForPath(path, "photos")
+	if err != nil || r.ReasonsUnavailable || len(r.Reasons) != 1 || r.Reasons[0].Key != "expired" || r.Reasons[0].Denied != 1 {
+		t.Fatalf("non-routed reasons: %+v %v", r, err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "access-log", "2030-01-01-000000.jsonl"), []byte("corrupt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err = accessExplainResultForPath(path, "photos")
+	if err != nil || !r.ReasonsUnavailable || len(r.Reasons) != 0 {
+		t.Fatalf("read failure hidden: %+v %v", r, err)
 	}
 }
 func TestAccessLogArgumentValidation(t *testing.T) {
@@ -240,5 +398,49 @@ func TestAccessTextUnknownDeniedAndOptionUnknown(t *testing.T) {
 	}
 	if err := updateAccessLogOption(&config.GlobalConfig{}, "unknown", "value"); err == nil {
 		t.Fatal("unknown option accepted")
+	}
+}
+
+func TestFormatAccessLogCountsAgreeWithTheirNouns(t *testing.T) {
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	traffic := func(n int, size int64) accesslog.HTTPTraffic {
+		return accesslog.HTTPTraffic{Requests: n, Allowed: n, BytesIn: size, BytesOut: size, LastRequestAt: &at, LastAllowedAt: &at}
+	}
+	render := func(n int, size int64) string {
+		var out bytes.Buffer
+		formatAccessLog(accesslog.Result{Summary: accesslog.Summary{Traffic: accesslog.TrafficSummary{
+			HTTP:       traffic(n, size),
+			PeopleApps: []accesslog.SubjectAppTraffic{{SubjectKind: "human", Login: "alice@example.com", App: "photos", HTTPTraffic: traffic(n, size)}},
+			Apps:       []accesslog.AppTraffic{{App: "photos", HTTPTraffic: traffic(n, size)}},
+			TCP:        accesslog.TCPTraffic{Connections: n, Allowed: n, Closed: n, BytesIn: size, BytesOut: size, GateDrops: n},
+		}}}, &out)
+		return out.String()
+	}
+	for _, tc := range []struct {
+		n     int
+		wants []string
+		bads  []string
+	}{
+		{1, []string{
+			"HTTP: 1 request (1 allowed, 0 denied), 1 byte in, 1 byte out,",
+			"traffic human alice@example.com app photos: 1 request (",
+			"traffic app photos: 1 request (",
+			"TCP: 1 connection (1 allowed, 0 denied), 1 closed, 1 byte in, 1 byte out, 1 recorded gate drop\n",
+		}, []string{"1 requests", "1 bytes", "1 connections", "1 recorded gate drops"}},
+		// Zero and larger counts stay plural.
+		{0, []string{"HTTP: 0 requests (", "0 bytes in, 0 bytes out", "TCP: 0 connections (", "0 recorded gate drops\n"}, nil},
+		{2, []string{"HTTP: 2 requests (", "2 bytes in, 2 bytes out", "TCP: 2 connections (", "2 recorded gate drops\n"}, nil},
+	} {
+		got := render(tc.n, int64(tc.n))
+		for _, want := range tc.wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("count %d: missing %q in %s", tc.n, want, got)
+			}
+		}
+		for _, bad := range tc.bads {
+			if strings.Contains(got, bad) {
+				t.Errorf("count %d: found %q in %s", tc.n, bad, got)
+			}
+		}
 	}
 }

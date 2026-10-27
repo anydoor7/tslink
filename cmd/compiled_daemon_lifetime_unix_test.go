@@ -15,11 +15,35 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
 )
 
+// seedExistingEmptyInstallation makes configDir an existing, empty install
+// instead of a first run.
+//
+// A config directory with no registry, no node state and no supervisor
+// evidence is a first run, and a real `tslink serve` in one initializes the
+// default home gateway and starts its tailnet node (registry.initializeGateway).
+// Starting a node reads host facts through tailscale (on Linux that runs
+// `loginctl list-sessions`) and reaches for the control plane. A test that
+// launches the compiled serve daemon only to observe its process lifetime owns
+// none of that, so it starts from an installation serve leaves alone: an
+// existing empty registry is explicitly not a first run.
+func seedExistingEmptyInstallation(t *testing.T, configDir string) {
+	t.Helper()
+	regPath := filepath.Join(configDir, "registry.json")
+	if err := os.WriteFile(regPath, []byte(`{"schema_version":1,"services":[]}`), 0o600); err != nil {
+		t.Fatalf("seed existing empty registry: %v", err)
+	}
+}
+
 func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	configDir := t.TempDir()
+	// This test owns the daemon's process lifetime, not the default gateway: a
+	// first-run config directory would make the daemon start the home node and
+	// query the host's login sessions before it notices its launcher is gone.
+	seedExistingEmptyInstallation(t, configDir)
 	pidPath := filepath.Join(configDir, "tslink.pid")
 	launcher := exec.Command(compiledTSLinkBinary(t), "serve", "--daemon", "--json", "--no-browser")
 	launcher.Env = append(os.Environ(),
@@ -117,4 +141,15 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	}
 
 	testwait.Until(t, fmt.Sprintf("detached daemon %d exited after its launcher", daemonPID), func() bool { return !daemon.IsProcessRunning(daemonPID) })
+
+	// The seeded installation is what keeps this test off the gateway start
+	// path; a daemon that initialized the default gateway anyway would have
+	// started the home node, so the isolation is checked, not assumed.
+	reg, loadErr := registry.Load(filepath.Join(configDir, "registry.json"))
+	if loadErr != nil {
+		t.Fatalf("load registry after the daemon exited: %v", loadErr)
+	}
+	if reg.Portal != nil {
+		t.Fatalf("the daemon initialized the default gateway in an existing installation: portal=%+v", reg.Portal)
+	}
 }

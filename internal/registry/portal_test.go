@@ -2,7 +2,9 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -126,7 +128,7 @@ func TestPortalReadOnlyBounds(t *testing.T) {
 
 func TestPortalConcurrentRegistryWriters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.json")
-	if _, err := Add(path, Service{Name: "photos", Type: TypeProxy, Target: "http://localhost:8000"}); err != nil {
+	if _, err := Add(path, Service{Name: "photos", Type: TypeProxy, Target: "http://localhost:8000", AllowedUsers: []string{"owner"}}); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -176,5 +178,124 @@ func TestPortalMutationPreservesCorruptRegistry(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("failed mutation changed registry: %s %v", after, err)
+	}
+}
+
+func TestDefaultGatewayInitialization(t *testing.T) {
+	ctx := context.Background()
+	for _, legacy := range []string{"new", "schema1", "schema2", "schema3", "nodes", "portal-nodes", "runtime.json", "node-ownership.json", "supervisor"} {
+		t.Run(legacy, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "registry.json")
+			if strings.HasPrefix(legacy, "schema") {
+				if err := os.WriteFile(path, []byte(fmt.Sprintf(`{"schema_version":%s,"services":[]}`, strings.TrimPrefix(legacy, "schema"))), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if legacy == "nodes" || legacy == "portal-nodes" {
+				if err := os.MkdirAll(filepath.Join(dir, legacy, "old-node"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if legacy == "runtime.json" || legacy == "node-ownership.json" {
+				if err := os.WriteFile(filepath.Join(dir, legacy), []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, _ := os.ReadFile(path)
+			prior := func() (bool, error) { return legacy == "supervisor", nil }
+			if err := InitializeGateway(ctx, path, prior); err != nil {
+				t.Fatal(err)
+			}
+			reg, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if legacy != "new" {
+				if reg.Portal != nil {
+					t.Fatal("legacy installation was migrated")
+				}
+				after, _ := os.ReadFile(path)
+				if !bytes.Equal(before, after) {
+					t.Fatal("legacy bytes changed")
+				}
+				return
+			}
+			if !GatewayEnabled(reg) || reg.SchemaVersion != 3 || reg.Portal.Owner != "" || reg.Portal.Gateway.Ports != DefaultGatewayPorts() {
+				t.Fatalf("first initialization: %+v", reg)
+			}
+			if err := DisablePortal(path); err != nil {
+				t.Fatal(err)
+			}
+			before, _ = os.ReadFile(path)
+			if err := InitializeGateway(ctx, path, prior); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := os.ReadFile(path)
+			reg, _ = Load(path)
+			if GatewayEnabled(reg) || !bytes.Equal(before, after) {
+				t.Fatal("reinstall reenabled the disabled gateway")
+			}
+		})
+	}
+}
+
+func TestDefaultGatewayFirstRegistrationsAndOwner(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.json")
+	// EnsureDir creates an empty nodes directory before the first registration.
+	if err := os.Mkdir(filepath.Join(dir, "nodes"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("read initialized registry")
+	}
+	var wg sync.WaitGroup
+	for _, name := range []string{"one", "two", "three"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			_, err := AddWithDefaults(ctx, path, Service{Name: name, Type: TypeProxy, Target: "http://localhost:3000"}, false, nil)
+			if err != nil {
+				t.Error(err)
+			}
+		}(name)
+	}
+	wg.Wait()
+	reg, err := Load(path)
+	if err != nil || !GatewayEnabled(reg) || len(reg.Services) != 3 {
+		t.Fatalf("first adds: %+v %v", reg, err)
+	}
+	ports := map[int]bool{}
+	for _, svc := range reg.Services {
+		if svc.PortalOnly || !svc.PeopleScoped || svc.PortalRoute == nil || ports[svc.PortalRoute.Port] {
+			t.Fatalf("route/node defaults: %+v", svc)
+		}
+		ports[svc.PortalRoute.Port] = true
+	}
+	if err := BootstrapPortalOwner(ctx, path, "other", "wrong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := BootstrapPortalOwner(ctx, path, "home", "Owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := BootstrapPortalOwner(ctx, path, "home", "stranger"); err != nil {
+		t.Fatal(err)
+	}
+	reg, _ = Load(path)
+	if reg.Portal.Owner != "owner" {
+		t.Fatalf("owner=%q", reg.Portal.Owner)
+	}
+	if err := DisablePortal(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddWithDefaults(ctx, path, Service{Name: "four", Type: TypeProxy, Target: "http://localhost:4000"}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	reg, _ = Load(path)
+	if GatewayEnabled(reg) || reg.Services[3].PortalRoute != nil {
+		t.Fatal("add reversed the off switch")
 	}
 }

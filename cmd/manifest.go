@@ -917,17 +917,11 @@ func platformNeutralCommandShort(path, current string) string {
 }
 
 func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []string) {
-	if commandPath == "tslink people update" && (name == "reconcile-invite" || name == "replace-invite") {
-		requires = []string{"--invite"}
-	}
 	if commandPath == "tslink people update" && name == "replace-invite" {
 		conflicts = []string{"--apps", "--for"}
 	}
-	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "print-links" {
-		requires = []string{"--invite"}
-	}
 	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "qr-invite" {
-		requires = []string{"--invite", "--print-links"}
+		requires = []string{"--print-links"}
 	}
 	if commandPath == "tslink add" {
 		switch name {

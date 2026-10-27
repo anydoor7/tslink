@@ -54,7 +54,7 @@ func TestPortalCLIAndMCP(t *testing.T) {
 			t.Fatalf("MCP configuration: %+v %v", reg, err)
 		}
 	}
-	for _, raw := range []string{`{}`, `{"owner":"owner","funnel":true}`, `{"owner":"owner","admins":["bad login"]}`, `{"owner":"owner","hostname":"Bad/Name"}`, `{"owner":"owner","funnel":"true"}`, `{"owner":"owner","unknown":true}`} {
+	for _, raw := range []string{`{"owner":"owner","funnel":true}`, `{"owner":"owner","admins":["bad login"]}`, `{"owner":"owner","hostname":"Bad/Name"}`, `{"owner":"owner","funnel":"true"}`, `{"owner":"owner","unknown":true}`} {
 		r, err := callMCPTool(context.Background(), defaultMCPActions(paths, io.Discard), "portal_enable", json.RawMessage(raw))
 		if err != nil || !r.IsError {
 			t.Fatalf("bad MCP accepted %s: %+v %v", raw, r, err)
@@ -125,7 +125,7 @@ func TestPortalStatusDoctorAndGuide(t *testing.T) {
 		}
 	}
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false)
-	if err != nil || !strings.Contains(result.Message, snapshot.Portal.URL) || !strings.Contains(result.Message, "share the home node") {
+	if err != nil || !strings.Contains(result.Message, "has access to photos") || strings.Contains(result.Message, "share the home node") {
 		t.Fatalf("guide=%+v %v", result, err)
 	}
 	var b bytes.Buffer

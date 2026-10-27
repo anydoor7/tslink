@@ -1,0 +1,184 @@
+{
+  "http": {
+    "requests": 13,
+    "allowed": 10,
+    "denied": 3,
+    "bytes_in": 76,
+    "bytes_out": 135,
+    "last_request_at": "2030-01-02T03:04:20Z",
+    "last_allowed_at": "2030-01-02T03:04:11Z"
+  },
+  "people_apps": [
+    {
+      "subject_kind": "human",
+      "login": "\"alice@example.com\"",
+      "app": "photos",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 1,
+      "bytes_out": 2,
+      "last_request_at": "2030-01-02T03:04:06Z",
+      "last_allowed_at": "2030-01-02T03:04:06Z"
+    },
+    {
+      "subject_kind": "human",
+      "login": "alice@example.com",
+      "app": "docs",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 4,
+      "bytes_out": 9,
+      "last_request_at": "2030-01-02T03:04:03Z",
+      "last_allowed_at": "2030-01-02T03:04:03Z"
+    },
+    {
+      "subject_kind": "human",
+      "login": "alice@example.com",
+      "app": "old-download",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 0,
+      "bytes_out": 12,
+      "last_request_at": "2030-01-02T03:04:11Z",
+      "last_allowed_at": "2030-01-02T03:04:11Z"
+    },
+    {
+      "subject_kind": "human",
+      "login": "alice@example.com",
+      "app": "photos",
+      "requests": 3,
+      "allowed": 2,
+      "denied": 1,
+      "bytes_in": 40,
+      "bytes_out": 67,
+      "last_request_at": "2030-01-02T03:04:02Z",
+      "last_allowed_at": "2030-01-02T03:04:01Z"
+    },
+    {
+      "subject_kind": "human",
+      "login": "hidden@example.com",
+      "app": "secret",
+      "requests": 1,
+      "allowed": 0,
+      "denied": 1,
+      "bytes_in": 0,
+      "bytes_out": 6,
+      "last_request_at": "2030-01-02T03:04:20Z",
+      "last_allowed_at": null
+    },
+    {
+      "subject_kind": "human",
+      "login": "Éloise@example.com",
+      "app": "photos",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 8,
+      "bytes_out": 10,
+      "last_request_at": "2030-01-02T03:04:04Z",
+      "last_allowed_at": "2030-01-02T03:04:04Z"
+    },
+    {
+      "subject_kind": "human",
+      "login": "éloise@example.com",
+      "app": "photos",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 9,
+      "bytes_out": 11,
+      "last_request_at": "2030-01-02T03:04:05Z",
+      "last_allowed_at": "2030-01-02T03:04:05Z"
+    },
+    {
+      "subject_kind": "public",
+      "subject": "public",
+      "app": "photos",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 2,
+      "bytes_out": 3,
+      "last_request_at": "2030-01-02T03:04:07Z",
+      "last_allowed_at": "2030-01-02T03:04:07Z"
+    },
+    {
+      "subject_kind": "tagged",
+      "subject": "tagged",
+      "app": "photos",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 3,
+      "bytes_out": 4,
+      "last_request_at": "2030-01-02T03:04:08Z",
+      "last_allowed_at": "2030-01-02T03:04:08Z"
+    },
+    {
+      "subject_kind": "unknown",
+      "subject": "unknown",
+      "app": "photos",
+      "requests": 2,
+      "allowed": 1,
+      "denied": 1,
+      "bytes_in": 9,
+      "bytes_out": 11,
+      "last_request_at": "2030-01-02T03:04:10Z",
+      "last_allowed_at": "2030-01-02T03:04:09Z"
+    }
+  ],
+  "apps": [
+    {
+      "app": "docs",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 4,
+      "bytes_out": 9,
+      "last_request_at": "2030-01-02T03:04:03Z",
+      "last_allowed_at": "2030-01-02T03:04:03Z"
+    },
+    {
+      "app": "old-download",
+      "requests": 1,
+      "allowed": 1,
+      "denied": 0,
+      "bytes_in": 0,
+      "bytes_out": 12,
+      "last_request_at": "2030-01-02T03:04:11Z",
+      "last_allowed_at": "2030-01-02T03:04:11Z"
+    },
+    {
+      "app": "photos",
+      "requests": 10,
+      "allowed": 8,
+      "denied": 2,
+      "bytes_in": 72,
+      "bytes_out": 108,
+      "last_request_at": "2030-01-02T03:04:10Z",
+      "last_allowed_at": "2030-01-02T03:04:09Z"
+    },
+    {
+      "app": "secret",
+      "requests": 1,
+      "allowed": 0,
+      "denied": 1,
+      "bytes_in": 0,
+      "bytes_out": 6,
+      "last_request_at": "2030-01-02T03:04:20Z",
+      "last_allowed_at": null
+    }
+  ],
+  "tcp": {
+    "connections": 2,
+    "allowed": 1,
+    "denied": 1,
+    "closed": 2,
+    "bytes_in": 100,
+    "bytes_out": 200,
+    "gate_drops": 1
+  }
+}

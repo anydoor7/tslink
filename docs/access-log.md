@@ -12,9 +12,135 @@ tslink access log --since 2030-01-01T00:00:00Z --until 2030-01-02T00:00:00Z --js
 
 The CLI uses the usual versioned result envelope, with `events`, `summary`, and `truncated` under `data`. The read-only MCP tools `access_log` and `access_summary` accept the same filters and return these payloads directly. Both declare `readOnlyHint`; they require no credential, contact no remote service, and create no files or locks. Viewer, app-operator and people-manager scopes may query explicit permitted apps. Filtering happens before counts and event limits. Inventory-only viewers have no access-history app grants. Global or mixed-app receipts are omitted unless every affected app is in scope.
 
+## Traffic summaries
+
+`summary.traffic` separates app traffic from audit event counts. MCP
+`access_summary` returns that same structure as `traffic` alongside the existing
+summary fields. Text output includes HTTP totals, subject/app rows, app totals
+and TCP counters. The original `summary.count`, `people`, `apps`, `reasons` and
+their mixed-event semantics are unchanged; raw events remain schema version 1.
+
+| Field | Meaning |
+|---|---|
+| `traffic.http` | All matching `kind: http` events, including file requests and completed upgrades |
+| `traffic.people_apps[]` | HTTP counters by `subject_kind`, canonical `login` and registry `app` name; non-human rows use `subject` instead of `login` |
+| `traffic.apps[]` | The same HTTP counters grouped by registry `app` name |
+| `traffic.tcp` | `connections`, `allowed`, `denied` from TCP opens; `closed`, `bytes_in`, `bytes_out` from closes; separate `gate_drops` |
+
+Each HTTP total or row has `requests`, `allowed`, `denied`, `bytes_in`,
+`bytes_out`, `last_request_at` and `last_allowed_at`. Times are event timestamps;
+`last_request_at` advances for any result, while `last_allowed_at` advances only
+for allowed events. Missing times are JSON `null`. An allowed backend error is
+still allowed: these counters describe TSLink's authorization decision, not
+successful application responses. This includes an app that cannot be reached:
+through the gateway or on a direct app node the request is `allowed`, with a
+502 (504 for a timeout) and an `error_class`. Both entry paths generate the same
+visitor response for that failure, so the recorded `bytes_out` is the same too.
+So do a refusal (`denied`) and a request TSLink cuts while closing a route or
+node: the same page on either entry path, with the visitor codes listed in the
+[portal guide](portal.md), so a person's `bytes_out` for an app does not depend
+on the entry path, apart from the intentional gateway-only exceptions listed
+below. The reason recorded for the same refusal can still differ by path. The one
+exception is a remote app route that the gateway itself refuses (an
+untagged gateway, a host outside its tailnet, no such peer, an unreadable
+status): the request is `denied` with the matching `remote_upstream_*` reason and
+status 503, whether the refusal is caught before or while the upstream
+connection is made, and it never advances `last_allowed_at`. Gateway events
+written by earlier versions for an unreachable app are `denied` with reason
+`upstream_down`; retained history is not rewritten, so those events keep
+counting as denied until retention removes them. Aggregation keys, decisions and
+rules are the same in both modes.
+Empty queries return zero counters and empty
+arrays, not missing traffic fields.
+
+Human rows use `subject_kind: human`. Canonical logins trim only ASCII whitespace
+(`space`, tab, CR, LF, vertical tab and form feed) and lowercase only `A` through
+`Z`. Unicode letters and quotes are preserved. Multiple devices, direct app
+nodes and gateway routes merge into the same `(login, app)` row. `via`, node
+names, URLs, port numbers and the gateway's `home` hostname never enter that
+key. App names are used exactly as recorded, without case conversion.
+
+Non-human requests are collected into one bucket per kind and app:
+`subject_kind` and `subject` are both `tagged`, `public` or `unknown`. Tags take
+precedence over any login left by a legacy producer; tagged traffic is never
+attributed to the enrolling user. The recorded `public` login selects the
+public bucket. Missing or redacted logins select unknown, without guessing from
+node names or IP prefixes. Only distinct `login` values in human rows count as
+identified people. Rows sort by subject kind, login and app; app totals sort by
+app. Bucket and human totals together equal the HTTP total.
+
+TCP opens do not count as HTTP requests, and their byte fields are ignored;
+only close events contribute TCP bytes. `conn_gate_drop` opens contribute only
+to `gate_drops`, which counts recorded, rate-limited diagnostics and is not an
+exact count of all rejected connections. Close events can fall in a different
+query window from their opens, so `closed` need not equal `connections`.
+MCP, lifecycle and guest audit receipts contribute no traffic counters.
+
+**Intentional gateway-only exceptions.** The two entry paths give a caller the
+same decision, the same response and the same person and app HTTP counts and
+bytes for every request, with these deliberate exceptions. Each exists because
+the gateway serves many apps from one hostname and one node, which an app's own
+node does not, and each is a security boundary rather than a gap.
+
+1. **A caller the gateway drops before TLS.** A caller who holds no grant the
+   gateway routes (for example a revoked person with no routed app left) is
+   closed by the connection gate before any TLS byte, so the caller never sends
+   a request: there is no HTTP event, no identity and no person or app row, only
+   a rate-limited, unidentified `tcp_open` event with reason `conn_gate_drop`
+   (counted in `gate_drops`). The same caller on an app's own node gets a 403 and
+   an identified `denied` HTTP event that counts toward that person's and app's
+   `denied`, `requests` and `bytes_out`. The gate refuses before TLS so that an
+   unauthorized caller is never answered by the gateway, and the drop is
+   intentionally not attributed to a person. A caller who holds at least one
+   routed grant, or whose connection was admitted before the grant was revoked,
+   reaches HTTP and gets the same identified denial on both paths.
+2. **`cross_origin_blocked`.** Gateway routes share one hostname across ports, and
+   cookies are not isolated by port, so a page of one app could otherwise make a
+   browser send an authorized caller's request to another app. A cross-origin
+   browser request that is not a top-level GET/HEAD navigation is therefore
+   refused on a gateway route (403, `denied`, reason `cross_origin_blocked`)
+   unless the route was added with `--allow-cross-origin`. An app's own node has
+   its own origin, so the same authorized request is allowed there and counted as
+   allowed. This is checked after the access decision, so it never changes the
+   answer for a caller who is refused.
+3. **`route_changed`.** A gateway route serves the configuration it was started
+   with, while every request re-reads the registry. If the app's target, scope,
+   route or limits have changed since, or the app is gone, the request is refused
+   (403, `denied`, reason `route_changed`) rather than forwarded to a stale
+   upstream under a policy the owner has replaced, until the route is rebuilt. An
+   app's own node is stopped or reloaded instead, and a request it cuts is
+   `node_closed`, so the reason exists only on the gateway.
+4. **Malformed request targets.** A gateway route refuses a `CONNECT` request or
+   an absolute-form target (a request line that names a host) from an admitted
+   caller (403, `denied`, reason `no_grant`), because one gateway node serves
+   many apps and a request must not choose its own destination. An app's own
+   node serves exactly one app and does not apply this check.
+
+WebSocket `bytes_out` is observed to be equal on both paths in manual runs but is
+not asserted by the test suite, because frame timing varies.
+
+Every filter, including app authority, runs before aggregation. `--limit 1`
+and `--limit 10000` therefore return identical traffic for the same filters.
+Current gateway configuration is not consulted, and switching modes does not
+split or reset history. `access explain` reads retained reason counts for both
+routed and direct apps, and reports an unreadable history separately.
+
+Bytes retain the event measurements described below: uploads and downloads
+remain separate; their sum is payload/stream traffic, not WireGuard or billing
+bytes. Summaries cover only retained matching records. Disabled logging,
+retention, drops and `missing_history` still limit coverage; an empty query
+does not prove a whole day had no traffic. A corrupt or unreadable history is
+an error, not a zero-traffic answer.
+
+The portable consumer fixtures are
+[`traffic-events.json`](../internal/accesslog/testdata/traffic-events.json) and
+[`traffic-expected.json`](../internal/accesslog/testdata/traffic-expected.json).
+They include both entry modes, devices, ASCII/Unicode identities, non-human
+buckets, upload/download bytes, legacy missing-upload fields and mixed receipts.
+
 ## Recorded metadata and privacy
 
-Each HTTP request that reaches the service handler produces one `kind: http` event. File services use the same chain. TCP emits `tcp_open` and `tcp_close`, with a connection ID, timestamps, identity and byte counts. Events carry schema version 1, UTC time, app/service, method, status, bytes in/out, duration in milliseconds, allowed/denied decision, optional denial reason and optional matched grant (`person` or `legacy_allow`). A client that goes away while its allowed request is being proxied, before the backend's response starts, is recorded as `decision: allowed`, status `499` and reason `client_canceled`; it is never a 5xx, a denial or a backend observation. Once the response headers have been forwarded, the status the client received is final: a client that goes away during the response body (for example a stream or long poll) keeps the forwarded status, with no cancellation reason and no `error_class`, and causes no health or route-down observation. A client that goes away before TSLink could identify it (during WhoIs) produces no event, because no access decision was made. Requests TSLink cancels itself are not client cancellations, denials or backend failures: those in flight when a gateway route is torn down get reason `route_closed`, and those an app node cuts when it stops or reloads get reason `node_closed`. An app node cuts the requests still running when its graceful shutdown runs out of time; a guest-gated app also ends its active guest requests as soon as it stops, and a valid guest's request ended that way is `node_closed`, with no guest denial event (a grant that expires or is revoked during a request is still denied as `expired` or `revoked`). Before the response starts, such a request is recorded as `decision: allowed` with status `503`; once the response has started, it keeps the forwarded status and adds the reason. It never adds `error_class` or marks the backend down, and a response that completed before the teardown keeps its normal reason. A real backend failure keeps its 502 or 504 status and adds `error_class`: `connection_refused`, `connection_reset`, `tls`, `timeout` or `other`, never a URL, host or address. The combined query also includes `mcp` mutation receipts, `lifecycle` authority changes and `guest` link decisions.
+Each HTTP request that reaches the service handler produces one `kind: http` event. File services use the same chain. TCP emits `tcp_open` and `tcp_close`, with a connection ID, timestamps, identity and byte counts. Events carry schema version 1, UTC time, app/service, method, status, bytes in/out, duration in milliseconds, allowed/denied decision, optional denial reason and optional matched grant (`person` or `legacy_allow`). A client that goes away while its allowed request is being proxied, before the backend's response starts, is recorded as `decision: allowed`, status `499` and reason `client_canceled`; it is never a 5xx, a denial or a backend observation. Once the response headers have been forwarded, the status the client received is final: a client that goes away during the response body (for example a stream or long poll) keeps the forwarded status, with no cancellation reason and no `error_class`, and causes no health or route-down observation. A client that goes away before TSLink could identify it (during WhoIs) produces no event, because no access decision was made. Requests TSLink cancels itself are not client cancellations, denials or backend failures: those in flight when a gateway route is torn down get reason `route_closed`, and those an app node cuts when it stops or reloads get reason `node_closed`. An app node cuts the requests still running when its graceful shutdown runs out of time; a guest-gated app also ends its active guest requests as soon as it stops, and a valid guest's request ended that way is `node_closed`, with no guest denial event (a grant that expires or is revoked during a request is still denied as `expired` or `revoked`). Before the response starts, such a request is recorded as `decision: allowed` with status `503`, and both entry paths answer it with the same page (visitor code `app_restarting`); once the response has started, it keeps the forwarded status and adds the reason. It never adds `error_class` or marks the backend down, and a response that completed before the teardown keeps its normal reason. A real backend failure keeps its 502 or 504 status and adds `error_class`: `connection_refused`, `connection_reset`, `tls`, `timeout` or `other`, never a URL, host or address. It stays `decision: allowed` on a direct app node and through the gateway alike, and both answer it the same way: 504 when the backend timed out, 502 otherwise, with visitor code `upstream_down` (an HTML page for a browser navigation, the JSON error envelope for other clients). A remote route the gateway refuses by policy (`remote_upstream_requires_tag`, `remote_upstream_outside_tailnet`, `remote_upstream_not_peer`, `remote_upstream_unavailable`) is not a backend failure: it is `decision: denied` with that reason and status 503. The combined query also includes `mcp` mutation receipts, `lifecycle` authority changes and `guest` link decisions.
 
 Identity is attested by WhoIs: account login, node name and tags. Tagged nodes have no account login. Public Funnel connections use the `public` login and never retain an IP address. Tailnet connections to the same listener retain their WhoIs identity. Classification uses the trusted `ipn.FunnelConn` transport marker, including TLS/HTTP2 and TSLink connection wrappers; headers cannot select an identity. An unknown private caller has only a coarse IPv4 /24 or IPv6 /48 prefix. Identity enrichment for otherwise unprotected requests occurs in the background with a 250 ms lookup budget; logging does not add an identity lookup to request serving. People/ACL decisions supply their fresh authorization identity to the record.
 
@@ -34,7 +160,7 @@ Service JSON uses `access_log_path_mode`; global JSON uses `access_log.path_mode
 
 Per-app changes reconcile through the registry watcher; global options take effect after restarting `serve`. Disable HTTP/TCP/guest-use recording with `tslink config set access-log-enabled false`. Existing retained history remains queryable until it is evicted. Mutation receipts remain enabled independently; their bounded journal is required for MCP authority changes.
 
-`acl` denotes TSLink's legacy HTTP allow-list; `people` denotes people authorization or an unavailable people registry/identity; `expired` denotes a matched person's expired grant; `limits` denotes HTTP upload/read protections or a TCP connection-cap refusal; `preserve_host_unavailable` denotes the canonical-host refusal. An app's own 403 is still an allowed gateway request. Tailnet-policy packets and incomplete headers rejected before HTTP handler dispatch cannot become HTTP request records. Health probes contact the local backend directly and do not enter this chain; a person opening `/health` through the gateway is logged normally.
+The visitor code in the page a refused request gets is not this reason: the same refusal is `no_grant`, `expired`, `revoked`, `whois_failed` or `registry_unavailable` to the visitor on both entry paths (see the [portal guide](portal.md)). `acl` denotes TSLink's legacy HTTP allow-list; `people` denotes people authorization or an unavailable people registry/identity; `expired` denotes a matched person's expired grant; `limits` denotes HTTP upload/read protections or a TCP connection-cap refusal (access is decided first on both paths, so an oversized request from a refused caller is recorded as the refusal, not as `limits`); `preserve_host_unavailable` denotes the canonical-host refusal. An app's own 403 is still an allowed gateway request. Tailnet-policy packets and incomplete headers rejected before HTTP handler dispatch cannot become HTTP request records. Health probes contact the local backend directly and do not enter this chain; a person opening `/health` through the gateway is logged normally.
 
 HTTP byte counts measure body bytes actually read and response bytes written, excluding HTTP headers and framing. They do not infer the unread part of an early-rejected upload. Upgraded HTTP connections count plaintext stream bytes after hijack, including the upgrade response handshake. TCP counts actual stream bytes. Long-lived streams publish their completed HTTP/close event when the handler/connection finishes.
 

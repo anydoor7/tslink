@@ -257,26 +257,26 @@ func gatewayBrowser(r *http.Request) bool {
 	return htmlQ > 0 && htmlQ >= jsonQ
 }
 
-var gatewayPage = template.Must(template.New("gateway-message").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TSLink</title><h1>{{.Message}}</h1>{{if .Dashboard}}<p><a href="{{.Dashboard}}">Back to your apps</a></p>{{if .Requestable}}<p><a href="{{.Dashboard}}/#request-title">Request access</a></p>{{end}}{{end}}</html>`))
+var gatewayPage = template.Must(template.New("gateway-message").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TSLink</title><h1>{{.Message}}</h1>{{if .Dashboard}}<p><a href="{{.Dashboard}}">Back to your apps</a></p>{{end}}</html>`))
 
-func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason, message, dashboard string, requestable bool) {
+// gatewayErrorPage answers with a page TSLink generates: HTML for a browser
+// navigation, the JSON error envelope otherwise. dashboard, when set, is linked
+// from the HTML page; an app refusal passes none.
+func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason, message, dashboard string) {
 	w.Header().Set("Cache-Control", "no-store")
 	if gatewayBrowser(r) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 		w.WriteHeader(status)
 		if r.Method != http.MethodHead {
-			_ = gatewayPage.Execute(w, struct {
-				Message, Dashboard string
-				Requestable        bool
-			}{message, dashboard, requestable})
+			_ = gatewayPage.Execute(w, struct{ Message, Dashboard string }{message, dashboard})
 		}
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if r.Method != http.MethodHead {
-		_ = json.NewEncoder(w).Encode(output.NewFailureForError("portal route", registry.CodedError{Code: reason, Message: message}))
+		_ = json.NewEncoder(w).Encode(output.NewFailureForError(appResponseCommand, registry.CodedError{Code: reason, Message: message}))
 	}
 }
 
@@ -321,11 +321,7 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		visible := false
 		deny := func(reason string, requestable bool) {
 			accessDeny(r, reason)
-			message := gatewayDenyMessage(reason)
-			if (visible || requestable) && (reason == "no_grant" || reason == "expired" || reason == "revoked") {
-				message += ": " + g.svc.Name
-			}
-			gatewayErrorPage(w, r, 403, reason, message, g.dashboard, requestable)
+			writeAccessDenial(w, r, accessDenial{Visitor: reason, App: g.svc.Name, Visible: visible, Requestable: requestable})
 		}
 		who := g.who(r.Context(), r.RemoteAddr)
 		if who == nil && accessGoneBeforeDecision(r) {
@@ -382,7 +378,9 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		accessAttest(r, who, grant)
 		reason := gatewayDecisionReason(reg, *current, who, now, allowed)
 		if !allowed {
-			deny(reason, current.Requestable)
+			// A requestable app is named only to a caller who may request it.
+			_, canRequest := requestVisitor(reg, who)
+			deny(reason, current.Requestable && canRequest)
 			return
 		}
 		if r.Method == http.MethodConnect || r.URL.IsAbs() || r.URL.Host != "" || g.authority == "" {
@@ -396,7 +394,7 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		if g.upstreamCheck != nil {
 			if code := g.upstreamCheck(r.Context()); code != "" {
 				accessDeny(r, code)
-				gatewayErrorPage(w, r, 503, code, "Remote upstream is unavailable", g.dashboard, false)
+				gatewayErrorPage(w, r, 503, code, "Remote upstream is unavailable", g.dashboard)
 				return
 			}
 		}
@@ -407,23 +405,4 @@ func (g *gatewayGate) handler(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), gatewayWhoKey{}, who)))
 	})
-}
-
-func gatewayDenyMessage(reason string) string {
-	switch reason {
-	case "whois_failed":
-		return "Unable to identify this connection"
-	case "registry_unavailable":
-		return "Access policy is temporarily unavailable"
-	case "cross_origin_blocked":
-		return "Cross-origin request blocked"
-	case "route_changed":
-		return "This route is being reconfigured"
-	case "expired":
-		return "Your access has expired"
-	case "revoked":
-		return "Your access has been revoked"
-	default:
-		return "You do not have access to this app"
-	}
 }

@@ -47,7 +47,7 @@ func mcpInviteFixture(t *testing.T, config string) mcpActions {
 	}
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
-	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeTCP, Target: "localhost:3000", Port: 3000}); err != nil {
 		t.Fatal(err)
 	}
 	return defaultMCPActions(paths, io.Discard)
@@ -146,7 +146,7 @@ func TestCLIElevatedInvitesNeedNoOptIn(t *testing.T) {
 	writeGlobalConfigFixture(t, `{"mcp":{"enabled":false}}`)
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
-	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeTCP, Target: "localhost:3000", Port: 3000}); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer

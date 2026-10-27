@@ -1,6 +1,6 @@
 # One home address for your apps
 
-TSLink works with Tailscale, independent project. The optional home portal gives each visitor one address to bookmark. It lists private HTTP/file apps according to the access enforced for their current Tailscale identity, with the app address, recent health and any access deadline.
+TSLink works with Tailscale, independent project. New installations enable a persistent home gateway that gives each visitor one address to bookmark. Existing installations keep their current mode until explicitly changed. It lists private HTTP/file apps according to the access enforced for their current Tailscale identity, with the app address, recent health and any access deadline.
 
 ```sh
 tslink portal enable --owner you@example.com
@@ -21,7 +21,7 @@ In directory-only mode, the portal uses a separate node and `portal-nodes/<hostn
 
 The portal and private HTTP/file app listeners use the same `AppAccessDecisionAt` model (`AppAccessAt` exposes its listener decision). The result separates actual enforcement, directory visibility and grant expiry. Grants use the people registry's `PeopleAccessAt` and `PersonGrantActiveAt`: a deadline is exclusive, an expiry latch remains denied, and a tombstoned person sees no apps even if a legacy allow rule remains. Unknown people use the existing service allow list; an unscoped service with an empty allow list is available to tailnet peers. A tagged machine follows explicit tag allow rules and cannot inherit the human profile's grants or administrator role.
 
-`--owner` is the exact Tailscale login of the person maintaining these apps. It is required because WhoIs does not tell the portal which visitor has an owner/admin role in the Tailscale admin console. `--admins` explicitly designates additional **TSLink app administrators**. These identities can open all private HTTP/file apps, and the portal shows them every registered app. This is an authorization choice; choose these identities carefully. Roles are retained on disable, while a people revocation tombstone takes precedence. They do not override Tailscale network policy or the app's own login. Raw TCP does not enforce `allow` or WhoIs; the registry refuses `allowed_users` for TCP. Ungated public Funnel bypasses the private identity gate. TCP and ungated public services cannot be restricted per person by TSLink, so their cards appear **only for the owner/admins**, as an inventory. Their cards say: "Anyone who can reach this device can connect; TSLink can't limit it per person." Omitting them from other visitors' directories does not decide or deny those visitors' network/public access. Private HTTP and file cards exactly follow the shared enforcement decision, including legacy allow rules, grants, deadlines, tags and tombstones.
+`--owner` is the exact Tailscale login of the person maintaining these apps. A new gateway may temporarily have no owner or admins. After credential-free enrollment, only that gateway's verified untagged self account can become owner. Tagged/OAuth enrollment leaves ownership unset and reports "Choose the account that will manage your apps"; use the local command to choose it. Remote callers cannot claim an unset owner. Omitting `--owner` or `--admins` on re-enable preserves the existing identities. `--admins` explicitly designates additional **TSLink app administrators**. These identities can open all private HTTP/file apps, and the portal shows them every registered app. This is an authorization choice; choose these identities carefully. Roles are retained on disable, while a people revocation tombstone takes precedence. They do not override Tailscale network policy or the app's own login. Raw TCP does not enforce `allow` or WhoIs; the registry refuses `allowed_users` for TCP. Ungated public Funnel bypasses the private identity gate. TCP and ungated public services cannot be restricted per person by TSLink, so their cards appear **only for the owner/admins**, as an inventory. Their cards say: "Anyone who can reach this device can connect; TSLink can't limit it per person." Omitting them from other visitors' directories does not decide or deny those visitors' network/public access. Private HTTP and file cards exactly follow the shared enforcement decision, including legacy allow rules, grants, deadlines, tags and tombstones.
 
 Guest-gated public apps also appear only in owner/admin inventory. Their private listener still enforces people grants and revocation; public requests require a guest link.
 
@@ -39,7 +39,7 @@ Funnel deadlines use the effective service type: after expiry and private-listen
 
 When enabled, `tslink people add/update` includes the portal in its plain-language guide. Once its runtime URL is exact, the guide says to bookmark that one address. Before enrollment completes it tells the owner to use `tslink status --urls` to find it.
 
-The guide keeps the address verified before its own grant update, so the first grant includes an already-running home portal link.
+The guide reads exact runtime evidence after grants and routes are saved. Stale registry fingerprints or mismatched daemon identities cannot supply an address or invitation target.
 
 Visitors need Tailscale installed, connected and signed in with the granted login. In directory-only mode, for someone outside your tailnet, **share the home node as well as the app nodes** through Tailscale's Machines page. Per-app invitation links do not make the portal node reachable, and the directory-only portal does not send invitations or alter ACLs. Sharing only the portal does not grant network access to its app links. [Tailscale device sharing](https://tailscale.com/docs/features/sharing) grants access only to the shared machine and remains subject to network policy. Tagged machines on another tailnet cannot use user device shares.
 
@@ -55,7 +55,7 @@ The response uses TSLink's normal versioned envelope:
 {"type":"tslink.result","ok":true,"schema_version":1,"command":"portal apps","code":0,"data":{"apps":[{"name":"photos","url":"https://photos.example.ts.net","health":"healthy","expires_at":"2030-01-02T12:00:00Z","expiry":"Access ends January 2, 2030 at 12:00 UTC."}]}}
 ```
 
-MCP tools `portal_enable` (required `owner`; optional `hostname`, `admins`, `funnel`, `gateway`, `gateway_ports`, `gateway_tag`) and `portal_disable` use the same command implementation. Over HTTP MCP, only the current portal owner can enable or replace portal settings, including owner and admin identities. The check uses the same exact, untagged, non-revoked WhoIs owner identity as the request tools and is repeated under the registry write lock. Other callers receive `access_request_owner_required`, including attempts to set, clear or replace the owner or change admins. An unset owner cannot be claimed remotely. Use local `tslink portal enable --owner <login>` or stdio MCP to set the first owner or recover a lost owner identity. With gateway mode on, HTTP MCP `portal_disable` also requires the current portal owner, checked in the registry write transaction; other callers receive `access_request_owner_required`. Disable retains owner/admin identities. `funnel: true` and `tslink portal enable --funnel` fail explicitly with `portal_funnel_refused`. Persisted `portal.funnel: true` also refuses admission. The only production listener is tsnet `ListenTLS`; there is no public Funnel or host-interface listener.
+MCP tools `portal_enable` (optional `owner`, `hostname`, `admins`, `funnel`, `gateway`, `gateway_ports`, `gateway_tag`) and `portal_disable` use the same command implementation. Over HTTP MCP, only the current portal owner can enable or replace portal settings, including owner and admin identities. The check uses the same exact, untagged, non-revoked WhoIs owner identity as the request tools and is repeated under the registry write lock. Other callers receive `access_request_owner_required`, including attempts to set, clear or replace the owner or change admins. An unset owner cannot be claimed remotely. Use local `tslink portal enable --owner <login>` or stdio MCP to set the first owner or recover a lost owner identity. With gateway mode on, HTTP MCP `portal_disable` also requires the current portal owner, checked in the registry write transaction; other callers receive `access_request_owner_required`. Disable retains owner/admin identities. `funnel: true` and `tslink portal enable --funnel` fail explicitly with `portal_funnel_refused`. Persisted `portal.funnel: true` also refuses admission. The only production listener is tsnet `ListenTLS`; there is no public Funnel or host-interface listener.
 
 HTTP MCP checks request listing and approval/denial against the current, untagged, non-revoked portal owner inside the registry write transaction. Any person add, update, removal, restoration or grant change targeting the current owner or a portal admin requires that same owner, checked under the lock before mutation; a revoked owner cannot restore itself remotely. Refusals use `access_request_owner_required`. Local CLI and stdio MCP remain trusted recovery paths, and ordinary-person restoration is unchanged.
 
@@ -67,7 +67,7 @@ The people guide supports `--qr` and `--qr-png <file>` for this exact portal URL
 
 ## Gateway mode: one device share for routed apps
 
-Gateway mode is opt-in. The portal becomes one persistent tsnet node serving the
+Gateway mode is the default for genuinely new installations. Existing registries and residual node/runtime/supervisor state are never silently migrated. The portal becomes one persistent tsnet node serving the
 home page on port 443 and each routed app on its own HTTPS port. A visitor outside
 your tailnet accepts one share of this gateway node. Local people grants then
 determine which routed apps they can open, including registered remote apps.
@@ -82,7 +82,7 @@ tslink portal route add photos
 tslink add notes --proxy localhost:3000 --portal-only
 tslink add files --dir /srv/shared --portal-only --portal-port 8445
 tslink portal route list --json
-tslink people add alice@example.com --apps photos,notes,files --for 7d --invite --print-links --qr
+tslink people add alice@example.com --apps photos,notes,files --for 7d --print-links --qr
 ```
 
 Use the exact URLs from status, for example `https://home.example.ts.net:8443/`.
@@ -96,11 +96,11 @@ selects an explicit port. `portal route remove photos` removes only that route.
 A portal-only app must retain a route; remove that app with `tslink remove`
 instead. TCP, Funnel and browser guest-link apps cannot be gateway routes.
 
-Running `portal enable` without gateway options retains an existing gateway.
+New private HTTP/file apps receive stable routes automatically when the gateway is enabled; their own app nodes and URLs remain. Authorization also routes supported existing apps as needed. Running `portal enable` without gateway options preserves an existing mode and defaults a new portal to gateway mode.
 `--gateway` alone retains its existing range and tag. Range or tag options require
 `--gateway`. After removing every route, `portal enable --owner you@example.com
 --gateway=false` explicitly turns gateway mode off. `portal disable` closes the
-home listener and all routes while retaining configuration and enrollment state.
+home listener and all routes while retaining configuration and enrollment state. It stays off across subsequent install/add/serve actions. Ordinary apps use their own nodes; the next authorization prepares any per-app invitations. The disable result lists portal-only/remote apps whose sole entry becomes unavailable. `portal enable` restores the retained configuration.
 
 ### Remote apps and trust
 
@@ -123,8 +123,12 @@ reuse an upstream connection. Traffic and
 health checks dial that peer's Tailscale IP directly through the gateway netstack,
 only while `UseNetstackForIP` confirms it is a peer. They never use the host
 resolver or host network; a missing or disappearing peer fails closed with
-`remote_upstream_not_peer` or a netstack dial error, and on an already open
-upstream connection as `upstream_down`. TLS still verifies the
+`remote_upstream_not_peer` (visitors get 503 with that code, and the access log
+records the request as `denied` with that reason, as for every
+`remote_upstream_*` refusal). A netstack dial error, or a failure on an already
+open upstream connection, is a backend failure instead: visitors get 502, or 504
+when the backend timed out, with the code `upstream_down`, and the access log
+records an allowed request with an `error_class`. TLS still verifies the
 registered hostname normally. The remote app must permit the gateway tag in its own policy
 (for a TSLink app, its explicit tag allow list). This command does not change
 remote ACLs or registrations.
@@ -216,6 +220,45 @@ keep the shared node running. Gateway enable/disable, hostname/tag changes, and
 changes of credential mode or control URL on daemon restart can replace it.
 A route activation failure is retried with exponential backoff from one to
 32 seconds, on sync/retry ticks; another route remains available.
+
+A request that TSLink itself answers, rather than the app, gets the same
+response on a gateway route and on the app's own node, so the visitor sees the
+same thing and the access log's `bytes_out` for a person and app does not depend
+on how the request arrived, apart from those gateway-only refusals. A browser navigation (`Sec-Fetch-Mode: navigate`, or
+an `Accept` that prefers `text/html`) gets a small HTML page; any other client
+gets the JSON error envelope, with `"command": "app request"` (the envelope no
+longer carries the gateway's old `portal route` label). A refusal is 403 with a
+visitor code that is the same on both paths: `no_grant`, `expired`, `revoked`,
+`whois_failed` (the caller could not be identified) or `registry_unavailable`
+(the access policy could not be read). The page names the app only for a caller
+who can see it or ask for it: a tagged or shared-in node, or a revoked or guest
+person, cannot ask, so a requestable app is not named to them. The page carries
+no link to the dashboard, because whether a dashboard exists depends on whether
+the gateway runs and a refusal reads the same either way. Access is also
+decided before the request-size limit, on both paths: a refused caller who sends
+an oversized request gets the same 403 as any other refused request, and only a
+caller who may use the app is told the limit (413, which names the app and the
+configured limit). The connection and header limits and the bounded disposal of
+a body nobody read apply to every request first. The access log keeps each path's own reason for the same refusal
+(`people`, `expired` or `acl` on an app node; `no_grant`, `expired` or
+`revoked` on the gateway). Some refusals exist on one path only:
+`cross_origin_blocked`, `route_changed` and the gateway's malformed-request
+`no_grant` are gateway-only, and the legacy `--allow` list (`acl`) is app-node
+only, since the gateway routes people-scoped apps; a legacy refusal uses the
+same page and names no app. The gateway-only refusals are deliberate and are the
+only places the two paths decide differently for a caller the gateway admits:
+`cross_origin_blocked` (routes share one hostname and its cookies, while an app
+node has its own origin), `route_changed` (a gateway route serves the
+configuration it started with and refuses once the registry has moved on) and
+the malformed-request `no_grant` (a `CONNECT` or absolute-form target must not
+pick its own destination on a node that serves many apps). A
+caller with no routed grant is dropped before TLS and never sees a page at all.
+The [access log guide](access-log.md) gives the reason for each and what it does
+to the traffic counters. A request cut because TSLink is closing a route or
+stopping or reloading a node is 503 with visitor code `app_restarting` and the
+same text on both paths (`<app> is being reconfigured; try again`); only the
+access-log reason differs (`route_closed`, `node_closed`). Guest links, PIN and
+Funnel guest-gate pages are unchanged.
 
 Status and doctor expose `portal.gateway` with observed persistence, tag and node
 identity, ownership proof, range, route states and a per-run `dropped` connection

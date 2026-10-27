@@ -210,6 +210,13 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 	if err != nil || lc == nil {
 		return state, fmt.Errorf("portal WhoIs client unavailable: %v", err)
 	}
+	if gateway && key == "" {
+		if login := portalSelfLogin(nodeStatus); login != "" {
+			if err := registry.BootstrapPortalOwner(ctx, filepath.Join(s.cfgDir, "registry.json"), run.config.Hostname, login); err != nil {
+				return state, err
+			}
+		}
+	}
 	if gateway {
 		if marker.NodeID == "" {
 			identity.NodeID = runtimeNodeIDFromStatus(nodeStatus)
@@ -267,6 +274,21 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 		s.syncGatewayRoutes(run)
 	}
 	return state, nil
+}
+
+func portalSelfLogin(status *ipnstate.Status) string {
+	if status == nil || status.Self == nil || status.Self.UserID == 0 || (status.Self.Tags != nil && status.Self.Tags.Len() > 0) {
+		return ""
+	}
+	profile, ok := status.User[status.Self.UserID]
+	if !ok {
+		return ""
+	}
+	login, err := registry.NormalizePerson(profile.LoginName)
+	if err != nil {
+		return ""
+	}
+	return login
 }
 
 func (s *Server) closePortal() {

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -66,29 +65,4 @@ func gatewayPeopleTargets(reg *registry.Registry, portal tsruntime.PortalState, 
 			targets[svc.Name] = target
 		}
 	}
-}
-
-func gatewayPeopleMessage(result PeopleResult, printLinks bool) string {
-	text := fmt.Sprintf("Install Tailscale from https://tailscale.com/download and sign in as %s. Keep it connected. Accept the gateway invitation once; the owner can then change which routed apps you can use.\n", result.Person.Login)
-	for _, inv := range result.Invites {
-		label := inviteLabel(inv)
-		if inv.Code != "" {
-			text += label + ": invitation is not ready; ask the owner for help.\n"
-		} else if printLinks && inv.InviteURL != "" {
-			text += label + ": accept " + inv.InviteURL + "\n"
-		} else if inv.State == registry.PersonInviteAccepted {
-			text += label + ": invitation already accepted.\n"
-		} else {
-			text += label + ": ask the owner for the invitation link.\n"
-		}
-	}
-	if result.Portal.URL != "" {
-		text += "Open and bookmark " + result.Portal.URL + " for your apps and their current access deadlines."
-	} else {
-		text += "The gateway dashboard address is pending; ask the owner to check tslink status --urls."
-	}
-	for _, warning := range result.Warnings {
-		text += "\n" + warning
-	}
-	return text
 }

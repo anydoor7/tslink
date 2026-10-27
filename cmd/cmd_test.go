@@ -396,6 +396,7 @@ func TestAddCmd_WithTags(t *testing.T) {
 }
 
 func TestAddCmd_WithAllow(t *testing.T) {
+	grantTestEnvironment(t, tailapi.MembershipMember)
 	dir := t.TempDir()
 	testenv.SetHome(t, dir)
 
@@ -410,8 +411,11 @@ func TestAddCmd_WithAllow(t *testing.T) {
 	reg, _ := registry.Load(regPath)
 	for _, svc := range reg.Services {
 		if svc.Name == "aclapp" {
-			if len(svc.AllowedUsers) != 2 {
-				t.Errorf("expected 2 allowed users, got %d", len(svc.AllowedUsers))
+			if len(svc.AllowedUsers) != 1 || svc.AllowedUsers[0] != "tag:admin" {
+				t.Fatalf("gateway allow must retain only the machine ACL: %v", svc.AllowedUsers)
+			}
+			if len(reg.People) != 1 || reg.People[0].Login != "alice@example.com" || len(reg.People[0].Grants) != 1 {
+				t.Fatal("human allow did not grant access", reg.People)
 			}
 			return
 		}

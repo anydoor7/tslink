@@ -56,6 +56,11 @@ func TestGatewayOriginReferenceRewrites(t *testing.T) {
 
 func TestGatewayRemoteFailurePagePrivacy(t *testing.T) {
 	for _, failure := range []error{errors.New("offline"), context.DeadlineExceeded} {
+		// A timeout is 504, every other transport failure 502.
+		wantStatus := http.StatusBadGateway
+		if failure == context.DeadlineExceeded {
+			wantStatus = http.StatusGatewayTimeout
+		}
 		t.Run(failure.Error(), func(t *testing.T) {
 			var calls atomic.Int64
 			var st atomic.Pointer[ipnstate.Status]
@@ -82,7 +87,7 @@ func TestGatewayRemoteFailurePagePrivacy(t *testing.T) {
 			f.waitRoute(t, "photos", "running")
 			for _, accept := range []string{"text/html", "application/json"} {
 				code, body, _ := gatewayGet(t, f.client(t), "8443", "/", map[string]string{"Accept": accept})
-				if code != 502 || (accept == "application/json" && !strings.Contains(body, "upstream_down")) || !strings.Contains(body, "photos on remote") || strings.Contains(body, "remote.tailnet.ts.net") || strings.Contains(body, "9443") || strings.Contains(body, "100.64.0.9") {
+				if code != wantStatus || (accept == "application/json" && !strings.Contains(body, "upstream_down")) || !strings.Contains(body, "photos on remote") || strings.Contains(body, "remote.tailnet.ts.net") || strings.Contains(body, "9443") || strings.Contains(body, "100.64.0.9") {
 					t.Fatalf("remote error leaked target or hid failure: %d %s", code, body)
 				}
 			}

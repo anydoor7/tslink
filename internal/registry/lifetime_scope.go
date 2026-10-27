@@ -23,3 +23,13 @@ func authorizeLifetime(ctx context.Context, tool, app string, lifetime duration.
 	}
 	return nil
 }
+
+// permanentDefaultPermitted reports whether the caller could create a
+// permanent grant at all. Without an MCP session it is the local owner; with
+// one it asks the same capability check an explicit "never" goes through, so
+// a reduced role or a binding that expires keeps the finite default instead of
+// gaining a permanent grant by omission.
+func permanentDefaultPermitted(ctx context.Context, now time.Time) bool {
+	session, ok := mcpscope.FromContext(mutationContext(ctx))
+	return !ok || session.CheckLifetime(duration.Lifetime{Never: true}, now) == nil
+}

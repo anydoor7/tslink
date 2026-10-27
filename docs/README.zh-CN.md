@@ -73,9 +73,9 @@ Claude Code 用户请先安装命令行工具，再运行：
 {"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **每个 dev server 一个名字。** 每次分享都有自己的私有地址 `https://<name>.<tailnet>.ts.net`，位于根路径，端口 443。名字被占用时会加数字后缀，所以以智能体拿回的 URL 为准。
-- **每个新应用都需要人来操作。** 默认设置下，每个新的应用节点都需要人完成一次 Tailscale 入网。如果结果是 `needs_login`，先完成登录，再运行 `tslink url <name> --wait` 取得确切的 URL。另外，新名字要过一会儿才能访问：我们两次测试用了 36 到 38 秒。
-- **谁能打开。** 默认是你的策略允许的 tailnet 设备。MCP `share` 接受 `allow`，可限制为只有你的登录身份；在命令行中使用 `tslink add web --proxy localhost:5173 --allow you@example.com`。名字会出现在公开的证书日志里，所以并不保密。
+- **新安装默认使用网关。** 每个私有 HTTP/文件应用自动获得稳定端口，例如 `https://home.<tailnet>.ts.net:8443/`。原有安装保留当前模式；每个应用自己的节点和 URL 仍保留，`--portal-only` 需显式选择。
+- **先完成网关入网。** 无凭据时，未 tagged 的网关可将已验证的自身账号设为 owner；tagged/OAuth 网关需在本机运行 `tslink portal enable --owner <login>`。后台应用节点尚未入网，不会阻止已就绪的网关入口。
+- **按人授权。** 新网关应用只允许 owner/admin 和明确授权的人。`people add`、`add --allow`、MCP `add/share.allow` 统一核实成员身份并完成必要邀请；成员无需设备邀请，外部访客接受一次网关邀请。目录/API 不可用会返回未完成状态。
 - **改代码，保存，就能看到。** 保存代码后，手机上的页面会更新。应用自己的 Host 和 Origin 规则仍可能拦截请求：我们的测试里 Vite 不需要修改 `allowedHosts`，Next.js 未测试，仍需要 `allowedDevOrigins`。
 - **清理。** 智能体调用 `unshare`，或者你运行 `tslink remove <name>`，始终使用 share 结果返回的名字。移除会注销这次分享，并在 TSLink 能证明节点归自己所有时尝试删除它在 tailnet 里的节点，所以请查看结果里的清理或保留状态字段。它不会停止 dev server。
 - **CLI 或 MCP。** 管理命令支持 `--json`，返回带版本号的结果；`tslink mcp` 通过 MCP 提供应用和访问管理操作。

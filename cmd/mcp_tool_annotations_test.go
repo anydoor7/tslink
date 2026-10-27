@@ -28,7 +28,7 @@ var mcpWantHints = map[string][4]bool{
 	"portal_route_add":    {false, false, true, false},
 	"portal_route_remove": {false, true, true, false},
 	"portal_route_list":   {true, false, true, false},
-	"people_grant":        {false, true, false, false},
+	"people_grant":        {false, true, false, true},
 	"people_revoke":       {false, true, true, false},
 	"app_restart":         {false, true, false, false},
 	"health":              {true, false, true, false},

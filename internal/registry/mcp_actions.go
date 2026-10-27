@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
-	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
@@ -36,14 +35,6 @@ func ChangePersonAppAuthorized(path string, session mcpscope.Session, who, app, 
 		now := nowFn()
 		if err := session.Authorize(tool, []string{app}, now); err != nil {
 			return err
-		}
-		var expiry *time.Time
-		if !revoke {
-			var err error
-			expiry, err = session.GrantDeadline(lifetime, now)
-			if err != nil {
-				return err
-			}
 		}
 		reg, err := loadForMutation(path)
 		if err != nil {
@@ -76,19 +67,6 @@ func ChangePersonAppAuthorized(path string, session mcpscope.Session, who, app, 
 		if person.Revoked {
 			return mcpscope.Denied{}
 		}
-		if !revoke {
-			policy, err := config.LoadLifetimePolicy()
-			if err != nil {
-				return err
-			}
-			audience := duration.TailnetMember
-			if PersonIsGuest(person) {
-				audience = duration.Guest
-			}
-			if err := policy.Check(duration.Lifetime{Deadline: expiry}, audience, false, now); err != nil {
-				return CodedError{Code: "usage_error", Message: err.Error()}
-			}
-		}
 		if index < 0 {
 			if revoke {
 				return nil
@@ -98,7 +76,25 @@ func ChangePersonAppAuthorized(path string, session mcpscope.Session, who, app, 
 			}
 			person = Person{Login: login, Grants: []PersonGrant{}}
 		}
-		grant := PersonGrant{App: app, ExpiresAt: expiry}
+		if !revoke {
+			policy, err := config.LoadLifetimePolicy()
+			if err != nil {
+				return err
+			}
+			ctx := mcpscope.WithClock(mcpscope.WithSession(optionalMutationContext(contexts), session), nowFn)
+			_, err = grantPersonApp(reg, login, app, PersonLifetimeOptions{Context: ctx, Value: &lifetime, Policy: policy, Now: now, Authorize: authorize, Tool: "people_grant"})
+			if err != nil {
+				return err
+			}
+			for _, p := range reg.People {
+				if p.Login == login {
+					person = p
+					break
+				}
+			}
+			return save(path, reg)
+		}
+		grant := PersonGrant{App: app}
 		if revoke {
 			t := now.UTC()
 			grant.ExpiresAt, grant.Expired = &t, true

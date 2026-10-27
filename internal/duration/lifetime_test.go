@@ -104,7 +104,7 @@ func TestLifetimePolicy(t *testing.T) {
 		reason   string
 	}{
 		{"1h", Public, false, 0, ""}, {"7d", Guest, false, 0, ""}, {"7d1s", Public, false, 0, "exceeds"},
-		{"59m59s", TailnetMember, false, 0, "at least 1h"}, {"never", Public, true, 0, "only"}, {"never", Guest, true, 0, "only"},
+		{"59m59s", TailnetMember, false, 0, "at least 1h"}, {"never", Public, true, 0, "finite"}, {"never", Guest, true, 0, ""}, {"never", Guest, false, 0, "ack-never"},
 		{"never", TailnetMember, false, 0, "ack-never"}, {"never", TailnetMember, true, 0, ""},
 		{"36h", Public, false, 48 * time.Hour, ""}, {"3d", Guest, false, 48 * time.Hour, "exceeds"},
 		{"7d1s", TailnetMember, false, 0, ""}, {"1h", Audience("invalid"), false, 0, "unknown"}, {"1h", Public, false, time.Minute, "maximum"},

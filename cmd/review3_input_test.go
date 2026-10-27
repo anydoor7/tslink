@@ -93,8 +93,8 @@ func TestReview3CompiledCLIInvalidUTF8(t *testing.T) {
 				t.Fatal(err)
 			}
 			control, stderr, exit := runTSLinkBinaryWithConfigDir(t, binary, filepath.Dir(paths.Registry), "", "people", "update", valid, "--apps", "photos", "--json")
-			if exit != 0 {
-				t.Fatal("valid Unicode compiled control failed", control, stderr, exit)
+			if exit != 1 || !strings.Contains(control, "membership_unknown") {
+				t.Fatal("valid Unicode must reach directory verification", control, stderr, exit)
 			}
 			before, err := os.ReadFile(paths.Registry)
 			if err != nil {
@@ -157,8 +157,8 @@ func TestReview3NoneRequiresCompleteListing(t *testing.T) {
 						complete = result.Complete
 					} else {
 						result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Reconcile: map[string]string{"photos": "none"}}, true)
-						if err != nil {
-							t.Fatal(err)
+						if (err == nil) != result.Complete {
+							t.Fatal("incomplete listing must fail", err)
 						}
 						complete = result.Complete
 					}

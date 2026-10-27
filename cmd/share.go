@@ -32,6 +32,7 @@ const (
 )
 
 type ShareResult struct {
+	Access        []PeopleResult                   `json:"access,omitempty"`
 	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
 	URL           string                           `json:"url,omitempty"`
 	Name          string                           `json:"name"`
@@ -70,6 +71,10 @@ type shareTargetSpec struct {
 // which runs registry.ValidateService and therefore
 // registry.ValidateFunnelGuardrails.
 type shareRequest struct {
+	For             *string
+	Until           *string
+	AckNever        bool
+	PrintLinks      bool
 	Now             time.Time
 	RequestLimits   *registry.RequestLimits
 	Target          string
@@ -109,8 +114,10 @@ var (
 	shareStartDaemonFn         = startShareDaemon
 	shareResolveEndpointOnceFn = resolveServiceEndpointOnce
 	sharePollableStatusFn      = getPollableStatus
-	shareAddIfMissingFn        = registry.AddTentative
-	shareReplaceIfUnchangedFn  = registry.RestoreTentativeIfUnchanged
+	shareAddIfMissingFn        = func(path string, svc registry.Service) (bool, error) {
+		return addDefaultService(context.Background(), path, svc, true)
+	}
+	shareReplaceIfUnchangedFn = registry.RestoreTentativeIfUnchanged
 )
 
 func resolveSharePaths() (sharePaths, error) {
@@ -467,6 +474,9 @@ retries:
 				candidate.Tags = existing.Tags
 			}
 			current := shareRequestedExposure(existing, spec, now)
+			if spec.Service.PeopleScoped && !spec.Service.Funnel {
+				_, current.AllowedUsers = splitAccessRecipients(current.AllowedUsers)
+			}
 			if sameShareTarget(current, candidate) {
 				if requestedName != "" && existing.Name != requestedName {
 					return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
@@ -544,17 +554,25 @@ retries:
 		add := shareAddIfMissingFn
 		if _, scoped := mcpscope.FromContext(ctx); scoped {
 			add = func(path string, svc registry.Service) (bool, error) {
-				return registry.AddTentativeContext(ctx, path, svc)
+				return addDefaultService(ctx, path, svc, true)
 			}
 		}
 		created, err := add(regPath, svc)
 		if err != nil {
 			if created {
+				if stored, readErr := loadPersistedService(regPath, svc.Name); readErr == nil {
+					svc = stored
+				}
 				return shareRegistration{Service: svc, Created: true}, err
 			}
 			return shareRegistration{}, err
 		}
 		if created {
+			stored, readErr := loadPersistedService(regPath, svc.Name)
+			if readErr != nil {
+				return shareRegistration{Service: svc, Created: true}, readErr
+			}
+			svc = stored
 			return shareRegistration{Service: svc, Created: true}, nil
 		}
 	}
@@ -583,6 +601,10 @@ func shareEnrollmentPendingCode(code string) bool {
 }
 
 func shareOutcomeOnce(ctx context.Context, paths sharePaths, name, fileName string) (ShareResult, bool, error) {
+	if gatewayURL := currentGatewayAppURL(paths, name); gatewayURL != "" {
+		endpoint, err := directFileURL(gatewayURL, fileName)
+		return ShareResult{URL: endpoint, Name: name, Status: shareStatusReady}, true, err
+	}
 	resolution, err := shareResolveEndpointOnceFn(ctx, paths.PID, paths.Registry, paths.Snapshot, name)
 	if err == nil {
 		endpoint, err := directFileURL(resolution.Result.URL, fileName)
@@ -647,6 +669,33 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	if err != nil {
 		return ShareResult{}, err
 	}
+	checked := spec.Service
+	if checked.Name == "" {
+		checked.Name = "access-check"
+	}
+	if err := registry.ValidateService(checked); err != nil {
+		return ShareResult{}, err
+	}
+	recipients, tags := splitAccessRecipients(spec.Service.AllowedUsers)
+	if len(recipients) > 0 {
+		spec.Service.AllowedUsers, spec.Service.PeopleScoped = tags, true
+	}
+	params := AddParams{AccessTool: "share", For: req.For, Until: req.Until, AckNever: req.AckNever, PrintLinks: req.PrintLinks}
+	if value, err := lifetimeArgument(req.For, req.Until); err != nil {
+		return ShareResult{}, err
+	} else if value != nil {
+		if len(recipients) == 0 {
+			return ShareResult{}, output.ErrUsage("access lifetime requires a human allow recipient")
+		}
+		policy, err := config.LoadLifetimePolicy()
+		if err != nil {
+			return ShareResult{}, err
+		}
+		if _, err := policy.Resolve(*value, duration.TailnetMember, req.AckNever, req.Now, time.Local); err != nil {
+			return ShareResult{}, err
+		}
+	}
+	grantAttempted := false
 	if req.NoDaemonInstall && !shareIsRunningFn(paths.PID) {
 		return ShareResult{}, daemonNotRunningError()
 	}
@@ -661,6 +710,9 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 			if created || registration.FunnelRearmed {
 				_, _ = registry.KeepIfUnchangedContext(ctx, paths.Registry, svc)
 			}
+			return
+		}
+		if grantAttempted {
 			return
 		}
 		if created {
@@ -708,13 +760,33 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 		if err != nil {
 			return ShareResult{}, err
 		}
-		if startup.Status == authStatusNeedsLogin && startup.AuthURL != "" {
+		if startup.Status == authStatusNeedsLogin && startup.AuthURL != "" && len(recipients) == 0 {
 			return withShareFunnelState(ShareResult{Name: svc.Name, Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, registration), nil
 		}
+	}
+	var access []PeopleResult
+	if len(recipients) > 0 {
+		if _, keepErr := registry.KeepIfUnchangedContext(ctx, paths.Registry, svc); keepErr != nil {
+			return ShareResult{}, keepErr
+		}
+		// Retention starts with the grant phase, not before the registration
+		// is settled: a failed keep above still rolls back what this call made.
+		grantAttempted = true
+		var grantErr error
+		access, grantErr = grantServiceRecipients(ctx, paths, svc.Name, recipients, params)
+		if grantErr != nil {
+			result = withShareFunnelState(ShareResult{Name: svc.Name, Status: "incomplete", Access: access}, registration)
+			return result, accessSetupError(result, grantErr)
+		}
+	}
+	if len(access) > 0 && len(access[0].Access) > 0 && access[0].Access[0].URL != "" {
+		endpoint, urlErr := directFileURL(access[0].Access[0].URL, svc.File)
+		return withShareFunnelState(ShareResult{Name: svc.Name, URL: endpoint, Status: shareStatusReady, Access: access}, registration), urlErr
 	}
 	// svc, not spec: when registerShare reused an existing service, the URL has
 	// to describe what that service actually serves.
 	result, err = waitForShareOutcome(ctx, paths, svc.Name, svc.File, wait)
+	result.Access = access
 	if err != nil {
 		return result, err
 	}

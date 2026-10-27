@@ -75,7 +75,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `access_log.go`: access log/path CLI, read-only access_log/access_summary MCP tools and schemas, health formatting.
 - `access_log_config.go`: validated global CLI option set/get.
-- `access_log_test.go`: CLI/envelope, MCP read-only protocol, filters, strict configuration and doctor health.
+- `access_log_test.go`: CLI/envelope, MCP read-only protocol, shared traffic golden/schema/scope checks, direct-app reasons, filters, strict configuration and doctor health.
 
 - `access_runtime_test.go`: current-instance status/doctor health, stale-state refusal and path mode commands.
 # Home portal commands
@@ -150,3 +150,8 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - [mcp_titles.go](mcp_titles.go): shared human-readable titles for every registered tool.
 - [mcp_tool_annotations_test.go](mcp_tool_annotations_test.go): wire-level title and safety-hint coverage and behavior checks.
+
+- `grant_access_test.go`: unified authorization matrix and explicit member/runtime command fixtures.
+- `add_allow_lifetime_test.go`: `add --allow` and MCP add/share allow recipients are permanent unless `--for`/`--until` limits them, re-adds never move an existing grant, `people add` keeps 24h, and a binding that expires never mints a permanent grant; the first guest invitation after a membership change keeps a permanent grant for an unrestricted owner, refuses an expiring binding, and still enforces the guest maximum.
+- `add_without_allow_test.go`: the access `add NAME --proxy P` leaves without `--allow` with the gateway on, turned off, and on a registry without a portal.
+- `invite_device_lifetime_test.go`: `invite device` and MCP `invite_device` give a grant they create no expiry, keep an allow-listed person permanent, never move or revive an existing grant, and never mint a permanent grant under a binding that expires; after a member becomes an outsider the first invitation keeps a permanent grant for an unrestricted owner, refuses an expiring binding, and still enforces the guest maximum.

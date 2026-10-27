@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +38,7 @@ func TestPeopleHTTPEnforcementWithoutReload(t *testing.T) {
 		fmtBody := "upstream private photo"
 		w.Write([]byte(fmtBody))
 	}))
-	request := func(want int) {
+	request := func(want int, codes ...string) {
 		t.Helper()
 		r := httptest.NewRequest("GET", "https://photos.test/", nil)
 		w := httptest.NewRecorder()
@@ -50,8 +49,11 @@ func TestPeopleHTTPEnforcementWithoutReload(t *testing.T) {
 		if want == 200 && w.Body.String() != "upstream private photo" {
 			t.Fatal("positive control did not reach upstream")
 		}
-		if want == 403 && w.Body.String() != `{"error":"access denied"}`+"\n" {
-			t.Fatalf("wrong refusal %s", w.Body.String())
+		if want == 403 {
+			// The visitor code is the gateway's for the same refusal.
+			if code, _ := denialEnvelope(t, w.Body.Bytes()); len(codes) != 1 || code != codes[0] {
+				t.Fatalf("wrong refusal %s, want code %v", w.Body.String(), codes)
+			}
 		}
 	}
 	request(200)
@@ -62,14 +64,14 @@ func TestPeopleHTTPEnforcementWithoutReload(t *testing.T) {
 	setLogin("alice")
 	request(200)
 	setLogin("eve")
-	request(403)
+	request(403, "no_grant")
 	setLogin("bob")
 	request(200) // Explicit legacy ACL remains supported.
 	setLogin("alice")
 	now = deadline
-	request(403)
+	request(403, "expired")
 	now = deadline.Add(-2 * time.Hour)
-	request(403) // Durable latch defeats rollback.
+	request(403, "expired") // Durable latch defeats rollback.
 	reg, err := registry.Load(path)
 	if err != nil || !reg.People[0].Grants[0].Expired {
 		t.Fatal("request did not persist expiry", err)
@@ -81,12 +83,12 @@ func TestPeopleHTTPEnforcementWithoutReload(t *testing.T) {
 	if _, err := registry.RemovePerson(path, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	request(403)
+	request(403, "revoked")
 	// Construct a new handler (restart), with a legacy unrestricted snapshot:
 	// the registry still overrides accepted shares and old empty allow lists.
 	svc.AllowedUsers = nil
 	h = peopleMiddleware(path, svc, func() (*LocalClient, error) { return client, nil }, func() time.Time { return now })(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("upstream private photo")) }))
-	request(403)
+	request(403, "revoked")
 }
 
 func TestPeopleHTTPWhoIsFailuresAndClockCapture(t *testing.T) {
@@ -139,7 +141,7 @@ func TestPeopleHTTPWhoIsFailuresAndClockCapture(t *testing.T) {
 	}, func() time.Time { return now })(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
-	if w.Code != 403 || !strings.Contains(w.Body.String(), "registry unavailable") {
+	if code, _ := denialEnvelope(t, w.Body.Bytes()); w.Code != 403 || code != "registry_unavailable" {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
@@ -247,11 +249,9 @@ func TestPeopleMiddlewareFailsClosedDuringExpiryWrite(t *testing.T) {
 			peopleExpiryFn = old
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
-			want := "cannot persist expiry"
-			if phase == "invalid re-read" {
-				want = "registry unavailable"
-			}
-			if w.Code != 403 || !strings.Contains(w.Body.String(), want) {
+			// Either way the policy could not be read or kept: the gateway's
+			// refusal for the same two situations.
+			if code, _ := denialEnvelope(t, w.Body.Bytes()); w.Code != 403 || code != "registry_unavailable" {
 				t.Fatal(w.Code, w.Body.String())
 			}
 		})

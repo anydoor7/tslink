@@ -229,7 +229,7 @@ func TestPeopleUnifiedLifetimesAndGuestPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	value = "never"
-	if _, err := ChangePersonWithLifetime(path, "alice", nil, true, PersonLifetimeOptions{Value: &value, Now: now, Audience: duration.TailnetMember, AckNever: true}); err == nil || !strings.Contains(err.Error(), "only") {
+	if _, err := ChangePersonWithLifetime(path, "alice", nil, true, PersonLifetimeOptions{Value: &value, Now: now, Audience: duration.TailnetMember, AckNever: false}); err == nil || !strings.Contains(err.Error(), "ack-never") {
 		t.Fatal(err)
 	}
 	if _, err := ExtendDuration(path, ExtendOptions{Service: "photos", Who: "alice", Value: "7d1s", Now: now}); err == nil || !strings.Contains(err.Error(), "exceeds") {
@@ -243,7 +243,7 @@ func TestFirstGuestInviteChecksRetainedLifetimes(t *testing.T) {
 		apps        []string
 		reason      string
 	}{
-		{"permanent", "never", nil, "never is allowed only"},
+		{"permanent", "never", nil, "ack-never"},
 		{"overlong", "8d", nil, "exceeds"},
 		{"below min", "1h", nil, "at least 1h"},
 		{"finite control", "36h", nil, ""},

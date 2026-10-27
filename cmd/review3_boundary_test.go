@@ -151,8 +151,8 @@ func TestReview3BadReplacementOrphansOldInvite(t *testing.T) {
 	r3ListingOverlay(t, "/device-invites", http.StatusOK, "")
 	reviewRefreshProof(t, paths)
 	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Invite: true, Replace: map[string]string{"photos": "1001"}}, true)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("incomplete replacement listing must fail")
 	}
 	t.Setenv(tailapi.APIBaseURLEnv, goodAPI)
 	removed, err := removePeople(paths.Registry, "alice")

@@ -118,7 +118,7 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 	if o.PIN != "" && (len(o.PIN) < 6 || len(o.PIN) > 64 || strings.IndexFunc(o.PIN, func(r rune) bool { return r < '0' || r > '9' }) >= 0) {
 		return view, "", guestError(errcode.UsageError, "PIN must contain 6..64 ASCII digits")
 	}
-	l, e := o.Policy.Resolve(o.Value, duration.Guest, false, o.Now, time.Local)
+	l, e := o.Policy.Resolve(o.Value, duration.Public, false, o.Now, time.Local)
 	if e != nil {
 		return view, "", guestError(errcode.UsageError, e.Error())
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -28,6 +29,7 @@ type RequestListResult struct {
 	Requests []registry.AccessRequest `json:"requests"`
 }
 type RequestDecisionResult struct {
+	Access  *PeopleResult          `json:"access,omitempty"`
 	Request registry.AccessRequest `json:"request"`
 	Changed bool                   `json:"changed"`
 }
@@ -153,6 +155,9 @@ func decideRequest(path string, args requestDecisionArguments, approve bool, now
 }
 
 func decideRequestContext(ctx context.Context, path string, args requestDecisionArguments, approve bool, now time.Time) (RequestDecisionResult, error) {
+	if err := requireRequestOwner(ctx, path); err != nil {
+		return RequestDecisionResult{}, err
+	}
 	status := registry.RequestDenied
 	policy := duration.Policy{}
 	var err error
@@ -163,16 +168,57 @@ func decideRequestContext(ctx context.Context, path string, args requestDecision
 			return RequestDecisionResult{}, err
 		}
 	}
-	r, changed, err := registry.DecideAccessRequestAuthorized(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now, requestDecisionAuthorization(ctx, args, approve, now), ctx)
-	if err == nil && changed {
+	var r registry.AccessRequest
+	var changed bool
+	var access *PeopleResult
+	if approve {
+		reg, _, loadErr := registry.Preflight(path)
+		if loadErr != nil {
+			return RequestDecisionResult{}, loadErr
+		}
+		var request *registry.AccessRequest
+		for i := range reg.Requests {
+			if reg.Requests[i].ID == args.ID {
+				request = &reg.Requests[i]
+				break
+			}
+		}
+		if request == nil {
+			return RequestDecisionResult{}, output.ErrNotFound("access request not found")
+		}
+		if request.Status != registry.RequestPending && (request.Status != registry.RequestApproved || request.ApprovedFor != strings.TrimSpace(args.For) || request.AckNever != args.AckNever) {
+			return RequestDecisionResult{}, registry.CodedError{Code: "access_request_decided", Message: "request already decided"}
+		}
+		paths := sharePaths{Registry: path, PID: filepath.Join(filepath.Dir(path), "tslink.pid"), Snapshot: filepath.Join(filepath.Dir(path), "runtime.json")}
+		result, grantErr := grantAccess(ctx, paths, grantAccessIntent{Arguments: peopleArguments{Who: request.Who, Apps: []string{request.App}, For: &args.For, AckNever: args.AckNever, Now: now}, PreserveRevoked: true, Tool: "requests_approve", Commit: func(options registry.PersonLifetimeOptions) (registry.Person, error) {
+			var decisionErr error
+			r, changed, decisionErr = registry.DecideAccessRequestWithGrantOptions(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now, requestDecisionAuthorization(ctx, args, approve, now), options, ctx)
+			if decisionErr != nil {
+				return registry.Person{}, decisionErr
+			}
+			return readPerson(path, r.Who)
+		}})
+		access, err = &result, grantErr
+	} else {
+		r, changed, err = registry.DecideAccessRequestAuthorized(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now, requestDecisionAuthorization(ctx, args, approve, now), ctx)
+	}
+	if changed {
 		requestDecidedFn(r.Event())
 		change := mcpaudit.Change{Action: "request_" + r.Status, App: r.App, Subject: r.Who, ID: r.ID}
 		if r.Grant != nil {
 			change.ExpiresAt, change.PreviousExpiresAt = r.Grant.ExpiresAt, r.Grant.PreviousExpiresAt
 		}
-		err = mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpLocalActor(), now, change)
+		if auditErr := mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpLocalActor(), now, change); auditErr != nil {
+			// The decision's own failure stays first: a failed receipt must
+			// not hide an invitation or membership error.
+			err = joinAuditFailure(err, auditErr)
+		}
 	}
-	return RequestDecisionResult{Request: r, Changed: changed}, err
+	result := RequestDecisionResult{Request: r, Changed: changed, Access: access}
+	if err != nil && access != nil {
+		return result, accessSetupError(result, err)
+	}
+	return result, err
 }
 
 // Untrusted notes/reasons/logins must never control a terminal. JSON keeps the
@@ -197,6 +243,9 @@ func writeRequestResult(out io.Writer, command string, data any, isJSON bool) {
 	case RequestListResult:
 		requests = v.Requests
 	case RequestDecisionResult:
+		if v.Access != nil {
+			fmt.Fprintln(out, v.Access.Message)
+		}
 		requests = append(requests, v.Request)
 	}
 	if len(requests) == 0 {
@@ -255,7 +304,7 @@ func newRequestsCmd() *cobra.Command {
 		}}
 		if approve {
 			c.Flags().StringVar(&args.For, "for", "", "Owner-chosen lifetime; presets "+duration.Suggestions)
-			c.Flags().BoolVar(&args.AckNever, "ack-never", false, "Acknowledge permanent member access; guests remain finite")
+			c.Flags().BoolVar(&args.AckNever, "ack-never", false, "Acknowledge permanent member or device-invited guest access")
 		} else {
 			c.Flags().StringVar(&args.Reason, "reason", "", "Optional reason (500 characters), shown to the visitor")
 		}

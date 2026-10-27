@@ -2,7 +2,7 @@
 
 For phone onboarding, add `--qr` to `people add/update`, or `--qr-png <file>` to write a private PNG in an existing directory. The QR contains the exact portal URL; when the portal is disabled it contains the first active app URL. An enabled pending portal never falls back to an app. Get its address with `tslink status --urls`, then retry `people update <login> --qr`. UTF-8 half-block output needs a light terminal background; use PNG when scanning a dark terminal is difficult. JSON includes `qr_payload` text and `guide`/`guide_zh` arrays, never image bytes.
 
-Bearer invitations stay masked. Only `--invite --print-links --qr-invite <app>` together with `--qr` or `--qr-png` puts that app's invitation in a QR; output warns that it is a credential. Send it only to the intended person. Generating a normal address QR never includes invitation links. A PNG write failure leaves already-saved local grants intact.
+Bearer invitations stay masked. Only `--print-links --qr-invite <app>` together with `--qr` or `--qr-png` puts that app's invitation in a QR; output warns that it is a credential. Send it only to the intended person. Generating a normal address QR never includes invitation links. A PNG write failure leaves already-saved local grants intact.
 
 Send this short guide with the address or QR:
 
@@ -22,50 +22,50 @@ tslink people update alice@example.com --apps photos --for 1h
 tslink people remove alice@example.com
 ```
 
-Grant changes are local; removal also attempts pending-invitation cleanup after saving local denial. They need no stored credential and do not install or start the daemon. Existing tailnet members can use their grants immediately when the daemon runs this version and their tailnet policy permits reaching the app. The output includes a message you can send to the person; an exact app address appears when a current running-daemon snapshot proves it. Otherwise the message asks the owner to get it with `tslink status --urls` after enrollment finishes.
+One authorization action verifies the recipient against the complete network user directory, saves local grants and routes under the registry lock, then completes the required network sharing. It does not install or start the daemon. Verified members need no device invitation; external recipients receive one gateway invitation when the gateway is enabled, or one invitation per app when it is disabled. A missing directory credential, unavailable recipient, API failure or stale runtime is an incomplete result, never an allow-only success. The result includes each app's `access_state`, exact address and message.
 
 `--apps all` selects every **currently registered private HTTP proxy and file service**. It excludes TCP and public Funnel and does not automatically include future apps. Explicitly naming a TCP or Funnel service fails atomically with `people_service_unsupported`. File services enforce the same HTTP WhoIs authorization as proxies, including single-file shares.
 
-Adding an existing active person refuses; use `update`. An update with only `--apps` preserves deadlines for retained apps and gives newly added apps a 24h deadline. Specify `--for` to apply the chosen lifetime to every selected grant. An update with only `--for` keeps the app set. `--for never --ack-never` explicitly removes deadlines for tailnet-member logins; guests cannot use it. New grants default to 24h. Use `--until` for an absolute date/time or `--for` for the [unified duration grammar](durations.md). `extend photos --person alice@example.com --for 36h` changes one app; expired grants require `--regrant` and revoked people remain revoked. Removing a person is idempotent. Adding them again is an explicit new grant and refuses until outstanding invite operations are cleaned up or reconciled.
+Adding an existing active person is additive: requested apps are added or updated while other grants remain. A retry without an explicit lifetime preserves deadlines. `update --apps` replaces the app set and retains authoritative denial for removed apps. An update with only `--apps` preserves deadlines for retained apps and gives newly added apps a 24h deadline. Specify `--for` to apply the chosen lifetime to every selected grant. An update with only `--for` keeps the app set. `--for never --ack-never` removes local app deadlines for both members and device-invited guests. Browser guest links and public Funnel remain finite; permanent local access does not make an invitation link or device key permanent. New grants default to 24h. This is `people add`'s default: `tslink add --allow` and the MCP `add`/`share` `allow` field keep the permanent meaning an allow list always had, and `--for`/`--until` limit them ([sharing](sharing.md)). Use `--until` for an absolute date/time or `--for` for the [unified duration grammar](durations.md). `extend photos --person alice@example.com --for 36h` changes one app; expired grants require `--regrant` and revoked people remain revoked. Removing a person is idempotent. Adding them again is an explicit new grant and refuses until outstanding invite operations are cleaned up or reconciled.
 
 ## Outsiders: one owner command and one message
 
 For someone outside your tailnet:
 
 ```sh
-tslink people add alice@example.com --apps photos,finance --for 7d --invite --print-links
+tslink people add alice@example.com --apps photos,finance --for 7d --print-links
 ```
 
-This saves the grants and creates one single-use device invitation for each non-routed app, or one gateway invitation for routed apps. TSLink requests links, so **Tailscale sends no email**. Send the generated message yourself. The recipient installs Tailscale, signs in using the named account, accepts the gateway link and any non-routed app links, keeps Tailscale connected, and opens the app addresses. A device invite can be accepted with a different account than the addressed email, but TSLink denies that other login: the local grant binds the verified WhoIs login, not whoever holds a bearer link.
+This saves grants, automatically routes private HTTP/file apps when the gateway is enabled, and creates or reuses one gateway invitation. With the gateway disabled, it merges the compatible app allow entries and creates or reuses each app invitation. TSLink requests links, so **Tailscale sends no email**. Send the generated message yourself. The recipient installs Tailscale, signs in using the named account, accepts the invitation for the selected access path, keeps Tailscale connected, and opens the app addresses. A device invite can be accepted with a different account than the addressed email, but TSLink denies that other login: the local grant binds the verified WhoIs login, not whoever holds a bearer link.
 
-Device invitation creation requires a stored **user-owned API access token**. OAuth client tokens cannot create device invites. Use the existing stdin login path to store a user-owned token; do not put credentials in argv. Without a token, ordinary `people add` remains useful for existing tailnet members. You can also create app-sharing links manually in Tailscale's Machines page and send them with the no-token message.
+Device invitation creation requires a stored **user-owned API access token**. OAuth client tokens cannot create device invites. Use the existing stdin login path to store a user-owned token; do not put credentials in argv. Membership verification also requires access to the network user directory. Missing credentials return incomplete setup; restore credentials and retry the same action. Custom control servers currently have no directory adapter and return `membership_unknown`.
 
-No invitation is created unless `--invite` is supplied. Invitation URLs are bearer capabilities. They appear only with explicit `--print-links`; otherwise the result contains IDs and says the links are hidden. Recover hidden links through `tslink invite list --show-urls`, which is also an explicit disclosure. Links are never stored in the people registry or written to TSLink's invitation audit logs.
+`--invite` remains accepted for compatibility and has no effect on the decision to share. Membership determines whether an invitation is necessary. Invitation URLs are bearer capabilities. They appear only with explicit `--print-links`; otherwise the result contains IDs and says the links are hidden. Recover hidden links through `tslink invite list --show-urls`, which is also an explicit disclosure. Links are never stored in the people registry or written to TSLink's invitation audit logs.
 
-An invitation bundle can partially fail. JSON reports `complete: false`, per-app `code` and durable `state`, successful IDs and side-effect plans. **Local grants remain saved.** Read these fields even when the command envelope succeeds. Resume with `tslink people update <login> --invite`: completed operations reuse their IDs, and only unfinished operations are sent. Add `--print-links` to retrieve existing links explicitly; an unavailable link is reported rather than recreated.
+An invitation bundle can partially fail. JSON reports `complete: false`, per-app `code` and durable `state`, successful IDs and side-effect plans. **Local grants remain saved.** Incomplete setup returns a nonzero CLI exit, JSON `ok: false` with retained error data, and MCP `isError: true`. Awaiting recipient acceptance is normal `complete: true, access_state: awaiting_acceptance`. Resume with `tslink people update <login>`: completed operations reuse their IDs, and only unfinished operations are sent. Add `--print-links` to retrieve existing links explicitly; a confirmed missing old ID is replaced through the same durable state machine; an unknown listing or POST result is never blindly retried.
 
 The registry stores non-secret person/app/node associations and operation states (`pending`, `sending`, `unknown`, `complete`, `revoked`, `accepted`, `cancelled`, `target_gone`, `replaced`), never URLs or tokens. TSLink saves `sending` before POST. A crash, timeout, failed POST response or invalid response requires remote reconciliation before another create. A device-invite list has no recipient metadata for link-mode invitations; TSLink never automatically assigns an unaddressed link, even when only one is listed. Inspect `tslink invite list --json` (or `--show-urls` to reveal links), verify the app and intended invitation, then explicitly resolve:
 
 ```sh
 # Associate an owner-verified, existing invite ID; no new POST for that app.
-tslink people update alice@example.com --invite --reconcile-invite photos=12345
+tslink people update alice@example.com --reconcile-invite photos=12345
 # After verifying no invitation was created: requires an empty device invite list.
-tslink people update alice@example.com --invite --reconcile-invite photos=none
+tslink people update alice@example.com --reconcile-invite photos=none
 # Resolve an unknown operation while keeping the person revoked, then clean up.
 tslink people remove alice@example.com --reconcile-invite photos=12345
 ```
 
-`--reconcile-invite` can be repeated for different apps. `none` is an explicit owner assertion plus a remote-list check, not an exactly-once guarantee. The API provides no idempotency key or proof that an absent result cannot appear later. TSLink **does not promise exactly-once delivery**. Do not use standalone `invite device` as recovery for a people operation; that separate command intentionally creates a new invitation. Local remote-work locking prevents simultaneous owner processes from sending the same operation; contention reports `people_invite_busy` and asks for retry. Each bundle's remote work is bounded to 15 seconds, or an earlier caller deadline.
+`--reconcile-invite` can be repeated for different apps. `none` is an explicit owner assertion plus a remote-list check, not an exactly-once guarantee. The API provides no idempotency key or proof that an absent result cannot appear later. TSLink **does not promise exactly-once delivery**. HTTP/file `invite device` uses the same authorization action and invitation history; its existing email/link delivery options remain supported. Like `add --allow`, it keeps the meaning it had before grants existed: it has no lifetime flag, a grant it creates has no expiry (an app already on the person's allow list keeps its permanent access), and a grant the person already has keeps its deadline. Use `people add --for/--until` or `extend` to limit access. An MCP binding with an expiry gets the 24h default or a refusal, as for `add`. TCP device sharing remains a network-only operation. Local remote-work locking prevents simultaneous owner processes from sending the same operation; contention reports `people_invite_busy` and asks for retry. Each bundle's remote work is bounded to 15 seconds, or an earlier caller deadline.
 
 `people remove` commits the deny tombstone and removes grants first, then revokes every recorded pending invite on its proven app node. JSON includes `complete` and per-app `cleanup` states/codes; human output reports deferred/partial remote cleanup. Without a token it still denies locally and retains the invite IDs for later cleanup. Retry removal after restoring the user-owned token. Completed cleanup is skipped; missing remote IDs are treated as already cleaned up. Accepted invitations are reported as `accepted`; accepted network shares may remain and need separate Tailscale management. If a concurrent create is still running, removal reports deferred cleanup immediately; retry removal to clean up its recorded outcome. Removing an app does not discard its invitation ledger.
 
-If a recorded completed invitation disappears or expires, confirm replacement explicitly:
+A confirmed missing completed or accepted invitation is replaced on retry. You may also bind an explicit replacement to its old ID:
 
 ```sh
-tslink people update alice@example.com --invite --replace-invite photos=12345 --print-links
+tslink people update alice@example.com --replace-invite photos=12345 --print-links
 ```
 
-The value is the **recorded old ID**, not a new ID. TSLink verifies the same owned node, lists its invitations and refuses while that ID is still present (including accepted invitations). It retires the old attempt as `replaced` before creating a successor and preserves every grant and deadline. Do not supply `--apps` or `--for` with replacement. Repeat the flag for different apps; MCP uses `people_update` with `invite: true` and `replace_invites: {"photos":"12345"}`. A retry bound to that old ID resumes/reuses its successor instead of replacing it again. An indeterminate successor still requires reconciliation. For compatibility, explicit `--reconcile-invite app=none` on a completed record also confirms replacement, but additionally requires the entire device invite list to be empty. Ordinary retries never replace automatically.
+The value is the **recorded old ID**, not a new ID. TSLink verifies the same owned node, lists its invitations and refuses while that ID is still present (including accepted invitations). It retires the old attempt as `replaced` before creating a successor and preserves every grant and deadline. Do not supply `--apps` or `--for` with replacement. Repeat the flag for different apps; MCP uses `people_update` with `replace_invites: {"photos":"12345"}`. A retry bound to that old ID resumes/reuses its successor instead of replacing it again. An indeterminate successor still requires reconciliation. For compatibility, explicit `--reconcile-invite app=none` on a completed record also confirms replacement, but additionally requires the entire device invite list to be empty. Ordinary retries only replace after a complete remote listing proves the bound old ID absent.
 
 When a successful complete devices listing confirms both the recorded node and its hostname are absent, removal records terminal `target_gone`. The old app, hostname, node ID, invite ID and attempt remain in the ledger, and re-adding the person to another app works. Absence evidence requires HTTP 200, a nonempty body, and a present non-null array (`devices` for devices, a top-level array for invites). For invites, a root `null` counts as an empty array, because Tailscale sends it for a device with no invitations; a `null` `devices` listing does not. Any other 2xx, including 204 and 206, blank responses, malformed collections and ownership mismatches remain incomplete: no attempt is retired, no terminal outcome is recorded and no replacement POST is sent. This applies to replacement, removal and explicit `none` reconciliation. Bodyless mutation responses retain their separate handling. Terminal attempts are immutable history; successors use an increasing `attempt` number per person/app/node (omitted means the original attempt zero). This retains attempt outcomes, not a full event log of every transition.
 
@@ -76,13 +76,10 @@ When a successful complete devices listing confirms both the recorded node and i
 | Per-app nodes, bundled links | N creates and N accepts for N apps | Independent hostnames, root URLs and cookies | Local WhoIs grants deny subsequent requests |
 | Gateway mode | One gateway create and accept for all routed apps | One hostname, one HTTPS port per app; root paths preserved, cookies shared across ports | The gateway checks each request against local app grants |
 
-Enable [gateway mode](portal.md#gateway-mode-one-device-share-for-routed-apps),
-route the selected apps, then use the same `people add --invite` command. For
+New installations enable [gateway mode](portal.md#gateway-mode-one-device-share-for-routed-apps) automatically. `people add` prepares missing routes and the required invitation in the same action. For
 routed apps, the ledger records `target_kind: "gateway"`, an empty `app`, and the
 exact portal NodeID with its separate ownership-ledger proof. A lookalike hostname
-is not ownership proof. Non-routed selected apps retain per-app invitations and
-the result warns that they need separate shares. Portal-only apps have no app
-node to invite.
+is not ownership proof. When the gateway is disabled, ordinary apps use their own nodes and invitations. Portal-only apps have no independent node and return an unavailable result.
 
 At most one live gateway invitation exists per person. `pending`, `sending`,
 `unknown`, `complete` and `accepted` all block another creation; `revoked`,
@@ -109,7 +106,7 @@ new running, persistent gateway with proven ownership. Then inspect
 `tslink people list --json` and explicitly retire the recorded old invitation:
 
 ```sh
-tslink people update alice@example.com --invite --replace-invite @gateway=12345
+tslink people update alice@example.com --replace-invite @gateway=12345
 ```
 
 This changes the stale operation (including an accepted share) to `target_gone`
@@ -117,7 +114,7 @@ and creates an invitation for the current gateway. It does not revoke the old
 remote share. History and grants remain; repeating the same recorded-ID action
 reuses the new invitation. If a pending/sending/unknown stale operation has no
 recorded invite ID, explicitly acknowledge its retirement with
-`--reconcile-invite @gateway=none`, then use plain `--invite` for later retries.
+`--reconcile-invite @gateway=none`, then retry `people update <login>` without additional options.
 Without current gateway proof, recovery is refused. The recipient must accept
 the new device invitation; an old accepted share cannot transfer to a new node.
 
@@ -129,7 +126,7 @@ from `portal.gateway.node_id` in `tslink status --json`; recovered `target_gone`
 history does not need another replacement.
 
 The message, phone guide and ordinary QR point to the gateway dashboard. An
-explicit bearer invitation QR uses `--invite --print-links --qr-invite @gateway`
+explicit bearer invitation QR uses `--print-links --qr-invite @gateway`
 with `--qr` or `--qr-png`. Remote apps require a tagged gateway and authenticate
 that gateway on the other host; they do not receive verified visitor identity.
 
@@ -153,9 +150,9 @@ HTTP requests and WebSocket upgrades are checked individually. Already accepted 
 
 All CLI JSON uses the existing `schema_version: 1` result envelope. `data.person` contains canonical `login`, `revoked` and `grants`; each grant has `app`, optional `expires_at`/`expired`, `active`, and optional exact `url`. Add/update also return `invites`, `complete`, `message` and `invite_requirement`. List returns `data.people`, including tombstones. People views also include non-secret `invites` operation records. Remove returns `login`, `removed`, `revoked`, `complete`, `cleanup`. Add/update invite views include `state` and optional candidate `reconcile_ids`; candidates are evidence, not recipient attribution.
 
-MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because invites are optional; list is read-only, including file modes; remove is destructive and idempotent with optional remote cleanup (open-world). Update accepts an invite-only retry; update/remove accept `reconcile_invites`, an app-to-ID (or `none`) object requiring explicit owner verification. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
+MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because required sharing is automatic; list is read-only, including file modes; remove is destructive and idempotent with optional remote cleanup (open-world). Update with no lifetime or app changes retries transport completion; update/remove accept `reconcile_invites`, an app-to-ID (or `none`) object requiring explicit owner verification. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
 
-People-enabled registries without gateway fields write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites` and a sticky optional `guest` boolean saved with the first finite invitation grant before remote work; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
+People-enabled registries without gateway fields write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites` and a sticky optional `guest` boolean saved with the first device-invitation grant before remote work; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
 
 Expected input, missing-person/app and state conflicts use `usage_error`, `not_found` and `conflict` consistently in CLI and MCP.
 
@@ -168,4 +165,10 @@ Official invite API and sharing sources checked 2026-10-02 (other sources checke
 - [Trust credentials](https://tailscale.com/docs/reference/trust-credentials): invitation read/delete scopes do not imply create support.
 - [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve): HTTP reverse proxy and caller identity headers.
 
-When the home portal is enabled, the generated guide includes its exact address (or asks the owner to check status while enrollment is pending). Outside-tailnet visitors also need the home node shared through Tailscale. See [portal.md](portal.md).
+When the home portal is enabled, the generated guide includes its exact address (or asks the owner to check status while enrollment is pending). The common authorization action shares the gateway automatically for outside-tailnet visitors. Directory-only legacy portals retain their separate network prerequisite. See [portal.md](portal.md).
+
+## New installations and existing permissions
+
+New configurations enable the home gateway; existing registries, including empty ones and recovery state, keep their mode. `portal disable` persists across later starts and registrations. App nodes and their URLs remain; `--portal-only` stays explicit. New gateway apps deny unknown people until owner/admin or people authorization exists.
+
+The first people write preserves an identity's explicit legacy app allows, including permanent access to other apps. Other people and machine tags keep their access. Converting an open legacy app or assigning a global portal owner is refused with a conflict if it changes unrelated access; no partial permission conversion is saved. `add --allow` and MCP `add/share.allow` cannot revive a revoked person. Local grants still enforce expiry/revocation when an old allow entry or accepted device share remains.

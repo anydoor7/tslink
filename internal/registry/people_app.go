@@ -1,9 +1,6 @@
 package registry
 
 import (
-	"sort"
-	"time"
-
 	"github.com/anydoor7/tslink/internal/duration"
 )
 
@@ -34,66 +31,31 @@ func grantPersonApp(reg *Registry, who, app string, options PersonLifetimeOption
 	if err != nil {
 		return DurationChange{}, err
 	}
-	if options.Authorize != nil {
-		if err := options.Authorize(reg, login); err != nil {
-			return DurationChange{}, err
+	change := DurationChange{Service: app, Who: login, ChangedAt: options.Now.UTC()}
+	for _, person := range reg.People {
+		if person.Login != login {
+			continue
+		}
+		for _, grant := range person.Grants {
+			if grant.App == app {
+				change.PreviousExpiresAt = grant.ExpiresAt
+				change.Regranted = grant.Expired || (grant.ExpiresAt != nil && !options.Now.Before(*grant.ExpiresAt))
+			}
 		}
 	}
-	si := -1
-	for i, svc := range reg.Services {
-		if svc.Name == app {
-			si = i
-			break
-		}
-	}
-	if si < 0 || !PeopleServiceSupported(reg.Services[si]) {
-		return DurationChange{}, CodedError{Code: "not_found", Message: "private HTTP/file app unavailable"}
-	}
-	pi := -1
-	p := Person{Login: login, Grants: []PersonGrant{}}
-	for i, person := range reg.People {
-		if person.Login == login {
-			pi, p = i, person
-			break
-		}
-	}
-	if p.Revoked {
-		return DurationChange{}, CodedError{Code: "conflict", Message: "person is revoked; restore access explicitly with people add"}
-	}
-	audience := duration.TailnetMember
-	if PersonIsGuest(p) {
-		audience = duration.Guest
-	}
-	value := "24h"
-	if options.Value != nil {
-		value = *options.Value
-	}
-	lifetime, err := options.Policy.Resolve(value, audience, options.AckNever, options.Now, time.Local)
+	options.PreserveRevoked = true
+	person, err := changePersonInRegistry(mutationContext(options.Context), reg, login, []string{app}, nil, options.Value != nil, false, &options)
 	if err != nil {
-		return DurationChange{}, CodedError{Code: "usage_error", Message: err.Error()}
+		return DurationChange{}, err
 	}
-	change := DurationChange{Service: app, Who: login, Audience: audience, ExpiresAt: lifetime.Deadline, ChangedAt: options.Now.UTC()}
-	gi := -1
-	for i, g := range p.Grants {
-		if g.App == app {
-			gi, change.PreviousExpiresAt = i, g.ExpiresAt
-			change.Regranted = g.Expired || (g.ExpiresAt != nil && !options.Now.Before(*g.ExpiresAt))
-			break
+	change.Audience = duration.TailnetMember
+	if PersonIsGuest(person) {
+		change.Audience = duration.Guest
+	}
+	for _, grant := range person.Grants {
+		if grant.App == app {
+			change.ExpiresAt = grant.ExpiresAt
 		}
 	}
-	grant := PersonGrant{App: app, ExpiresAt: lifetime.Deadline}
-	if gi < 0 {
-		p.Grants = append(p.Grants, grant)
-	} else {
-		p.Grants[gi] = grant
-	}
-	sort.Slice(p.Grants, func(i, j int) bool { return p.Grants[i].App < p.Grants[j].App })
-	if pi < 0 {
-		reg.People = append(reg.People, p)
-	} else {
-		reg.People[pi] = p
-	}
-	sort.Slice(reg.People, func(i, j int) bool { return reg.People[i].Login < reg.People[j].Login })
-	reg.Services[si].PeopleScoped = true
 	return change, nil
 }
