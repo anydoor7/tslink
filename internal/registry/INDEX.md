@@ -77,4 +77,4 @@ This index records the people sharing lifecycle implementation and regression te
 - `concurrent_replace_test.go`: all registry loaders against a concurrent real registry writer, with error counts; a successful load without the saved service (false empty or `missing`) fails.
 
 - Wave 2 bounded portal/guest readers use the shared open/retry/settle policy; `concurrent_replace_test.go` includes both alongside all main loaders.
-- `permanent_default_test.go`: `PermanentDefault` applies only to new grants without a lifetime and never outruns the caller's MCP authority; `add` without allow on a new versus prior installation.
+- `permanent_default_test.go`: `PermanentDefault` applies only to new grants without a lifetime and never outruns the caller's MCP authority; the first guest invitation over a member's existing permanent or overlong grants (owner allowed, expiring binding or reduced role refused, guest maximum kept); `add` without allow on a new versus prior installation.

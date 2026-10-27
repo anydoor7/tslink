@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -277,6 +278,150 @@ func TestAddAllowUnderALimitedBindingNeverMintsAPermanentGrant(t *testing.T) {
 			if g, ok := h.grant(); ok {
 				t.Fatalf("refused call left a grant: %+v", g)
 			}
+		})
+	}
+}
+
+// The same transition through add/share: the person was a member when the
+// owner allowed them (a permanent grant, as the allow list always was) and the
+// membership lookup now calls them an outsider, so the next `add --allow` turns
+// their access into guest access.
+
+func (h *addAllowHarness) person() registry.Person {
+	h.t.Helper()
+	p, err := readPerson(h.f.paths.Registry, addAllowLogin)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return p
+}
+
+// requireRefusedUntouched checks that a refused transition named the guard (or
+// the guest maximum), sent nothing, and left the person's record as it was.
+func (h *addAllowHarness) requireRefusedUntouched(err error, before registry.Person, reason string) {
+	h.t.Helper()
+	if err == nil {
+		h.t.Fatalf("add was accepted; grants now %+v", h.person().Grants)
+	}
+	if !strings.Contains(err.Error(), reason) {
+		h.t.Fatalf("error = %v, want it to mention %q", err, reason)
+	}
+	if got := h.person(); !reflect.DeepEqual(got, before) {
+		h.t.Fatalf("refused add changed the person:\n got %+v\nwant %+v", got, before)
+	}
+	if posts, _ := h.f.counts(); posts != 0 {
+		h.t.Fatalf("refused add sent %d invitation(s)", posts)
+	}
+}
+
+func TestAddAllowFirstGuestInvitationKeepsAPermanentMemberGrant(t *testing.T) {
+	for _, entry := range addAllowEntries {
+		t.Run(entry, func(t *testing.T) {
+			h := newAddAllowHarness(t, true)
+			if err := h.call(entry, nil); err != nil {
+				t.Fatal(err)
+			}
+			requirePermanentGrant(t, h, "member's allow-list grant")
+			if registry.PersonIsGuest(h.person()) {
+				t.Fatal("the member is already a guest")
+			}
+			before, _ := h.grant()
+
+			lookupSaysOutsider()
+			if err := h.call(entry, nil); err != nil {
+				t.Fatalf("re-add for a permanent grant, now an outsider: %v", err)
+			}
+
+			requirePermanentGrant(t, h, "grant after the transition")
+			if after, _ := h.grant(); !reflect.DeepEqual(after, before) {
+				t.Fatalf("grant changed by the transition: %+v, want %+v", after, before)
+			}
+			if !registry.PersonIsGuest(h.person()) {
+				t.Fatal("the re-add did not turn the person into a guest, so the transition was not exercised")
+			}
+			if posts, _ := h.f.counts(); posts != 1 {
+				t.Fatalf("invitation POSTs = %d, want 1", posts)
+			}
+		})
+	}
+}
+
+func TestAddAllowFirstGuestInvitationRefusesAnExpiringBindingOverAPermanentGrant(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	owner := mcpscope.Scope{Role: "owner"}
+	for _, entry := range []string{"mcp-add", "mcp-share"} {
+		for name, ends := range map[string]time.Time{"binding with room for 24h": now.Add(72 * time.Hour), "binding ending sooner than 24h": now.Add(2 * time.Hour)} {
+			t.Run(entry+"/"+name, func(t *testing.T) {
+				expires := ends
+				session := &mcpscope.Session{Who: "agent", Scope: owner, ExpiresAt: &expires}
+
+				// Control: while the person is still a member the same re-add, with
+				// the same binding, leaves the permanent grant alone.
+				h := newAddAllowHarness(t, true)
+				if err := h.call(entry, nil); err != nil {
+					t.Fatal(err)
+				}
+				h.actions.session = session
+				if err := h.call(entry, nil); err != nil {
+					t.Fatalf("control (still a member): %v", err)
+				}
+				requirePermanentGrant(t, h, "control grant")
+
+				// The transition: the binding cannot create a permanent grant, so
+				// it must not carry one across to guest access.
+				h = newAddAllowHarness(t, true)
+				if err := h.call(entry, nil); err != nil {
+					t.Fatal(err)
+				}
+				requirePermanentGrant(t, h, "member's allow-list grant")
+				before := h.person()
+				lookupSaysOutsider()
+				h.actions.session = session
+				err := h.call(entry, nil)
+				h.requireRefusedUntouched(err, before, "first guest invitation")
+				requirePermanentGrant(t, h, "grant after the refused transition")
+			})
+		}
+	}
+}
+
+func TestAddAllowFirstGuestInvitationStillEnforcesTheGuestMaximum(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, entry := range addAllowEntries {
+		t.Run(entry, func(t *testing.T) {
+			// An omitted lifetime cannot carry a member's 30d grant across.
+			h := newAddAllowHarness(t, true)
+			if err := h.call(entry, map[string]string{"for": "30d"}); err != nil {
+				t.Fatal(err)
+			}
+			before := h.person()
+			lookupSaysOutsider()
+			err := h.call(entry, nil)
+			h.requireRefusedUntouched(err, before, "exceeds")
+			requireGrantExpiry(t, h, now.Add(30*24*time.Hour), "grant after the refused transition")
+
+			// Nor can an explicit request for more than a guest may have, even for
+			// a person whose grant is permanent.
+			h = newAddAllowHarness(t, true)
+			if err := h.call(entry, nil); err != nil {
+				t.Fatal(err)
+			}
+			before = h.person()
+			lookupSaysOutsider()
+			err = h.call(entry, map[string]string{"for": "30d"})
+			h.requireRefusedUntouched(err, before, "exceeds")
+			requirePermanentGrant(t, h, "grant after the refused explicit request")
+
+			// A request within the maximum is the owner's decision and is honored.
+			h = newAddAllowHarness(t, true)
+			if err := h.call(entry, nil); err != nil {
+				t.Fatal(err)
+			}
+			lookupSaysOutsider()
+			if err := h.call(entry, map[string]string{"for": "7d"}); err != nil {
+				t.Fatalf("explicit 7d for a new guest: %v", err)
+			}
+			requireGrantExpiry(t, h, now.Add(7*24*time.Hour), "explicit 7d after the transition")
 		})
 	}
 }

@@ -1,8 +1,12 @@
 package registry
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,6 +193,99 @@ func TestAddWithoutAllowOnANewInstallationIsPeopleScoped(t *testing.T) {
 			got := reg.Services[0]
 			if got.PeopleScoped != tc.wantGateway || (got.PortalRoute != nil) != tc.wantGateway || len(got.AllowedUsers) != 0 {
 				t.Fatalf("notes = %+v, want people_scoped=%v with a route=%v and no allow entries", got, tc.wantGateway, tc.wantGateway)
+			}
+		})
+	}
+}
+
+// The first device invitation turns a member's access into guest access. The
+// grants the person already holds are not given a new deadline by that, so an
+// omitted lifetime can only go ahead when the caller could have created each
+// grant as it stands for a guest: a permanent one needs the authority that
+// PermanentDefault stands for (a reduced role or an expiring binding has none),
+// and a finite one must be inside the guest maximum. These cases drive the
+// guard in changePersonInRegistry with a person who is not yet a guest.
+func TestFirstGuestInvitationOverExistingMemberGrants(t *testing.T) {
+	owner := mcpscope.Scope{Role: "owner"}
+	later := time.Date(2030, 1, 4, 0, 0, 0, 0, time.UTC)
+	soon := time.Date(2030, 1, 1, 2, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		seed      string // the member grant on photos, saved before the transition
+		explicit  string // an explicit lifetime on the invitation, when the caller gave one
+		session   *mcpscope.Session
+		permanent bool // PermanentDefault, as invite device and add --allow set it
+		refusal   string
+	}{
+		{"permanent grant, local owner", "never", "", nil, true, ""},
+		{"permanent grant, owner binding without expiry", "never", "", &mcpscope.Session{Who: "agent", Scope: owner}, true, ""},
+		{"finite grant at the guest maximum, local owner", "7d", "", nil, true, ""},
+		{"permanent grant, owner binding with room for 24h", "never", "", &mcpscope.Session{Who: "agent", Scope: owner, ExpiresAt: &later}, true, "ack-never"},
+		{"permanent grant, owner binding ending within 24h", "never", "", &mcpscope.Session{Who: "agent", Scope: owner, ExpiresAt: &soon}, true, "ack-never"},
+		{"permanent grant, reduced role", "never", "", &mcpscope.Session{Who: "agent", Scope: mcpscope.Scope{Role: "people-manager", Apps: []string{"photos"}, MaxDuration: "48h"}}, true, "ack-never"},
+		{"permanent grant, no permanent default", "never", "", nil, false, "ack-never"},
+		{"overlong grant, local owner", "30d", "", nil, true, "exceeds"},
+		{"overlong grant, owner binding without expiry", "30d", "", &mcpscope.Session{Who: "agent", Scope: owner}, true, "exceeds"},
+		{"overlong grant, no permanent default", "30d", "", nil, false, "exceeds"},
+		{"explicit overlong lifetime, local owner", "never", "30d", nil, true, "exceeds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, now := permanentDefaultStore(t)
+			if _, err := ChangePersonWithLifetime(path, "bob", []string{"photos"}, false, PersonLifetimeOptions{Value: &tc.seed, AckNever: true, Audience: duration.TailnetMember, Now: now}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if PersonIsGuest(before.People[0]) {
+				t.Fatalf("seeded person is already a guest: %+v", before.People[0])
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := now.Add(time.Minute)
+			ctx := context.Background()
+			if tc.session != nil {
+				ctx = mcpscope.WithClock(mcpscope.WithSession(ctx, *tc.session), func() time.Time { return at })
+			}
+			options := PersonLifetimeOptions{Context: ctx, Audience: duration.Guest, Now: at, PermanentDefault: tc.permanent, Tool: "invite_device"}
+			if tc.explicit != "" {
+				options.Value = &tc.explicit
+			}
+			p, err := ChangePersonWithLifetime(path, "bob", []string{"photos"}, false, options)
+			if tc.refusal != "" {
+				if err == nil {
+					t.Fatalf("transition accepted: %+v", p)
+				}
+				if !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("error = %v, want it to mention %q", err, tc.refusal)
+				}
+				if tc.explicit == "" && !strings.Contains(err.Error(), "first guest invitation") {
+					t.Fatalf("error = %v, want the first-invitation guard to refuse", err)
+				}
+				after, readErr := os.ReadFile(path)
+				if readErr != nil || !bytes.Equal(raw, after) {
+					t.Fatalf("refused transition changed the registry (%v)", readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !PersonIsGuest(p) {
+				t.Fatalf("person is not a guest after the first invitation: %+v", p)
+			}
+			after, err := Load(path)
+			if err != nil || len(after.People) != 1 {
+				t.Fatalf("reload: %+v %v", after.People, err)
+			}
+			if !PersonIsGuest(after.People[0]) {
+				t.Fatalf("saved person is not a guest: %+v", after.People[0])
+			}
+			if got, want := grantFor(t, after.People[0], "photos"), grantFor(t, before.People[0], "photos"); !reflect.DeepEqual(got, want) {
+				t.Fatalf("existing grant changed by the transition: %+v, want %+v", got, want)
 			}
 		})
 	}

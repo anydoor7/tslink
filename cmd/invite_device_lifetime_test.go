@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,3 +330,159 @@ func TestInviteDeviceUnderALimitedBindingNeverMintsAPermanentGrant(t *testing.T)
 }
 
 func inviteDeviceLifetime(v string) *string { return &v }
+
+// The first device invitation for someone the membership lookup used to call a
+// member turns their access into guest access. The grants they already hold
+// are not given new deadlines by that, and the command has no lifetime flag, so
+// it can only go ahead when the caller could have created each grant as it
+// stands for a guest: a permanent one needs the authority to create a
+// permanent grant, and a finite one must be inside the guest maximum.
+
+// lookupSaysOutsider makes the membership lookup answer "outside the network"
+// from now on: the person was a member when their grant was saved and is not
+// any more.
+func lookupSaysOutsider() {
+	peopleMembershipFn = func(context.Context, string, string) (tailapi.Membership, error) {
+		return tailapi.MembershipGuest, nil
+	}
+}
+
+func (h *inviteDeviceHarness) person() registry.Person {
+	h.t.Helper()
+	p, err := readPerson(h.f.paths.Registry, inviteDeviceLogin)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return p
+}
+
+// requireRefusedUntouched checks that a refused transition named the guard (or
+// the guest maximum), sent nothing, and left the person's record as it was.
+func (h *inviteDeviceHarness) requireRefusedUntouched(err error, before registry.Person, reason string) {
+	h.t.Helper()
+	if err == nil {
+		h.t.Fatalf("invite device was accepted; grants now %+v", h.person().Grants)
+	}
+	if !strings.Contains(err.Error(), reason) {
+		h.t.Fatalf("error = %v, want it to mention %q", err, reason)
+	}
+	if got := h.person(); !reflect.DeepEqual(got, before) {
+		h.t.Fatalf("refused invite device changed the person:\n got %+v\nwant %+v", got, before)
+	}
+	if posts, _ := h.f.counts(); posts != 0 {
+		h.t.Fatalf("refused invite device sent %d invitation(s)", posts)
+	}
+}
+
+func TestInviteDeviceFirstGuestInvitationKeepsAPermanentMemberGrant(t *testing.T) {
+	owner := mcpscope.Scope{Role: "owner"}
+	for _, entry := range inviteDeviceEntries {
+		t.Run(entry, func(t *testing.T) {
+			h := newInviteDeviceHarness(t, true)
+			h.seed(peopleArguments{Who: inviteDeviceLogin, Apps: []string{"photos"}, For: inviteDeviceLifetime("never"), AckNever: true})
+			h.requirePermanent("photos", "seeded member grant")
+			if registry.PersonIsGuest(h.person()) {
+				t.Fatal("the seeded member is already a guest")
+			}
+			before, _ := h.grantOn("photos")
+
+			lookupSaysOutsider()
+			if entry == "mcp" {
+				h.actions.session = &mcpscope.Session{Who: "agent", Scope: owner}
+			}
+			if err := h.call(entry); err != nil {
+				t.Fatalf("invite device for a member's permanent grant, now an outsider: %v", err)
+			}
+
+			h.requirePermanent("photos", "grant after the transition")
+			if after, _ := h.grantOn("photos"); !reflect.DeepEqual(after, before) {
+				t.Fatalf("grant changed by the transition: %+v, want %+v", after, before)
+			}
+			if !registry.PersonIsGuest(h.person()) {
+				t.Fatal("the invitation did not turn the person into a guest, so the transition was not exercised")
+			}
+			if posts, _ := h.f.counts(); posts != 1 {
+				t.Fatalf("invitation POSTs = %d, want 1", posts)
+			}
+		})
+	}
+}
+
+func TestInviteDeviceFirstGuestInvitationRefusesAnExpiringBindingOverAPermanentGrant(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	owner := mcpscope.Scope{Role: "owner"}
+	for name, ends := range map[string]time.Time{"binding with room for 24h": now.Add(72 * time.Hour), "binding ending sooner than 24h": now.Add(2 * time.Hour)} {
+		t.Run(name, func(t *testing.T) {
+			expires := ends
+			session := &mcpscope.Session{Who: "agent", Scope: owner, ExpiresAt: &expires}
+
+			// Control: with no change of membership the same call, with the same
+			// binding, leaves the permanent grant alone and succeeds.
+			h := newInviteDeviceHarness(t, true)
+			h.seed(peopleArguments{Who: inviteDeviceLogin, Apps: []string{"photos"}, For: inviteDeviceLifetime("never"), AckNever: true})
+			h.actions.session = session
+			if err := h.call("mcp"); err != nil {
+				t.Fatalf("control (still a member): %v", err)
+			}
+			h.requirePermanent("photos", "control grant")
+
+			// The transition: a binding that cannot create a permanent grant must
+			// not carry one across to guest access.
+			h = newInviteDeviceHarness(t, true)
+			h.seed(peopleArguments{Who: inviteDeviceLogin, Apps: []string{"photos"}, For: inviteDeviceLifetime("never"), AckNever: true})
+			h.requirePermanent("photos", "seeded member grant")
+			before := h.person()
+			lookupSaysOutsider()
+			h.actions.session = session
+			err := h.call("mcp")
+			h.requireRefusedUntouched(err, before, "first guest invitation")
+			h.requirePermanent("photos", "grant after the refused transition")
+		})
+	}
+}
+
+func TestInviteDeviceFirstGuestInvitationStillEnforcesTheGuestMaximum(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	owner := mcpscope.Scope{Role: "owner"}
+	for _, entry := range inviteDeviceEntries {
+		session := func(h *inviteDeviceHarness) {
+			if entry == "mcp" {
+				h.actions.session = &mcpscope.Session{Who: "agent", Scope: owner}
+			}
+		}
+		t.Run(entry, func(t *testing.T) {
+			// Control: a member keeps a 30d grant (members have no maximum).
+			h := newInviteDeviceHarness(t, true)
+			h.seed(peopleArguments{Who: inviteDeviceLogin, Apps: []string{"photos"}, For: inviteDeviceLifetime("30d")})
+			session(h)
+			if err := h.call(entry); err != nil {
+				t.Fatalf("control (still a member): %v", err)
+			}
+			h.requireExpiry("photos", now.Add(30*24*time.Hour), "member's 30d grant")
+
+			// Once the person is an outsider, the unrestricted owner's permanent
+			// default does not extend to a grant past the guest maximum.
+			h = newInviteDeviceHarness(t, true)
+			h.seed(peopleArguments{Who: inviteDeviceLogin, Apps: []string{"photos"}, For: inviteDeviceLifetime("30d")})
+			before := h.person()
+			lookupSaysOutsider()
+			session(h)
+			err := h.call(entry)
+			h.requireRefusedUntouched(err, before, "exceeds")
+			h.requireExpiry("photos", now.Add(30*24*time.Hour), "grant after the refused transition")
+
+			// A grant at the maximum is fine, and is not moved.
+			h = newInviteDeviceHarness(t, true)
+			h.seed(peopleArguments{Who: inviteDeviceLogin, Apps: []string{"photos"}, For: inviteDeviceLifetime("7d")})
+			lookupSaysOutsider()
+			session(h)
+			if err := h.call(entry); err != nil {
+				t.Fatalf("7d grant at the guest maximum: %v", err)
+			}
+			h.requireExpiry("photos", now.Add(7*24*time.Hour), "7d grant after the transition")
+			if !registry.PersonIsGuest(h.person()) {
+				t.Fatal("the invitation did not turn the person into a guest")
+			}
+		})
+	}
+}
