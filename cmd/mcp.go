@@ -645,7 +645,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:        "invite_device",
-		Description: "Sends a real device-sharing invitation to a real email address outside the tailnet, so confirm the service and address with the user before calling this. It shares one TSLink-owned service device with that person. Set print_link true to receive a bearer invite URL instead of having Tailscale send the email.",
+		Description: "Sends a real device-sharing invitation to a real email address outside the tailnet, so confirm the service and address with the user before calling this. It shares one TSLink-owned service device with that person. For an HTTP or file service it also saves their access: a grant this call creates has no expiry (use people_add with for/until to limit it), a grant they already have keeps its deadline, and a binding that expires cannot create a permanent grant, so it gets 24h or a refusal. Set print_link true to receive a bearer invite URL instead of having Tailscale send the email.",
 		InputSchema: objectSchema(map[string]any{
 			"service":         map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Exact registered service name whose device is shared."},
 			"email":           map[string]any{"type": "string", "description": "Recipient email address."},

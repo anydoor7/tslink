@@ -214,9 +214,14 @@ func inviteDeviceCreate(ctx context.Context, regPath, pidPath, snapshotPath, ser
 		if svc.Name != service || svc.Type == registry.TypeTCP {
 			continue
 		}
+		// Sharing a device never carried a deadline: the person's access came
+		// from the app's allow list, which does not expire. The command has no
+		// lifetime flag, so a grant it creates is permanent (as `add --allow`
+		// does), one that exists is left as it is, and a caller that could not
+		// create a permanent grant keeps the 24h default.
 		result, err := grantAccess(ctx, sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath}, grantAccessIntent{
 			Arguments:       peopleArguments{Who: email, Apps: []string{service}, PrintLinks: printLink, EmailInvite: !printLink, MultiUse: multiUse, AllowExitNode: allowExitNode},
-			PreserveRevoked: true, Tool: "invite_device",
+			PreserveRevoked: true, PermanentDefault: true, Tool: "invite_device",
 		})
 		if err != nil {
 			return tailapi.Invite{}, err
@@ -491,7 +496,15 @@ func init() {
 	deviceCmd := &cobra.Command{
 		Use:   "device <service> <email>",
 		Short: "Share a TSLink-owned service device with an external user",
-		Args:  cobra.ExactArgs(2),
+		Long: `Share a TSLink-owned service device with an external user.
+
+For an HTTP or file app this also saves the person's access to it, through the
+same action as people add. Sharing a device has never carried a deadline, so a
+grant this command creates has no expiry; a grant the person already has keeps
+its deadline, and an app already on their allow list stays as it was. To limit
+the access use people add with --for or --until, or tslink extend; this command
+has no lifetime flag. A TCP service is shared on the network only.`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return inviteDeviceRun(cmd.Context(), cmd.OutOrStdout(), args[0], args[1], devicePrintLink, deviceMultiUse, deviceAllowExitNode, jsonOutput(cmd))
 		},

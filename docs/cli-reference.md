@@ -42,7 +42,7 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
 | `tslink tags delete-remote <tag> --force --manage-acl` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks and explicit remote-write opt-in |
 | `tslink invite user <email>` | Invite a user to join the tailnet; requires a user-owned API access token |
-| `tslink invite device <service> <email>` | Share a TSLink-owned service device with an external user; requires exact node ownership proof |
+| `tslink invite device <service> <email>` | Share a TSLink-owned service device with an external user; requires exact node ownership proof. For an HTTP/file app it also saves the person's access with no expiry (an existing grant keeps its deadline; use `people add --for` to limit it) |
 | `tslink invite list` | List open user and TSLink-owned device invites |
 | `tslink invite revoke <id> --kind <user\|device>` | Revoke a user or device invite |
 | `tslink invite resend <id> --kind <user\|device>` | Resend an emailed user or device invite |
