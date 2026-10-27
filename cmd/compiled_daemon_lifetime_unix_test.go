@@ -15,11 +15,16 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	configDir := t.TempDir()
+	// This test owns the daemon's process lifetime, not the default gateway: a
+	// first-run config directory would make the daemon start the home node and
+	// query the host's login sessions before it notices its launcher is gone.
+	seedExistingEmptyInstallation(t, configDir)
 	pidPath := filepath.Join(configDir, "tslink.pid")
 	launcher := exec.Command(compiledTSLinkBinary(t), "serve", "--daemon", "--json", "--no-browser")
 	launcher.Env = append(os.Environ(),
@@ -117,4 +122,15 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	}
 
 	testwait.Until(t, fmt.Sprintf("detached daemon %d exited after its launcher", daemonPID), func() bool { return !daemon.IsProcessRunning(daemonPID) })
+
+	// The seeded installation is what keeps this test off the gateway start
+	// path; a daemon that initialized the default gateway anyway would have
+	// started the home node, so the isolation is checked, not assumed.
+	reg, loadErr := registry.Load(filepath.Join(configDir, "registry.json"))
+	if loadErr != nil {
+		t.Fatalf("load registry after the daemon exited: %v", loadErr)
+	}
+	if reg.Portal != nil {
+		t.Fatalf("the daemon initialized the default gateway in an existing installation: portal=%+v", reg.Portal)
+	}
 }
