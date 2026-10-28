@@ -15,6 +15,7 @@ This index records the people sharing lifecycle implementation and regression te
 - [rereview_adversarial_test.go](rereview_adversarial_test.go): ported independent re-review fixtures.
 - [review3_boundary_test.go](review3_boundary_test.go): complete-list or UTF-8 boundary regression evidence.
 - [review3_input_test.go](review3_input_test.go): complete-list or UTF-8 boundary regression evidence.
+- `people_guest_gate_test.go`: Member/guest add and people-add preservation across ordinary and guest-gated Funnel.
 
 # Health CLI entry points
 

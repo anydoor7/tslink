@@ -3,6 +3,16 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [0.3.1] - 2026-10-27
+
+### Upgrade
+
+- No registry migration is required. After upgrading, run `tslink install` again if TSLink runs as a background service so it uses the new binary.
+
+### Fixed
+
+- Adding a person for another app, including re-adding a revoked person, no longer conflicts with an open GuestGate; on its private entry, a non-revoked person with no grant for that GuestGate keeps the unknown-human access baseline even when all their other grants have expired or latched, while explicit GuestGate grants and denials retain their existing rules. Re-adding a revoked person restores the unknown-user baseline on open GuestGate services.
+
 ## [0.3.0] - 2026-10-27
 
 Gateway mode by default, and one action to give someone access. New installations start the persistent home gateway: a person outside your tailnet accepts one device share and you choose which apps they can use. Granting access is the same action in either mode: TSLink checks whether the person is in your tailnet, keeps what they already have, and completes the routes and invitations it needs. Access totals count each person's traffic per app the same way whether a request came through the gateway or an app's own node.

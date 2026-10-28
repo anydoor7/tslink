@@ -12,6 +12,7 @@ This index records the people sharing lifecycle implementation and regression te
 - [testdata/INDEX.md](testdata/INDEX.md): parent registry upgrade provenance.
 - [review3_identity_test.go](review3_identity_test.go): complete-list or UTF-8 boundary regression evidence.
 - [review3_utf8_test.go](review3_utf8_test.go): complete-list or UTF-8 boundary regression evidence.
+- `people_guest_gate_test.go`: Open GuestGate access, revoked-person re-addition, expiry baselines and access-preservation boundaries.
 
 # Service registry tests
 
