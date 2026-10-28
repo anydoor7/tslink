@@ -765,8 +765,9 @@ func preserveAccessExcept(before, after *Registry, login string, apps map[string
 	return nil
 }
 
-// restoresGuestGateBaseline admits only revival into the legacy open baseline,
-// not an explicit grant or a service becoming open during setup.
+// restoresGuestGateBaseline admits revival into the legacy open baseline only
+// when before contains a revoked tombstone for login, not an explicit grant or
+// a service becoming open during setup.
 func restoresGuestGateBaseline(before, after *Registry, old, next Service, login string) bool {
 	if !old.GuestGate || old.PeopleScoped || len(old.AllowedUsers) != 0 ||
 		!next.GuestGate || next.PeopleScoped || len(next.AllowedUsers) != 0 {

@@ -3,11 +3,15 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
-## [Unreleased]
+## [0.3.1] - 2026-10-27
+
+### Upgrade
+
+- No registry migration is required. After upgrading, run `tslink install` again if TSLink runs as a background service so it uses the new binary.
 
 ### Fixed
 
-- Adding a person for another app, including re-adding a revoked person, no longer conflicts with an open GuestGate; on its private entry, a non-revoked person with no grant for that GuestGate keeps the unknown-human access baseline even when all their other grants have expired or latched, while explicit GuestGate grants and denials retain their existing rules.
+- Adding a person for another app, including re-adding a revoked person, no longer conflicts with an open GuestGate; on its private entry, a non-revoked person with no grant for that GuestGate keeps the unknown-human access baseline even when all their other grants have expired or latched, while explicit GuestGate grants and denials retain their existing rules. Re-adding a revoked person restores the unknown-user baseline on open GuestGate services.
 
 ## [0.3.0] - 2026-10-27
 
