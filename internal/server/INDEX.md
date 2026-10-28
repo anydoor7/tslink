@@ -16,7 +16,7 @@ This index records the people sharing lifecycle implementation and regression te
 - `health.go`: backend scheduling, independent node-expiry refresh and monitor shutdown.
 - `health_test.go`, `health_isolation_test.go`: monitor, event stream, worker isolation and causal published-observation progress during blocked notifier delivery.
 - `regression_refused_target_test.go`, `regression_node_replacement_test.go`: reviewer target-safety and node-incarnation regressions.
-- `regression_scheduler_test.go`, `regression_refresh_cost_test.go`, `regression_pool_test.go`, `health_pool_test.go`: scheduler budgets, retained reads, saturation/recovery and write-count regressions.
+- `regression_scheduler_test.go`, `regression_refresh_cost_test.go`, `regression_pool_test.go`, `health_pool_test.go`: scheduler budgets, retained reads, saturation/recovery, completed reads freeing their slot before delivery, and write-count regressions.
 - `regression_snapshot_retry_test.go`, `regression_stream_aging_test.go`: failed snapshot retry and connected event-stream health aging regressions.
 
 # Recipe proxy configuration checks

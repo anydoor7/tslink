@@ -20,7 +20,10 @@ func TestLaunchAgentPostBootstrapBudget(t *testing.T) {
 			t.Run(path+"/"+scenario, func(t *testing.T) {
 				stubDarwinLaunchAgentVerificationNoWait(t)
 				const budget = 80 * time.Millisecond
-				const allowance = 60 * time.Millisecond
+				// Scheduling slack for -race on shared CI runners (163ms was seen
+				// with 60ms). An unbounded kickstart still fails: it outlives the
+				// verification window, so the final state check never happens.
+				const allowance = 200 * time.Millisecond
 				launchAgentVerifyTimeout = budget
 				launchAgentVerifyPollInterval = time.Millisecond
 				launchAgentSettleWindow = 5 * time.Millisecond

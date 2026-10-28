@@ -3,6 +3,12 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [Unreleased]
+
+### Fixed
+
+- A finished health check now frees its slot before reporting the result, so the next check of the same app is never skipped as still running.
+
 ## [0.3.1] - 2026-10-27
 
 ### Upgrade
