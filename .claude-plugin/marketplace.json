@@ -10,9 +10,9 @@
       "source": {
         "source": "github",
         "repo": "anydoor7/tslink-claude-plugin",
-        "sha": "4b96d9decedda98408bde33f80e4fe31839ed253"
+        "sha": "ae20f30a28ffa4c0792727e46640c651ceb8647a"
       },
-      "description": "Private HTTPS previews for local apps with TSLink."
+      "description": "Private app previews with the TSLink home gateway and per-person access."
     }
   ]
 }

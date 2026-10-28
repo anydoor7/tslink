@@ -18,7 +18,12 @@ report. Use the TSLink MCP tools if connected; otherwise the `tslink` CLI
    - Background service: the first share may install a login-persistent
      TSLink service. If the user declines and TSLink is not already running,
      stop. If it is running, pass `no_daemon_install:true` / `--no-daemon-install`.
-   Never enable Funnel or create guest links.
+   Never enable Funnel or create browser guest links. A named private recipient
+   can require a device invitation; confirm that private sharing is intended.
+   New installations create a persistent home gateway by default. Existing
+   installations keep their mode. Ordinary private HTTP/file apps gain stable
+   gateway routes while keeping their own nodes and URLs; do not opt into
+   portal-only mode or migrate an existing installation without a request.
 3. Share only that port:
    - MCP: `share {"target":"3000","name":"preview","allow":["user@example.com"]}`
    - CLI, restricted: check `tslink list --json` (add replaces a same-name
@@ -34,7 +39,22 @@ report. Use the TSLink MCP tools if connected; otherwise the `tslink` CLI
    `tslink url <name> --wait --json`. Report only that exact `url`. If it is
    still pending, say so; never guess a hostname.
 6. Recipients need Tailscale and access to the node; the URL alone grants
-   nothing.
+   nothing. The `allow` field and CLI `add --allow` perform the common people
+   authorization action: they verify membership, save grants, and complete
+   required device sharing. They keep permanent access unless a lifetime is
+   supplied. Do not report an allow-only write as completed access.
+   For a chosen duration, use MCP `people_add` or
+   `tslink people add <login> --apps <returned-name> --for 7d --json` after the
+   app is enrolled. New `people add` grants default to 24h; permanent grants
+   require `--for never --ack-never`. Verified members need no invitation;
+   outsiders need one gateway invitation when enabled, otherwise one per app.
+   Directory verification needs a credential, and device invitation creation
+   needs a user-owned API token. Missing credentials, stale runtime or partial
+   sharing are incomplete results with local grants retained. Report the exact
+   error and resume with `people update`; never blindly retry an unknown POST.
+   An awaiting-acceptance result is prepared access, not recipient acceptance.
+   Invitation links are bearer credentials: disclose only with explicit
+   `--print-links` permission and deliver only to the intended recipient.
 7. If a background service was installed, report it: MCP `daemon_installed`
    (`manager`, `path`, `undo`), or the CLI stderr line ending
    `Undo with: tslink uninstall`.
