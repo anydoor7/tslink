@@ -457,8 +457,15 @@ func boundedHealthRead[T any](ctx context.Context, pool *healthReadPool, name st
 	defer cancel()
 	result := make(chan T, 1)
 	go func() {
-		defer func() { <-pool.slots; release() }()
-		result <- read(ioCtx)
+		// Free the slot and the name before delivering the value, so a caller
+		// that has the result can start the next read of this name at once.
+		// The deferred call still frees them if read panics.
+		var once sync.Once
+		finish := func() { once.Do(func() { <-pool.slots; release() }) }
+		defer finish()
+		value := read(ioCtx)
+		finish()
+		result <- value
 	}()
 	select {
 	case value := <-result:

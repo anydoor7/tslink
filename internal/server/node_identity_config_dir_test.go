@@ -36,7 +36,8 @@ func TestNodeIdentityPathComesFromConfig(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if name := d.Name(); name == ".git" || name == "testdata" {
+			// .worktrees holds git-ignored local checkouts of other branches.
+			if name := d.Name(); name == ".git" || name == ".worktrees" || name == "testdata" {
 				return filepath.SkipDir
 			}
 			return nil

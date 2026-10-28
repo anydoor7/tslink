@@ -39,3 +39,23 @@ func TestHealthQueueTimeoutIsNotAttempted(t *testing.T) {
 		}
 	})
 }
+
+// A read that has returned its value is finished: the same name must be
+// admitted again straight away. Releasing the flight after delivering the
+// value let an immediate next cycle see it as still running and skip a check
+// (gateway_health_test observed degraded instead of down on CI).
+func TestHealthCompletedReadReleasesBeforeDelivery(t *testing.T) {
+	pool := newHealthReadPool()
+	for i := 0; i < 20000; i++ {
+		got, attempted := boundedHealthRead(context.Background(), pool, "photos", time.Second, "timeout", func(context.Context) string { return "ok" })
+		if got != "ok" || !attempted {
+			t.Fatal("read not completed", i, got, attempted)
+		}
+		pool.mu.Lock()
+		_, busy := pool.flights["photos"]
+		pool.mu.Unlock()
+		if busy || len(pool.slots) != 0 {
+			t.Fatalf("iteration %d: completed read still held flight=%v slots=%d", i, busy, len(pool.slots))
+		}
+	}
+}
