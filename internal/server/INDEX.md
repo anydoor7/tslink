@@ -8,6 +8,7 @@ This index records the people sharing lifecycle implementation and regression te
 - [people_review_regression_test.go](people_review_regression_test.go)
 - [rereview_identity_test.go](rereview_identity_test.go): ported independent re-review fixtures.
 - [review3_utf8_test.go](review3_utf8_test.go): complete-list or UTF-8 boundary regression evidence.
+- `people_guest_gate_test.go`: Guest-gate private listener preserves unrelated-person access and still denies revoked people.
 
 # Server health entry points
 

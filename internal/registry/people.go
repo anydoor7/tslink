@@ -627,8 +627,8 @@ func expirePeople(path string, now time.Time, lock func(string, func() error) er
 	return changed, err
 }
 
-// PeopleAccessAt returns an authoritative decision for known logins or scoped
-// services. Callers may use the legacy ACL only when authoritative is false.
+// PeopleAccessAt returns an authoritative decision when people rules apply.
+// Callers may use the legacy ACL only when authoritative is false.
 func PeopleAccessAt(reg *Registry, svc Service, login string, tags []string, now time.Time) (allowed, authoritative bool) {
 	var err error
 	login, err = normalizePersonFromRegistry(reg, login)
@@ -639,6 +639,13 @@ func PeopleAccessAt(reg *Registry, svc Service, login string, tags []string, now
 	for _, p := range reg.People {
 		// Tags represent machines, never a person, even with a matching profile.
 		if login != "" && p.Login == login && len(tags) == 0 {
+			// An unscoped browser-guest app with no ACL keeps its open private
+			// access when a person is added to an unrelated app. Explicit ACLs,
+			// grants (including expired ones), and revocations still use the
+			// existing people rules.
+			if svc.GuestGate && !svc.PeopleScoped && len(svc.AllowedUsers) == 0 && !p.Revoked && !personHasGrant(p, svc.Name) {
+				return false, false
+			}
 			return PersonGrantActiveAt(p, svc.Name, now), true
 		}
 	}
@@ -735,6 +742,11 @@ func preserveAccessExcept(before, after *Registry, login string, apps map[string
 			}
 			a, _, _ := PrivateAppAccessAt(before, old, who, nil, now)
 			b, _, _ := PrivateAppAccessAt(after, *next, who, nil, now)
+			// Restoring a tombstone may restore this person's open GuestGate
+			// baseline, but must never hide a loss or another person's change.
+			if who == login && !a && b && restoresGuestGateBaseline(before, after, old, *next, who) {
+				continue
+			}
 			changed = changed || a != b
 		}
 		for tag := range tags {
@@ -751,6 +763,31 @@ func preserveAccessExcept(before, after *Registry, login string, apps map[string
 		return CodedError{Code: errcode.Conflict, Message: "access setup would change existing access to " + strings.Join(conflicts, ", ") + "; set the intended access list before retrying"}
 	}
 	return nil
+}
+
+// restoresGuestGateBaseline admits only revival into the legacy open baseline,
+// not an explicit grant or a service becoming open during setup.
+func restoresGuestGateBaseline(before, after *Registry, old, next Service, login string) bool {
+	if !old.GuestGate || old.PeopleScoped || len(old.AllowedUsers) != 0 ||
+		!next.GuestGate || next.PeopleScoped || len(next.AllowedUsers) != 0 {
+		return false
+	}
+	revoked := false
+	for _, p := range before.People {
+		if p.Login == login {
+			revoked = p.Revoked
+			break
+		}
+	}
+	if !revoked {
+		return false
+	}
+	for _, p := range after.People {
+		if p.Login == login {
+			return !p.Revoked && !personHasGrant(p, next.Name)
+		}
+	}
+	return false
 }
 
 func PrivateAppAccessAt(reg *Registry, svc Service, login string, tags []string, now time.Time) (bool, *time.Time, bool) {
