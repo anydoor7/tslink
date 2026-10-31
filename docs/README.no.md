@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink er en åpen kildekode-CLI og MCP-server som gir hver app på datamaskinen din en privat adresse <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, slik at du eller coding agenten din kan åpne en kjørende utviklingsserver på telefonen. Uavhengig prosjekt, ikke laget av Tailscale.</p>
 <p align="center">Telefonen din trenger Tailscale-appen, logget inn på samme tailnet.</p>
-<p align="center"><strong>Norsk</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Flere språk</a></p>
+<p align="center"><strong>Norsk</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Flere språk</a></p>
 
 ```text
 # Claude Code, etter at du har installert CLI-en (se Installasjon nedenfor)

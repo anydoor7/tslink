@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink — це CLI та MCP-сервер з відкритим кодом: він дає кожному застосунку на вашому комп'ютері приватну адресу <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, щоб ви або ваш coding agent могли відкрити запущений dev-сервер на телефоні. Незалежний проєкт, не створений Tailscale.</p>
 <p align="center">На телефоні потрібен застосунок Tailscale з входом у той самий tailnet.</p>
-<p align="center"><strong>Українська</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Інші мови</a></p>
+<p align="center"><strong>Українська</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Інші мови</a></p>
 
 ```text
 # Claude Code, після встановлення CLI (див. розділ «Встановлення» нижче)

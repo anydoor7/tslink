@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink 是開源的命令列工具和 MCP 伺服器，替你電腦上的每個應用程式提供一個形如 <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> 的私有位址，讓你或你的 coding agent 能在手機上開啟正在執行的 dev server。TSLink 是獨立專案，並非 Tailscale 出品。</p>
 <p align="center">手機需要安裝 Tailscale App，並登入同一個 tailnet。</p>
-<p align="center"><strong>繁體中文</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">更多語言</a></p>
+<p align="center"><strong>繁體中文</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">更多語言</a></p>
 
 ```text
 # Claude Code，先裝好命令列工具（見下方的安裝）

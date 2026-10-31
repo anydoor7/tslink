@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink, bilgisayarınızdaki her uygulamaya <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> biçiminde özel bir adres veren açık kaynaklı bir CLI ve MCP sunucusudur; böylece siz ya da coding agent'ınız çalışan bir geliştirme sunucusunu telefonunuzda açabilirsiniz. Bağımsız bir projedir, Tailscale tarafından yapılmamıştır.</p>
 <p align="center">Telefonunuzda Tailscale uygulaması olmalı ve aynı tailnet'e giriş yapılmış olmalı.</p>
-<p align="center"><strong>Türkçe</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Diğer diller</a></p>
+<p align="center"><strong>Türkçe</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Diğer diller</a></p>
 
 ```text
 # Claude Code, CLI'ı kurduktan sonra (aşağıdaki Kurulum bölümüne bakın)
