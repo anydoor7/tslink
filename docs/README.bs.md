@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink je CLI i MCP server otvorenog koda koji svakoj aplikaciji na vašem računaru daje privatnu adresu <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, tako da vi ili vaš coding agent možete na telefonu otvoriti pokrenuti razvojni server. Nezavisan projekat, nije proizvod kompanije Tailscale.</p>
 <p align="center">Vaš telefon treba aplikaciju Tailscale, prijavljenu na isti tailnet.</p>
-<p align="center"><strong>Bosanski</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Više jezika</a></p>
+<p align="center"><strong>Bosanski</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Više jezika</a></p>
 
 ```text
 # Claude Code, nakon instalacije CLI-ja (vidi Instalacija ispod)

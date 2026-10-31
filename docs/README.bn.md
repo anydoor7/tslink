@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink একটি ওপেন-সোর্স CLI ও MCP সার্ভার, যা আপনার কম্পিউটারের প্রতিটি অ্যাপকে <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> আকারের একটি ব্যক্তিগত ঠিকানা দেয়, ফলে আপনি বা আপনার coding agent চালু থাকা একটি ডেভ সার্ভার ফোনে খুলতে পারেন। এটি একটি স্বতন্ত্র প্রকল্প, Tailscale-এর তৈরি নয়।</p>
 <p align="center">আপনার ফোনে Tailscale অ্যাপ লাগবে এবং একই tailnet-এ সাইন ইন করা থাকতে হবে।</p>
-<p align="center"><strong>বাংলা</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">আরও ভাষা</a></p>
+<p align="center"><strong>বাংলা</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">আরও ভাষা</a></p>
 
 ```text
 # Claude Code, CLI ইনস্টল করার পর (নিচে ইনস্টল দেখুন)

@@ -9,7 +9,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink هو CLI وخادم MCP مفتوحا المصدر يمنح كل تطبيق على حاسوبك عنوانا خاصا بصيغة <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>، فتتمكن أنت أو coding agent الخاص بك من فتح خادم تطوير قيد التشغيل على هاتفك. مشروع مستقل، ولم تصنعه Tailscale.</p>
 <p align="center">يحتاج هاتفك إلى تطبيق Tailscale، مع تسجيل الدخول إلى شبكة tailnet نفسها.</p>
-<p align="center"><strong>العربية</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">لغات أخرى</a></p>
+<p align="center"><strong>العربية</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">لغات أخرى</a></p>
 
 ```text
 # Claude Code، بعد تثبيت CLI (انظر التثبيت أدناه)

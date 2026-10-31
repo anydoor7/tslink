@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink는 컴퓨터의 앱마다 <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> 형태의 비공개 주소를 만들어 주는 오픈 소스 CLI 겸 MCP 서버입니다. 직접 하든 coding agent에게 맡기든, 실행 중인 개발 서버를 휴대폰에서 열 수 있습니다. 독립 프로젝트이며 Tailscale에서 만든 것이 아닙니다.</p>
 <p align="center">휴대폰에는 Tailscale 앱이 필요하고, 같은 tailnet에 로그인해 있어야 합니다.</p>
-<p align="center"><a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <strong>한국어</strong> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">다른 언어</a></p>
+<p align="center"><a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <strong>한국어</strong> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">다른 언어</a></p>
 
 ```text
 # Claude Code: 먼저 CLI를 설치하세요(아래 설치 참고)

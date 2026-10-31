@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">Το TSLink είναι ένα CLI και διακομιστής MCP ανοιχτού κώδικα που δίνει σε κάθε εφαρμογή του υπολογιστή σας μια ιδιωτική διεύθυνση <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, ώστε εσείς ή ο coding agent σας να ανοίγετε στο κινητό έναν διακομιστή ανάπτυξης που τρέχει. Ανεξάρτητο έργο, δεν δημιουργήθηκε από την Tailscale.</p>
 <p align="center">Το κινητό σας χρειάζεται την εφαρμογή Tailscale, συνδεδεμένη στο ίδιο tailnet.</p>
-<p align="center"><strong>Ελληνικά</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Περισσότερες γλώσσες</a></p>
+<p align="center"><strong>Ελληνικά</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">Περισσότερες γλώσσες</a></p>
 
 ```text
 # Claude Code, μετά την εγκατάσταση του CLI (δείτε την Εγκατάσταση παρακάτω)

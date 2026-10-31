@@ -7,7 +7,7 @@
 <h1 align="center">TSLink</h1>
 <p align="center">TSLink เป็น CLI และเซิร์ฟเวอร์ MCP แบบโอเพนซอร์สที่ให้ที่อยู่ส่วนตัว <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code> กับแต่ละแอปบนคอมพิวเตอร์ของคุณ เพื่อให้คุณหรือ coding agent ของคุณใช้โทรศัพท์เข้าถึงเซิร์ฟเวอร์สำหรับพัฒนาที่กำลังรันอยู่บนคอมพิวเตอร์ได้ เป็นโปรเจกต์อิสระ ไม่ได้สร้างโดย Tailscale</p>
 <p align="center">โทรศัพท์ของคุณต้องมีแอป Tailscale และล็อกอินเข้า tailnet เดียวกัน</p>
-<p align="center"><strong>ไทย</strong> · <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">ภาษาอื่น</a></p>
+<p align="center"><strong>ไทย</strong> · <a href="https://github.com/anydoor7/tslink">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.es.md">Español</a> · <a href="INDEX.md#translated-homepages">ภาษาอื่น</a></p>
 
 ```text
 # Claude Code หลังติดตั้ง CLI แล้ว (ดู "ติดตั้ง" ด้านล่าง)

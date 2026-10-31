@@ -1,6 +1,6 @@
 # Documentation index
 
-[English homepage](../README.md) · [Contributor agent instructions](../AGENTS.md)
+[English homepage](https://github.com/anydoor7/tslink) · [Contributor agent instructions](../AGENTS.md)
 
 [llms.txt](../llms.txt) · [Agent quickstart](agent-quickstart.md) · [Choose a sharing tool](comparison.md)
 
