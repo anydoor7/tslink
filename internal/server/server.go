@@ -188,18 +188,35 @@ type limitedListener struct {
 	sem     chan struct{}
 	kind    string
 	service string
+	// handshakes records TLS handshake timing and failures for this listener.
+	handshakes *handshakeMonitor
 }
 
-func newLimitedListener(ln net.Listener, limit int, kind, service string) net.Listener {
+// newLimitedListener caps concurrent connections and, for TLS connections,
+// observes handshakes. identity, when given, names the client node in
+// handshake log records.
+func newLimitedListener(ln net.Listener, limit int, kind, service string, identity ...*IdentityResolver) net.Listener {
 	if limit <= 0 {
 		return ln
 	}
-	return &limitedListener{
-		Listener: ln,
-		sem:      make(chan struct{}, limit),
-		kind:     kind,
-		service:  service,
+	var resolver *IdentityResolver
+	if len(identity) > 0 {
+		resolver = identity[0]
 	}
+	return &limitedListener{
+		Listener:   ln,
+		sem:        make(chan struct{}, limit),
+		kind:       kind,
+		service:    service,
+		handshakes: newHandshakeMonitor(service, resolver),
+	}
+}
+
+// Close closes the listener and emits any pending handshake record.
+func (l *limitedListener) Close() error {
+	err := l.Listener.Close()
+	l.handshakes.close()
+	return err
 }
 
 func (l *limitedListener) Accept() (net.Conn, error) {
@@ -212,7 +229,7 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 		case l.sem <- struct{}{}:
 			limited := &limitedConn{Conn: conn, release: func() { <-l.sem }}
 			if tlsConn, ok := conn.(*tls.Conn); ok {
-				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn}, nil
+				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn, monitor: l.handshakes}, nil
 			}
 			return limited, nil
 		default:
@@ -240,10 +257,23 @@ func (c *limitedConn) Close() error {
 type limitedTLSConn struct {
 	*limitedConn
 	tlsConn *tls.Conn
+	monitor *handshakeMonitor
+	// timed is set by the first handshake call. net/http and the header-budget
+	// listener both call HandshakeContext on one connection; later calls return
+	// the finished result at once and must not be counted again.
+	timed atomic.Bool
 }
 
+// HandshakeContext times the handshake net/http runs before reading a request.
+// The only added work is two clock reads; reporting happens off this path.
 func (c *limitedTLSConn) HandshakeContext(ctx context.Context) error {
-	return c.tlsConn.HandshakeContext(ctx)
+	if !c.timed.CompareAndSwap(false, true) {
+		return c.tlsConn.HandshakeContext(ctx)
+	}
+	start := time.Now()
+	err := c.tlsConn.HandshakeContext(ctx)
+	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err)
+	return err
 }
 
 func (c *limitedTLSConn) ConnectionState() tls.ConnectionState {
@@ -2510,7 +2540,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		ln.Close()
 		return err
 	}
-	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
+	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name, identity)
 
 	httpSrv := newHTTPServerFn(handler)
 	requestCtx, cancelRequests := context.WithCancelCause(context.Background())

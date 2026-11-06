@@ -251,7 +251,7 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen TLS for mcp control plane: %w", err)
 	}
-	node.listener = newLimitedListener(ln, httpMaxActiveConns, "http", name)
+	node.listener = newLimitedListener(ln, httpMaxActiveConns, "http", name, NewStaticIdentityResolver(localClient))
 	node.httpSrv = newHTTPServerFn(handler)
 
 	go func() {

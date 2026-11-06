@@ -250,7 +250,7 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 		gate := &gatewayGate{path: filepath.Join(s.cfgDir, "registry.json"), svc: svc, lc: lc, now: now, writer: s.accessWriter, totalDropped: &run.dropped}
 		ln = newGatewayListener(ctx, ln, gate)
 	}
-	node.listener = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
+	node.listener = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name, NewStaticIdentityResolver(lc))
 	c, configErr := health.LoadNotifier(filepath.Join(s.cfgDir, health.ConfigFile))
 	requests, err := newPortalRequests(c, configErr, s.events.publish)
 	if err != nil {

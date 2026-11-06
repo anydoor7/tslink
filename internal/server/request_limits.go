@@ -403,16 +403,20 @@ func (l *headerBudgetListener) acceptLoop() {
 func (l *headerBudgetListener) prepare(c net.Conn) {
 	defer l.workers.Done()
 	var native *tls.Conn
+	handshake := func(ctx context.Context) error { return native.HandshakeContext(ctx) }
 	switch c := c.(type) {
 	case *tls.Conn:
 		native = c
 	case *limitedTLSConn:
 		native = c.tlsConn
+		// The capped connection times and reports the handshake; this is the
+		// handshake every production TLS connection goes through.
+		handshake = c.HandshakeContext
 	}
 	if native != nil {
 		timeout, _ := time.ParseDuration(l.timeout)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		err := native.HandshakeContext(ctx)
+		err := handshake(ctx)
 		cancel()
 		if err != nil {
 			l.mu.Lock()

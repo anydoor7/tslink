@@ -5,6 +5,10 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ## [Unreleased]
 
+### Added
+
+- TSLink now logs TLS handshake trouble per app: failed handshakes (`tls.handshake.failed`) and successful but slow ones over 2 s (`tls.handshake.slow`), each aggregated to one record per app per 10 s with a count, the error classes (timeout, eof, reset, bad_record, client_alert, protocol), the longest duration and, when known, the client's node name. Before this, a connection that died during the TLS handshake left no trace, because the access log only records completed requests. Records carry no addresses, request data or login names.
+
 ### Fixed
 
 - A finished health check now frees its slot before reporting the result, so the next check of the same app is never skipped as still running.
