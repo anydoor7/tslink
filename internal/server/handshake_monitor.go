@@ -100,16 +100,15 @@ func classifyHandshakeError(err error) (class, detail string) {
 }
 
 type handshakeWindow struct {
-	failed       int
-	byClass      map[string]int
-	firstClass   string
-	firstDetail  string
-	firstAddr    string
-	maxDuration  time.Duration
-	slow         int
-	slowMax      time.Duration
-	slowFirst    string
-	teardownSeen int
+	failed      int
+	byClass     map[string]int
+	firstClass  string
+	firstDetail string
+	firstAddr   string
+	maxDuration time.Duration
+	slow        int
+	slowMax     time.Duration
+	slowFirst   string
 }
 
 // handshakeMonitor measures TLS handshakes on one service's listener and logs
