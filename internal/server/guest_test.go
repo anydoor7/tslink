@@ -736,7 +736,7 @@ func guestMemoryListener(t *testing.T, f *guestFixture) *guestGate {
 		t.Fatal(e)
 	}
 	f.base = "https://" + ln.Addr().String()
-	var listener net.Listener = newLimitedListener(tls.NewListener(&guestAttestedSourceListener{ln}, f.tlsConfig), httpMaxActiveConns, "http", "photos")
+	var listener net.Listener = newLimitedListener(tls.NewListener(&guestAttestedSourceListener{ln}, f.tlsConfig), httpMaxActiveConns, "http", "photos", nil)
 	listener = configureServiceHTTP(srv, f.svc, listener, nil)
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(listener) }()

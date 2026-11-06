@@ -114,4 +114,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 # TLS handshake evidence
 
 - `handshake_monitor.go`: per-listener handshake timing, error classification and per-app 10 s aggregated `tls.handshake.failed` / `tls.handshake.slow` records; counters are cumulative. The handshake is timed in `limitedTLSConn.HandshakeContext`, which `headerBudgetListener.prepare` calls for production TLS connections.
+- Timeout split: `newHelloTrackingTLSListener` (used by `helloTrackingServer.ListenTLS`, which mirrors tsnet v1.104.1 `ListenTLS`) hooks `GetConfigForClient` to note ClientHello arrival. `timeout_before_hello` = budget expired with no ClientHello; `timeout_after_hello` = ClientHello arrived, handshake unfinished; plain `timeout` = untracked listener (Funnel). Re-check the mirror on a tailscale.com upgrade.
 - `handshake_monitor_test.go`: classification table, fake-timer aggregation, teardown exclusion, and a real listener-chain test that failed handshakes yield exactly one record.

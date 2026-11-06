@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"tailscale.com/tsnet"
 )
 
 // fakeTimers is a manual scheduler: nothing fires until the test says so.
@@ -76,6 +77,12 @@ func TestClassifyHandshakeError(t *testing.T) {
 		{"eof", io.EOF, "eof", "", false},
 		{"unexpected eof", fmt.Errorf("tls: %w", io.ErrUnexpectedEOF), "eof", "", false},
 		{"reset", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, "reset", "", false},
+		// Built exactly as gonet builds them: errors.New(tcpip error String()).
+		{"gonet reset", &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}, "reset", "", false},
+		{"gonet aborted", &net.OpError{Op: "read", Err: errors.New("connection aborted")}, "reset", "", false},
+		{"gonet broken pipe", &net.OpError{Op: "write", Err: errors.New("broken pipe")}, "reset", "", false},
+		{"gonet closed for send", &net.OpError{Op: "write", Err: errors.New("endpoint is closed for send")}, "reset", "", false},
+		{"gonet timeout", &net.OpError{Op: "read", Err: &gonetTimeout{}}, "timeout", "", false},
 		{"bad record", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, "bad_record", "", false},
 		{"client alert", &net.OpError{Op: "remote error", Err: errors.New("tls: bad certificate")}, "client_alert", "tls: bad certificate", false},
 		{"protocol", errors.New("tls: client offered only unsupported versions: [301]"), "protocol", "", false},
@@ -96,6 +103,12 @@ func TestClassifyHandshakeError(t *testing.T) {
 	}
 }
 
+type gonetTimeout struct{}
+
+func (*gonetTimeout) Error() string   { return "i/o timeout" }
+func (*gonetTimeout) Timeout() bool   { return true }
+func (*gonetTimeout) Temporary() bool { return true }
+
 type timeoutErr struct{}
 
 func (timeoutErr) Error() string   { return "i/o timeout" }
@@ -110,9 +123,9 @@ func TestHandshakeMonitorAggregatesPerWindow(t *testing.T) {
 	m := newTestMonitor(timers)
 
 	for i := 0; i < 500; i++ { // a scanner flood
-		m.observe("100.64.0.9:5000", 30*time.Millisecond, io.EOF)
+		m.observe("100.64.0.9:5000", 30*time.Millisecond, io.EOF, helloUntracked)
 	}
-	m.observe("100.64.0.9:5000", 2*time.Second, &net.OpError{Op: "read", Err: timeoutErr{}})
+	m.observe("100.64.0.9:5000", 2*time.Second, &net.OpError{Op: "read", Err: timeoutErr{}}, helloUntracked)
 	if timers.armed != 1 {
 		t.Fatalf("one window must arm one timer, armed %d", timers.armed)
 	}
@@ -138,7 +151,7 @@ func TestHandshakeMonitorAggregatesPerWindow(t *testing.T) {
 	}
 
 	// A new window starts on the next event and logs again.
-	m.observe("100.64.0.9:5001", time.Millisecond, io.EOF)
+	m.observe("100.64.0.9:5001", time.Millisecond, io.EOF, helloUntracked)
 	timers.fireAll()
 	if got := len(logs.byCode("tls.handshake.failed")); got != 2 {
 		t.Fatalf("second window must produce a second record, got %d total", got)
@@ -152,11 +165,11 @@ func TestHandshakeMonitorSlowAndTeardown(t *testing.T) {
 	timers := &fakeTimers{}
 	m := newTestMonitor(timers)
 
-	m.observe("a:1", 100*time.Millisecond, nil) // fast: silent
-	m.observe("a:1", 2*time.Second, nil)        // exactly at threshold: slow
-	m.observe("a:1", 5*time.Second, nil)
-	m.observe("a:1", time.Second, net.ErrClosed)    // teardown: not counted
-	m.observe("a:1", time.Second, context.Canceled) // teardown: not counted
+	m.observe("a:1", 100*time.Millisecond, nil, helloUntracked) // fast: silent
+	m.observe("a:1", 2*time.Second, nil, helloUntracked)        // exactly at threshold: slow
+	m.observe("a:1", 5*time.Second, nil, helloUntracked)
+	m.observe("a:1", time.Second, net.ErrClosed, helloUntracked)    // teardown: not counted
+	m.observe("a:1", time.Second, context.Canceled, helloUntracked) // teardown: not counted
 	timers.fireAll()
 	if got := len(logs.byCode("tls.handshake.failed")); got != 0 {
 		t.Fatalf("teardown errors must not be logged as failures, got %d", got)
@@ -175,10 +188,10 @@ func TestHandshakeMonitorCloseFlushesPending(t *testing.T) {
 	logs := installCaptureLogger()
 	t.Cleanup(func() { slog.SetDefault(old) })
 	m := newTestMonitor(&fakeTimers{})
-	m.observe("a:1", time.Millisecond, io.EOF)
+	m.observe("a:1", time.Millisecond, io.EOF, helloUntracked)
 	m.close()
 	m.close()
-	m.observe("a:1", time.Millisecond, io.EOF) // after close: counted, not logged
+	m.observe("a:1", time.Millisecond, io.EOF, helloUntracked) // after close: counted, not logged
 	if got := len(logs.byCode("tls.handshake.failed")); got != 1 {
 		t.Fatalf("close must emit the pending window once, got %d", got)
 	}
@@ -186,7 +199,7 @@ func TestHandshakeMonitorCloseFlushesPending(t *testing.T) {
 
 func TestHandshakeMonitorNilSafe(t *testing.T) {
 	var m *handshakeMonitor
-	m.observe("a:1", time.Hour, io.EOF)
+	m.observe("a:1", time.Hour, io.EOF, helloUntracked)
 	m.close()
 }
 
@@ -204,7 +217,7 @@ func TestFailedHandshakeProducesOneAggregatedRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limited := newLimitedListener(tls.NewListener(raw, cert.TLS.Clone()), 8, "http", "photos").(*limitedListener)
+	limited := newLimitedListener(tls.NewListener(raw, cert.TLS.Clone()), 8, "http", "photos", nil).(*limitedListener)
 	timers := &fakeTimers{}
 	limited.handshakes = newTestMonitor(timers)
 	svc := registry.Service{Name: "photos", Type: registry.TypeProxy}
@@ -260,4 +273,256 @@ func waitHandshakeCond(t *testing.T, cond func() bool) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func TestHandshakeMonitorSplitsTimeoutByHello(t *testing.T) {
+	old := slog.Default()
+	logs := installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	timers := &fakeTimers{}
+	m := newTestMonitor(timers)
+	to := &net.OpError{Op: "read", Err: timeoutErr{}}
+	m.observe("a:1", time.Second, to, helloNotSeen)
+	m.observe("a:1", time.Second, to, helloNotSeen)
+	m.observe("a:1", time.Second, to, helloSeen)
+	m.observe("a:1", time.Second, to, helloUntracked)
+	timers.fireAll()
+	recs := logs.byCode("tls.handshake.failed")
+	if len(recs) != 1 || recs[0]["classes"] != "timeout=1,timeout_after_hello=1,timeout_before_hello=2" || recs[0]["first_class"] != "timeout_before_hello" {
+		t.Fatalf("unexpected: %#v", recs)
+	}
+}
+
+// Real timers, many goroutines observing while the monitor closes: run with
+// -race. Every counted failure is accounted for in the emitted records or the
+// post-close drop, and nothing deadlocks.
+func TestHandshakeMonitorConcurrentObserveAndClose(t *testing.T) {
+	old := slog.Default()
+	logs := installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	m := newHandshakeMonitor("photos", nil)
+	m.window = 2 * time.Millisecond
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				m.observe("100.64.0.1:1", 3*time.Second, io.EOF, helloUntracked)
+				m.observe("100.64.0.1:1", time.Millisecond, nil, helloUntracked)
+			}
+		}()
+	}
+	time.Sleep(60 * time.Millisecond)
+	done := make(chan struct{})
+	go func() { m.close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("close blocked")
+	}
+	close(stop)
+	wg.Wait()
+	time.Sleep(20 * time.Millisecond) // a timer that raced close must find nothing
+	var logged int64
+	for _, r := range logs.byCode("tls.handshake.failed") {
+		logged += r["count"].(int64)
+	}
+	if logged == 0 || logged > m.Failed.Load() {
+		t.Fatalf("logged %d of %d counted failures", logged, m.Failed.Load())
+	}
+}
+
+// The WhoIs lookup must never run on the handshake goroutine, and Close must
+// not wait for it.
+func TestHandshakeIdentityLookupNeverBlocksHandshakeOrClose(t *testing.T) {
+	old := slog.Default()
+	installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	entered := make(chan struct{}, 4)
+	release := make(chan struct{})
+	resolver := NewIdentityResolver(func() (*LocalClient, error) {
+		entered <- struct{}{}
+		<-release
+		return nil, errors.New("released")
+	})
+	var releaseOnce sync.Once
+	releaseResolver := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseResolver()
+
+	cert := httptest.NewTLSServer(http.NotFoundHandler())
+	defer cert.Close()
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := newLimitedListener(newHelloTrackingTLSListener(raw, cert.TLS.Clone()), 8, "http", "photos", resolver).(*limitedListener)
+	timers := &fakeTimers{}
+	limited.handshakes.after = timers.after
+	srv := newHTTPServerFn(http.NotFoundHandler())
+	ln := configureServiceHTTP(srv, registry.Service{Name: "photos", Type: registry.TypeProxy}, limited, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = srv.Serve(ln) }()
+	defer func() { srv.Close(); ln.Close(); <-done }()
+
+	c, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprint(c, "plaintext")
+	_, _ = io.Copy(io.Discard, c) // returns once the server finished the failed handshake
+	c.Close()
+	waitHandshakeCond(t, func() bool { return limited.handshakes.Failed.Load() == 1 })
+	select {
+	case <-entered:
+		t.Fatal("resolver ran before the window ended: lookup is on the handshake path")
+	default:
+	}
+
+	flushed := make(chan struct{})
+	go func() { timers.fireAll(); close(flushed) }() // lookup blocks here, off the handshake path
+	<-entered
+	m := limited.handshakes
+	m.observe("100.64.0.9:1", time.Millisecond, io.EOF, helloUntracked) // new window while a flush is blocked
+	closed := make(chan struct{})
+	go func() { m.close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("close waited for the blocked resolver")
+	}
+	select {
+	case <-flushed:
+		t.Fatal("flush should still be blocked on the resolver")
+	default:
+	}
+	// Let the blocked flush finish before the test's logger is restored.
+	releaseResolver()
+	<-flushed
+}
+
+// startTrackedChain serves a real chain (hello-tracking TLS listener, capped
+// listener, header-budget listener, net/http) and returns its address, monitor
+// and fake timers.
+func startTrackedChain(t *testing.T, headerTimeout string) (string, *handshakeMonitor, *fakeTimers) {
+	t.Helper()
+	cert := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(cert.Close)
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := newLimitedListener(newHelloTrackingTLSListener(raw, cert.TLS.Clone()), 8, "http", "photos", nil).(*limitedListener)
+	timers := &fakeTimers{}
+	limited.handshakes = newTestMonitor(timers)
+	svc := registry.Service{Name: "photos", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{HeaderTimeout: headerTimeout}}
+	srv := newHTTPServerFn(http.NotFoundHandler())
+	ln := configureServiceHTTP(srv, svc, limited, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = srv.Serve(ln) }()
+	t.Cleanup(func() { srv.Close(); ln.Close(); <-done })
+	return raw.Addr().String(), limited.handshakes, timers
+}
+
+func singleFailedRecord(t *testing.T, logs *captureHandler, timers *fakeTimers) map[string]any {
+	t.Helper()
+	timers.fireAll()
+	recs := logs.byCode("tls.handshake.failed")
+	if len(recs) != 1 {
+		t.Fatalf("want one record, got %#v", recs)
+	}
+	return recs[0]
+}
+
+// captureClientHello returns the bytes of one genuine TLS ClientHello.
+func captureClientHello(t *testing.T) []byte {
+	t.Helper()
+	clientSide, serverSide := net.Pipe()
+	hello := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := serverSide.Read(buf)
+		hello <- buf[:n]
+		serverSide.Close()
+	}()
+	_ = tls.Client(clientSide, &tls.Config{ServerName: "photos.example.ts.net", InsecureSkipVerify: true}).Handshake()
+	return <-hello
+}
+
+func TestRealChainHalfClientHelloThenCloseIsEOF(t *testing.T) {
+	old := slog.Default()
+	logs := installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	addr, m, timers := startTrackedChain(t, "5s")
+
+	h := captureClientHello(t)
+	if len(h) < 20 {
+		t.Fatalf("captured hello too short: %d", len(h))
+	}
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Write(h[:len(h)/2])
+	c.Close()
+	waitHandshakeCond(t, func() bool { return m.Failed.Load() == 1 })
+	r := singleFailedRecord(t, logs, timers)
+	if r["first_class"] != "eof" && r["first_class"] != "reset" {
+		t.Fatalf("half a ClientHello then close must be eof (or reset), got %v", r["first_class"])
+	}
+}
+
+func TestRealChainSilentClientIsTimeoutBeforeHello(t *testing.T) {
+	old := slog.Default()
+	logs := installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	addr, m, timers := startTrackedChain(t, "1s")
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	waitHandshakeCond(t, func() bool { return m.Failed.Load() == 1 })
+	r := singleFailedRecord(t, logs, timers)
+	if r["first_class"] != "timeout_before_hello" {
+		t.Fatalf("silent client must be timeout_before_hello, got %v", r["first_class"])
+	}
+}
+
+// A client that sent its ClientHello and then went quiet before finishing the
+// handshake is timeout_after_hello.
+func TestRealChainStalledAfterHelloIsTimeoutAfterHello(t *testing.T) {
+	old := slog.Default()
+	logs := installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	addr, m, timers := startTrackedChain(t, "1s")
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Write(captureClientHello(t)); err != nil { // whole hello, then silence
+		t.Fatal(err)
+	}
+	waitHandshakeCond(t, func() bool { return m.Failed.Load() == 1 })
+	r := singleFailedRecord(t, logs, timers)
+	if r["first_class"] != "timeout_after_hello" {
+		t.Fatalf("hello sent then silence must be timeout_after_hello, got %v", r["first_class"])
+	}
+}
+
+// unwrapTSNetServer returns the tsnet.Server behind the production constructor,
+// which wraps it to hook ListenTLS.
+func unwrapTSNetServer(s tsnetServer) (*tsnet.Server, bool) {
+	if w, ok := s.(*helloTrackingServer); ok {
+		return w.Server, true
+	}
+	return nil, false
 }

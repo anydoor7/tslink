@@ -32,13 +32,23 @@ const (
 
 // Error classes reported for a failed TLS handshake.
 const (
-	handshakeClassTimeout     = "timeout"
-	handshakeClassEOF         = "eof"
-	handshakeClassReset       = "reset"
-	handshakeClassBadRecord   = "bad_record"
-	handshakeClassClientAlert = "client_alert"
-	handshakeClassProtocol    = "protocol"
-	handshakeClassOther       = "other"
+	// handshakeClassTimeout is a timeout on a connection whose ClientHello
+	// arrival is not tracked (Funnel listeners and other custom TLS configs).
+	handshakeClassTimeout = "timeout"
+	// timeout_before_hello: the handshake budget expired and no ClientHello had
+	// arrived, so the client never sent (or the network never delivered) its
+	// first flight. Server load is not the explanation.
+	handshakeClassTimeoutBeforeHello = "timeout_before_hello"
+	// timeout_after_hello: the ClientHello arrived and the handshake still did
+	// not finish in budget, so the server (certificate lookup, CPU) or the rest
+	// of the exchange stalled.
+	handshakeClassTimeoutAfterHello = "timeout_after_hello"
+	handshakeClassEOF               = "eof"
+	handshakeClassReset             = "reset"
+	handshakeClassBadRecord         = "bad_record"
+	handshakeClassClientAlert       = "client_alert"
+	handshakeClassProtocol          = "protocol"
+	handshakeClassOther             = "other"
 )
 
 // handshakeTeardown reports an error caused by this process closing or
@@ -59,6 +69,15 @@ func classifyHandshakeError(err error) (class, detail string) {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && opErr.Op == "remote error" && opErr.Err != nil {
 		return handshakeClassClientAlert, opErr.Err.Error()
+	}
+	// TSLink serves on gVisor (tsnet): gonet reports a tcpip error as
+	// &net.OpError{Err: errors.New(err.String())}, a plain string, never a
+	// syscall errno. These are the fixed strings from gvisor tcpip/errors.go.
+	if errors.As(err, &opErr) && opErr.Err != nil {
+		switch opErr.Err.Error() {
+		case "connection reset by peer", "connection aborted", "broken pipe", "endpoint is closed for send":
+			return handshakeClassReset, ""
+		}
 	}
 	var netErr net.Error
 	switch {
@@ -122,8 +141,18 @@ func newHandshakeMonitor(service string, identity *IdentityResolver) *handshakeM
 	}
 }
 
+// helloState says whether the TLS ClientHello arrived before the handshake
+// ended. helloUntracked means this connection's TLS config has no hook.
+type helloState int
+
+const (
+	helloUntracked helloState = iota
+	helloNotSeen
+	helloSeen
+)
+
 // observe records the outcome of one handshake that took d.
-func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error) {
+func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error, hello helloState) {
 	if m == nil {
 		return
 	}
@@ -133,6 +162,14 @@ func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error
 		}
 		m.Failed.Add(1)
 		class, detail := classifyHandshakeError(err)
+		if class == handshakeClassTimeout {
+			switch hello {
+			case helloNotSeen:
+				class = handshakeClassTimeoutBeforeHello
+			case helloSeen:
+				class = handshakeClassTimeoutAfterHello
+			}
+		}
 		m.record(func(w *handshakeWindow) {
 			if w.failed == 0 {
 				w.firstClass, w.firstDetail, w.firstAddr = class, detail, remoteAddr
@@ -186,7 +223,7 @@ func (m *handshakeMonitor) flush() {
 	if w == nil {
 		return
 	}
-	m.emit(w)
+	m.emit(w, true)
 }
 
 // close emits what is pending and stops accepting events, so a reload does not
@@ -204,12 +241,20 @@ func (m *handshakeMonitor) close() {
 	m.pending, m.stop = nil, nil
 	m.mu.Unlock()
 	if w != nil {
-		m.emit(w)
+		// Listener Close runs under http.Server's lock during reload and
+		// shutdown, so it must not wait on LocalAPI: use the WhoIs cache only.
+		m.emit(w, false)
 	}
 }
 
-func (m *handshakeMonitor) client(addr string) string {
+func (m *handshakeMonitor) client(addr string, lookup bool) string {
 	if m.identity == nil || addr == "" {
+		return "unknown"
+	}
+	if !lookup {
+		if node := m.identity.cachedNode(addr); node != "" {
+			return node
+		}
 		return "unknown"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), handshakeIdentityTimeout)
@@ -236,7 +281,7 @@ func formatClassCounts(counts map[string]int) string {
 // emit writes one record per kind. Fields carry no addresses, request data or
 // login names: only the service, counts, error classes, durations and the
 // client's node name when WhoIs already knows it.
-func (m *handshakeMonitor) emit(w *handshakeWindow) {
+func (m *handshakeMonitor) emit(w *handshakeWindow, lookup bool) {
 	if w.failed > 0 {
 		attrs := []any{
 			"code", "tls.handshake.failed",
@@ -245,7 +290,7 @@ func (m *handshakeMonitor) emit(w *handshakeWindow) {
 			"window_seconds", int(m.window / time.Second),
 			"classes", formatClassCounts(w.byClass),
 			"first_class", w.firstClass,
-			"first_client", m.client(w.firstAddr),
+			"first_client", m.client(w.firstAddr, lookup),
 			"max_duration_ms", w.maxDuration.Milliseconds(),
 			"total_failed", m.Failed.Load(),
 		}
@@ -262,8 +307,57 @@ func (m *handshakeMonitor) emit(w *handshakeWindow) {
 			"window_seconds", int(m.window/time.Second),
 			"threshold_ms", m.threshold.Milliseconds(),
 			"max_duration_ms", w.slowMax.Milliseconds(),
-			"first_client", m.client(w.slowFirst),
+			"first_client", m.client(w.slowFirst, lookup),
 			"total_slow", m.Slow.Load(),
 		)
 	}
+}
+
+// helloSeenConns holds raw connections whose ClientHello has been parsed, and
+// helloTrackedConns those accepted from a tracking listener. Entries live for
+// one handshake: limitedTLSConn takes both when it reports the result.
+var (
+	helloSeenConns    sync.Map
+	helloTrackedConns sync.Map
+)
+
+// newHelloTrackingTLSListener is tls.NewListener plus a GetConfigForClient hook
+// that notes when a ClientHello arrives. The hook returns (nil, nil), which
+// keeps the config unchanged, so TLS behaviour is identical. Only connections
+// accepted here are split into before/after hello; others stay untracked.
+func newHelloTrackingTLSListener(inner net.Listener, cfg *tls.Config) net.Listener {
+	prior := cfg.GetConfigForClient
+	cfg.GetConfigForClient = func(hi *tls.ClientHelloInfo) (*tls.Config, error) {
+		helloSeenConns.Store(hi.Conn, struct{}{})
+		if prior != nil {
+			return prior(hi)
+		}
+		return nil, nil
+	}
+	return &helloTrackingListener{Listener: tls.NewListener(inner, cfg)}
+}
+
+type helloTrackingListener struct{ net.Listener }
+
+// Accept returns the *tls.Conn unchanged (limitedListener needs that type).
+func (l *helloTrackingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if tc, ok := c.(*tls.Conn); ok && err == nil {
+		helloTrackedConns.Store(tc.NetConn(), struct{}{})
+	}
+	return c, err
+}
+
+// takeHelloState reports whether the ClientHello arrived on raw and drops the
+// entries. A conn not accepted from a tracking listener is helloUntracked.
+func takeHelloState(raw net.Conn) helloState {
+	_, seen := helloSeenConns.LoadAndDelete(raw)
+	_, tracked := helloTrackedConns.LoadAndDelete(raw)
+	switch {
+	case seen:
+		return helloSeen
+	case tracked:
+		return helloNotSeen
+	}
+	return helloUntracked
 }

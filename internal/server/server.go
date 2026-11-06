@@ -56,7 +56,7 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 		// tailnet into a self-imposed first-run failure.
 		advertiseTags = nil
 	}
-	return &tsnet.Server{
+	return &helloTrackingServer{&tsnet.Server{
 		Hostname:      svc.Name,
 		Dir:           stateDir,
 		AuthKey:       authKey,
@@ -64,7 +64,42 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 		ControlURL:    controlURL,
 		AdvertiseTags: advertiseTags,
 		UserLogf:      logging.TSNetUserLogf,
+	}}
+}
+
+// helloTrackingServer serves ListenTLS the way tsnet does, with a hook that
+// records ClientHello arrival so a handshake timeout can be split into
+// before/after hello. Everything else is the embedded tsnet.Server.
+type helloTrackingServer struct{ *tsnet.Server }
+
+// ListenTLS mirrors tailscale.com tsnet.Server.ListenTLS (v1.104.1): same
+// preconditions, same tailnet listener, and a TLS config whose only content is
+// the node's certificate provider. Funnel listeners keep tsnet's own path.
+func (s *helloTrackingServer) ListenTLS(network, addr string) (net.Listener, error) {
+	if network != "tcp" {
+		return nil, fmt.Errorf("ListenTLS(%q, %q): only tcp is supported", network, addr)
 	}
+	st, err := s.Up(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if !st.CurrentTailnet.MagicDNSEnabled {
+		return nil, errors.New("tsnet: you must enable MagicDNS in the DNS page of the admin panel to proceed. See https://tailscale.com/s/https")
+	}
+	if len(st.CertDomains) == 0 {
+		return nil, errors.New("tsnet: you must enable HTTPS in the admin panel to proceed. See https://tailscale.com/s/https")
+	}
+	ln, err := s.Listen(network, addr)
+	if err != nil {
+		return nil, err
+	}
+	return newHelloTrackingTLSListener(ln, &tls.Config{GetCertificate: func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		lc, err := s.LocalClient()
+		if err != nil {
+			return nil, err
+		}
+		return lc.GetCertificate(hi)
+	}}), nil
 }
 
 var newTSNetServerFn = newTSNetServer
@@ -193,15 +228,11 @@ type limitedListener struct {
 }
 
 // newLimitedListener caps concurrent connections and, for TLS connections,
-// observes handshakes. identity, when given, names the client node in
+// observes handshakes. resolver (nil allowed) names the client node in
 // handshake log records.
-func newLimitedListener(ln net.Listener, limit int, kind, service string, identity ...*IdentityResolver) net.Listener {
+func newLimitedListener(ln net.Listener, limit int, kind, service string, resolver *IdentityResolver) net.Listener {
 	if limit <= 0 {
 		return ln
-	}
-	var resolver *IdentityResolver
-	if len(identity) > 0 {
-		resolver = identity[0]
 	}
 	return &limitedListener{
 		Listener:   ln,
@@ -272,7 +303,7 @@ func (c *limitedTLSConn) HandshakeContext(ctx context.Context) error {
 	}
 	start := time.Now()
 	err := c.tlsConn.HandshakeContext(ctx)
-	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err)
+	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err, takeHelloState(c.tlsConn.NetConn()))
 	return err
 }
 

@@ -73,7 +73,7 @@ func uploadTLSFrontServer(t *testing.T, svc registry.Service, handler http.Handl
 	if err != nil {
 		t.Fatal(err)
 	}
-	limited := newLimitedListener(tls.NewListener(raw, tlsConfig), cap, "http", svc.Name).(*limitedListener)
+	limited := newLimitedListener(tls.NewListener(raw, tlsConfig), cap, "http", svc.Name, nil).(*limitedListener)
 	srv := newHTTPServerFn(AccessLogMiddleware(svc.Name, nil, RequestLimitsMiddleware(svc, report, handler)))
 	ln := configureServiceHTTP(srv, svc, limited, report)
 	for _, setup := range prepare {
@@ -294,7 +294,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				var transport net.Listener = tls.NewListener(&firstReadListener{Listener: raw, first: serverReading}, cfg)
 				var limited *limitedListener
 				if capped {
-					limited = newLimitedListener(transport, 1, "http", "certificate").(*limitedListener)
+					limited = newLimitedListener(transport, 1, "http", "certificate", nil).(*limitedListener)
 					transport = limited
 				}
 				srv := newHTTPServerFn(http.NotFoundHandler())
@@ -595,7 +595,7 @@ func TestRequestLimitsTLSPendingHandoffClosed(t *testing.T) {
 			var transport net.Listener = tls.NewListener(raw, tlsConfig)
 			var limited *limitedListener
 			if capped {
-				limited = newLimitedListener(transport, 1, "http", "handoff").(*limitedListener)
+				limited = newLimitedListener(transport, 1, "http", "handoff", nil).(*limitedListener)
 				transport = limited
 			}
 			srv := newHTTPServerFn(http.NotFoundHandler())
@@ -682,7 +682,7 @@ func TestRequestLimitsTLSAcceptLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer raw.Close()
-			limited := newLimitedListener(raw, 1, "http", "accept").(*limitedListener)
+			limited := newLimitedListener(raw, 1, "http", "accept", nil).(*limitedListener)
 			control := &uploadAcceptControl{Listener: limited}
 			if path == "temporary" {
 				control.firstError = uploadTemporaryAcceptError{}
