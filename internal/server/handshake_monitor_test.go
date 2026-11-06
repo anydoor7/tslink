@@ -53,6 +53,18 @@ func newTestMonitor(timers *fakeTimers) *handshakeMonitor {
 	return m
 }
 
+func (h *captureHandler) byMessage(msg string) []slog.Record {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []slog.Record
+	for _, r := range h.records {
+		if r.Message == msg {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func (h *captureHandler) byCode(code string) []map[string]any {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -554,9 +566,6 @@ type weakRecorder struct {
 	net.Listener
 	mu   sync.Mutex
 	refs []weak.Pointer[net.TCPConn]
-	// dropAll closes every accepted conn before returning it, modelling the
-	// gateway admission-denied / admission-full path.
-	dropAll bool
 }
 
 func (w *weakRecorder) Accept() (net.Conn, error) {
@@ -568,9 +577,6 @@ func (w *weakRecorder) Accept() (net.Conn, error) {
 		w.mu.Lock()
 		w.refs = append(w.refs, weak.Make(tc))
 		w.mu.Unlock()
-	}
-	if w.dropAll {
-		_ = c.Close()
 	}
 	return c, nil
 }
@@ -587,50 +593,105 @@ func (w *weakRecorder) live() int {
 	return n
 }
 
-// Connections accepted and then dropped before any handshake (cap reject, or a
-// gateway denial/admission-full drop) must leave nothing retained.
-func TestHelloTrackingRetainsNothingForDroppedConnections(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		limit   int
-		dropAll bool
-	}{{"cap_reject", 1, false}, {"dropped_before_handshake", 64, true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			old := slog.Default()
-			installCaptureLogger()
-			t.Cleanup(func() { slog.SetDefault(old) })
-			cert := httptest.NewTLSServer(http.NotFoundHandler())
-			defer cert.Close()
-			raw, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			rec := &weakRecorder{Listener: raw, dropAll: tc.dropAll}
-			tracked := newHelloTrackingTLSListener(rec, cert.TLS.Clone())
-			limited := newLimitedListener(tracked, tc.limit, "http", "photos", nil)
-			srv := newHTTPServerFn(http.NotFoundHandler())
-			ln := configureServiceHTTP(srv, registry.Service{Name: "photos", Type: registry.TypeProxy}, limited, nil)
-			done := make(chan struct{})
-			go func() { defer close(done); _ = srv.Serve(ln) }()
-			for i := 0; i < 50; i++ {
-				c, err := net.Dial("tcp", raw.Addr().String())
-				if err != nil {
-					t.Fatal(err)
-				}
-				c.Close()
-			}
-			waitHandshakeCond(t, func() bool { rec.mu.Lock(); defer rec.mu.Unlock(); return len(rec.refs) == 50 })
-			srv.Close()
-			ln.Close()
-			<-done
-			deadline := time.Now().Add(10 * time.Second)
-			for rec.live() != 0 {
-				runtime.GC()
-				if time.Now().After(deadline) {
-					t.Fatalf("%d of 50 dropped connections are still retained after close and GC", rec.live())
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-		})
+func (w *weakRecorder) count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.refs)
+}
+
+// gcUntil runs GC until live() <= want or the deadline passes.
+func gcUntil(t *testing.T, rec *weakRecorder, want int, what string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for rec.live() > want {
+		runtime.GC()
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: %d connections still retained (want <= %d)", what, rec.live(), want)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func serveChain(t *testing.T, ln net.Listener, svc registry.Service) {
+	t.Helper()
+	srv := newHTTPServerFn(http.NotFoundHandler())
+	chain := configureServiceHTTP(srv, svc, ln, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = srv.Serve(chain) }()
+	t.Cleanup(func() { srv.Close(); chain.Close(); <-done })
+}
+
+// Cap reject: the first connection holds the only slot (silent, handshake
+// budget long), so every one of the other 49 is rejected by the cap, every
+// time. None of the rejected connections may be retained, with the listener
+// still open.
+func TestHelloTrackingRetainsNothingForCapRejectedConnections(t *testing.T) {
+	old := slog.Default()
+	logs := installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	cert := httptest.NewTLSServer(http.NotFoundHandler())
+	defer cert.Close()
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &weakRecorder{Listener: raw}
+	limited := newLimitedListener(newHelloTrackingTLSListener(rec, cert.TLS.Clone()), 1, "http", "photos", nil).(*limitedListener)
+	serveChain(t, limited, registry.Service{Name: "photos", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{HeaderTimeout: "5s"}})
+
+	holder, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	waitHandshakeCond(t, func() bool { return len(limited.sem) == 1 })
+	for i := 0; i < 49; i++ {
+		c, err := net.Dial("tcp", raw.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+	}
+	waitHandshakeCond(t, func() bool { return rec.count() == 50 })
+	waitHandshakeCond(t, func() bool {
+		return len(logs.byMessage("connection limit exceeded; closing accepted connection")) == 49
+	})
+	if got := len(logs.byMessage("connection limit exceeded; closing accepted connection")); got != 49 {
+		t.Fatalf("cap rejected %d connections, want 49", got)
+	}
+	gcUntil(t, rec, 1, "cap-rejected connections (only the slot holder may remain)")
+	holder.Close()
+	waitHandshakeCond(t, func() bool { return len(limited.sem) == 0 })
+}
+
+// Gateway denial: the real gateway listener closes every connection above the
+// tracking listener without starting TLS. None may be retained while the
+// listener is still open.
+func TestHelloTrackingRetainsNothingForGatewayDeniedConnections(t *testing.T) {
+	old := slog.Default()
+	installCaptureLogger()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	cert := httptest.NewTLSServer(http.NotFoundHandler())
+	defer cert.Close()
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &weakRecorder{Listener: raw}
+	svc := registry.Service{Name: "photos", Type: registry.TypeProxy}
+	gate := &gatewayGate{svc: svc, now: time.Now} // nil LocalClient: admit denies everything
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gl := newGatewayListener(ctx, newHelloTrackingTLSListener(rec, cert.TLS.Clone()), gate)
+	serveChain(t, newLimitedListener(gl, 64, "http", "photos", nil), svc)
+
+	for i := 0; i < 50; i++ {
+		c, err := net.Dial("tcp", raw.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+	}
+	waitHandshakeCond(t, func() bool { return gate.dropped.Load() == 50 })
+	gcUntil(t, rec, 0, "gateway-denied connections")
 }
