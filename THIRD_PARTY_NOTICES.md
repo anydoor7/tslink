@@ -33,7 +33,7 @@ Linked third-party modules: 55
 | `github.com/huin/goupnp` | v1.3.0 | BSD-2-Clause | `LICENSE` |
 | `github.com/inconshreveable/mousetrap` | v1.1.0 | Apache-2.0 | `LICENSE` |
 | `github.com/jsimonetti/rtnetlink` | v1.4.2 | MIT | `LICENSE.md` |
-| `github.com/klauspost/compress` | v1.20.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt` |
+| `github.com/klauspost/compress` | v1.20.2 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt` |
 | `github.com/mdlayher/netlink` | v1.11.2 | MIT | `LICENSE.md` |
 | `github.com/mdlayher/socket` | v0.7.0 | MIT | `LICENSE.md` |
 | `github.com/mitchellh/go-ps` | v1.0.0 | MIT | `LICENSE.md` |
@@ -1476,10 +1476,10 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~
 
-### `github.com/klauspost/compress` v1.20.0
+### `github.com/klauspost/compress` v1.20.2
 
 - Module-root license: Apache-2.0 (nested and embedded components may differ)
-- Evidence source: `github.com/klauspost/compress@v1.20.0` from the resolved Go module graph
+- Evidence source: `github.com/klauspost/compress@v1.20.2` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt`
 
 #### LICENSE
