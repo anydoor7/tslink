@@ -270,7 +270,7 @@ func TestAccessFunnelTLSIdentity(t *testing.T) {
 				if public {
 					transport = &accessPublicListener{transport}
 				}
-				limited := newLimitedListener(tls.NewListener(transport, tlsConfig), 1, "http", "photos")
+				limited := newLimitedListener(tls.NewListener(transport, tlsConfig), 1, "http", "photos", nil)
 				identity := NewStaticIdentityResolver(fakeWhoIsClient(t, whoIsUser("alice", "laptop"), nil))
 				svc := registry.Service{Name: "photos", Type: registry.TypeProxy, Funnel: true}
 				priorKey := struct{ marker string }{"prior"}

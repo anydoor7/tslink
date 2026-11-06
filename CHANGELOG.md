@@ -5,6 +5,10 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ## [Unreleased]
 
+### Added
+
+- TSLink now logs TLS handshake trouble per app: failed handshakes (`tls.handshake.failed`) and successful but slow ones over 2 s (`tls.handshake.slow`), each aggregated to one record per app per 10 s with a count, the error classes (`timeout_before_hello`, `timeout_after_hello`, `timeout`, `eof`, `reset`, `bad_record`, `client_alert`, `protocol`), the longest duration and, when known, the client's node name. Before this, a connection that died during the TLS handshake left no trace, because the access log only records completed requests. `timeout_before_hello` means no TLS ClientHello had been parsed within the handshake budget: either the client or network did not deliver it, or TSLink was too starved to read it, so it is not proof the server is innocent. `timeout_after_hello` means the ClientHello was parsed but the handshake did not finish in time. Plain `timeout` appears for every connection to a Funnel-enabled app, whose TLS configuration TSLink does not hook. Records carry no addresses, request data or login names.
+
 ### Fixed
 
 - A finished health check now frees its slot before reporting the result, so the next check of the same app is never skipped as still running.

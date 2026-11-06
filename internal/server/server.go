@@ -56,7 +56,7 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 		// tailnet into a self-imposed first-run failure.
 		advertiseTags = nil
 	}
-	return &tsnet.Server{
+	return &helloTrackingServer{&tsnet.Server{
 		Hostname:      svc.Name,
 		Dir:           stateDir,
 		AuthKey:       authKey,
@@ -64,7 +64,46 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 		ControlURL:    controlURL,
 		AdvertiseTags: advertiseTags,
 		UserLogf:      logging.TSNetUserLogf,
+	}}
+}
+
+// helloTrackingServer serves ListenTLS the way tsnet does, with a hook that
+// records ClientHello arrival so a handshake timeout can be split into
+// before/after hello. Everything else is the embedded tsnet.Server.
+type helloTrackingServer struct{ *tsnet.Server }
+
+const tsnetMirrorVersion = "v1.104.1"
+
+// ListenTLS mirrors tailscale.com tsnet.Server.ListenTLS (v1.104.1): same
+// preconditions, same tailnet listener, and a TLS config whose only content is
+// the node's certificate provider. Funnel listeners keep tsnet's own path.
+// tsnetMirrorVersion is the tailscale.com version this was copied from;
+// TestListenTLSMirrorMatchesTailscaleVersion fails when go.mod moves.
+func (s *helloTrackingServer) ListenTLS(network, addr string) (net.Listener, error) {
+	if network != "tcp" {
+		return nil, fmt.Errorf("ListenTLS(%q, %q): only tcp is supported", network, addr)
 	}
+	st, err := s.Up(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if !st.CurrentTailnet.MagicDNSEnabled {
+		return nil, errors.New("tsnet: you must enable MagicDNS in the DNS page of the admin panel to proceed. See https://tailscale.com/s/https")
+	}
+	if len(st.CertDomains) == 0 {
+		return nil, errors.New("tsnet: you must enable HTTPS in the admin panel to proceed. See https://tailscale.com/s/https")
+	}
+	ln, err := s.Listen(network, addr)
+	if err != nil {
+		return nil, err
+	}
+	return newHelloTrackingTLSListener(ln, &tls.Config{GetCertificate: func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		lc, err := s.LocalClient()
+		if err != nil {
+			return nil, err
+		}
+		return lc.GetCertificate(hi)
+	}}), nil
 }
 
 var newTSNetServerFn = newTSNetServer
@@ -188,18 +227,31 @@ type limitedListener struct {
 	sem     chan struct{}
 	kind    string
 	service string
+	// handshakes records TLS handshake timing and failures for this listener.
+	handshakes *handshakeMonitor
 }
 
-func newLimitedListener(ln net.Listener, limit int, kind, service string) net.Listener {
+// newLimitedListener caps concurrent connections and, for TLS connections,
+// observes handshakes. resolver (nil allowed) names the client node in
+// handshake log records.
+func newLimitedListener(ln net.Listener, limit int, kind, service string, resolver *IdentityResolver) net.Listener {
 	if limit <= 0 {
 		return ln
 	}
 	return &limitedListener{
-		Listener: ln,
-		sem:      make(chan struct{}, limit),
-		kind:     kind,
-		service:  service,
+		Listener:   ln,
+		sem:        make(chan struct{}, limit),
+		kind:       kind,
+		service:    service,
+		handshakes: newHandshakeMonitor(service, resolver),
 	}
+}
+
+// Close closes the listener and emits any pending handshake record.
+func (l *limitedListener) Close() error {
+	err := l.Listener.Close()
+	l.handshakes.close()
+	return err
 }
 
 func (l *limitedListener) Accept() (net.Conn, error) {
@@ -212,7 +264,7 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 		case l.sem <- struct{}{}:
 			limited := &limitedConn{Conn: conn, release: func() { <-l.sem }}
 			if tlsConn, ok := conn.(*tls.Conn); ok {
-				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn}, nil
+				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn, monitor: l.handshakes}, nil
 			}
 			return limited, nil
 		default:
@@ -240,10 +292,23 @@ func (c *limitedConn) Close() error {
 type limitedTLSConn struct {
 	*limitedConn
 	tlsConn *tls.Conn
+	monitor *handshakeMonitor
+	// timed is set by the first handshake call. net/http and the header-budget
+	// listener both call HandshakeContext on one connection; later calls return
+	// the finished result at once and must not be counted again.
+	timed atomic.Bool
 }
 
+// HandshakeContext times the handshake net/http runs before reading a request.
+// The only added work is two clock reads; reporting happens off this path.
 func (c *limitedTLSConn) HandshakeContext(ctx context.Context) error {
-	return c.tlsConn.HandshakeContext(ctx)
+	if !c.timed.CompareAndSwap(false, true) {
+		return c.tlsConn.HandshakeContext(ctx)
+	}
+	start := time.Now()
+	err := c.tlsConn.HandshakeContext(ctx)
+	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err, takeHelloState(c.tlsConn))
+	return err
 }
 
 func (c *limitedTLSConn) ConnectionState() tls.ConnectionState {
@@ -2510,7 +2575,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		ln.Close()
 		return err
 	}
-	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
+	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name, identity)
 
 	httpSrv := newHTTPServerFn(handler)
 	requestCtx, cancelRequests := context.WithCancelCause(context.Background())

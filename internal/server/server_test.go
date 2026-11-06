@@ -177,7 +177,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 		t.Fatalf("Listen() error = %v", err)
 	}
 	defer raw.Close()
-	limited := newLimitedListener(raw, 1, "test", "svc")
+	limited := newLimitedListener(raw, 1, "test", "svc", nil)
 
 	accepted := make(chan net.Conn, 1)
 	acceptErr := make(chan error, 1)
@@ -955,7 +955,7 @@ func TestNewTSNetServerCredentialTiersPreserveTaggedCompatibility(t *testing.T) 
 		Ephemeral: true,
 	}
 
-	credentialed, ok := newTSNetServer(svc, t.TempDir(), "tskey-auth-test", "https://control.example.com").(*tsnet.Server)
+	credentialed, ok := unwrapTSNetServer(newTSNetServer(svc, t.TempDir(), "tskey-auth-test", "https://control.example.com"))
 	if !ok {
 		t.Fatal("credentialed constructor did not return *tsnet.Server")
 	}
@@ -975,7 +975,7 @@ func TestNewTSNetServerCredentialTiersPreserveTaggedCompatibility(t *testing.T) 
 	funnelService := svc
 	funnelService.Funnel = true
 	funnelService.Tags = []string{"tag:tsmain"}
-	funnel, ok := newTSNetServer(funnelService, t.TempDir(), "tskey-auth-test", "").(*tsnet.Server)
+	funnel, ok := unwrapTSNetServer(newTSNetServer(funnelService, t.TempDir(), "tskey-auth-test", ""))
 	if !ok {
 		t.Fatal("Funnel constructor did not return *tsnet.Server")
 	}
@@ -983,7 +983,7 @@ func TestNewTSNetServerCredentialTiersPreserveTaggedCompatibility(t *testing.T) 
 		t.Fatalf("Funnel AdvertiseTags = %q, want derived shared tag", got)
 	}
 
-	interactive, ok := newTSNetServer(svc, t.TempDir(), "", "").(*tsnet.Server)
+	interactive, ok := unwrapTSNetServer(newTSNetServer(svc, t.TempDir(), "", ""))
 	if !ok {
 		t.Fatal("interactive constructor did not return *tsnet.Server")
 	}

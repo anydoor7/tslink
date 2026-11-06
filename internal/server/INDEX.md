@@ -110,3 +110,9 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `access_traffic_parity_test.go`: real gateway/app handler chains into one isolated writer; HTTP, denial, file, WebSocket and backend-error aggregation parity.
 - `guest_timing_test.go`: real-file corruption and writer contention with virtual response bounds, original-session recovery, and bounded 503-only recovery probes.
 - `app_node_owner_access_test.go`: the portal owner and admins reach a people-scoped app on its own node without a grant, with the gateway on or off; strangers and a tagged node carrying the owner login are refused.
+
+# TLS handshake evidence
+
+- `handshake_monitor.go`: per-listener handshake timing, error classification and per-app 10 s aggregated `tls.handshake.failed` / `tls.handshake.slow` records; counters are cumulative. The handshake is timed in `limitedTLSConn.HandshakeContext`, which `headerBudgetListener.prepare` calls for production TLS connections.
+- Timeout split: `newHelloTrackingTLSListener` (used by `helloTrackingServer.ListenTLS`, which mirrors tsnet `ListenTLS`; `TestListenTLSMirrorMatchesTailscaleVersion` fails when go.mod moves off `tsnetMirrorVersion`) wraps each raw conn in a `helloConn` whose flag a `GetConfigForClient` hook sets when a ClientHello is parsed; no global state. `timeout_before_hello` = no ClientHello parsed within the budget (client/network did not deliver it, or TSLink was too starved to read it; not proof the server is innocent); `timeout_after_hello` = hello parsed, handshake unfinished; plain `timeout` = every connection to a Funnel-enabled app (untracked).
+- `handshake_monitor_test.go`: classification table, fake-timer aggregation, teardown exclusion, and a real listener-chain test that failed handshakes yield exactly one record.

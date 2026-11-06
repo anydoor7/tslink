@@ -41,7 +41,7 @@ func TestLimitedTLSConnectionPreservesForwardedHTTPS(t *testing.T) {
 			}
 			var ln net.Listener = tls.NewListener(raw, certServer.TLS.Clone())
 			if limited {
-				ln = newLimitedListener(ln, 256, "http", "audit")
+				ln = newLimitedListener(ln, 256, "http", "audit", nil)
 			}
 			srv := newHTTPServerFn(handler)
 			ln = configureServiceHTTP(srv, registry.Service{Name: "audit", Type: registry.TypeProxy}, ln, nil)
@@ -77,7 +77,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limited := newLimitedListener(tls.NewListener(raw, certServer.TLS.Clone()), 1, "http", "cap").(*limitedListener)
+	limited := newLimitedListener(tls.NewListener(raw, certServer.TLS.Clone()), 1, "http", "cap", nil).(*limitedListener)
 	defer limited.Close()
 	accepted := make(chan net.Conn, 2)
 	acceptErr := make(chan error, 2)
@@ -219,7 +219,7 @@ func TestProxyResponseStreamOutlivesRequestReadBudget(t *testing.T) {
 			scheme := "http://"
 			client := &http.Client{Timeout: testwait.Budget(t)}
 			if useTLS {
-				ln = newLimitedListener(tls.NewListener(recorded, certServer.TLS.Clone()), 256, "http", "stream")
+				ln = newLimitedListener(tls.NewListener(recorded, certServer.TLS.Clone()), 256, "http", "stream", nil)
 				scheme = "https://"
 				client = certServer.Client()
 				client.Timeout = testwait.Budget(t)

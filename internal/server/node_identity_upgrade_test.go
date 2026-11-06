@@ -9,7 +9,6 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
-	"tailscale.com/tsnet"
 )
 
 // Upgrade from a build that predates node identity records (2baf2b1 shape: a
@@ -27,7 +26,7 @@ func TestNodeIdentityUpgradeFromLegacyLayoutKeepsEveryIdentity(t *testing.T) {
 	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
 		// Build the real tsnet.Server value (a plain struct; nothing starts)
 		// to read the hostname and state directory production would use.
-		built := newTSNetServer(svc, stateDir, authKey, controlURL).(*tsnet.Server)
+		built, _ := unwrapTSNetServer(newTSNetServer(svc, stateDir, authKey, controlURL))
 		constructed = append(constructed, construction{hostname: built.Hostname, dir: built.Dir})
 		return fake(svc, stateDir, authKey, controlURL)
 	}

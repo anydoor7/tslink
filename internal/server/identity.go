@@ -163,6 +163,22 @@ func (r *IdentityResolver) whoIs(ctx context.Context, remoteAddr string) *apityp
 	return resp
 }
 
+// cachedNode returns the node name for remoteAddr from the cache only. It never
+// calls LocalAPI, so it is safe on paths that must not block.
+func (r *IdentityResolver) cachedNode(remoteAddr string) string {
+	if r == nil {
+		return ""
+	}
+	ip, _, _ := net.SplitHostPort(remoteAddr)
+	if ip == "" {
+		ip = remoteAddr
+	}
+	if who := r.cache.get(ip); who != nil && who.Node != nil {
+		return who.Node.ComputedName
+	}
+	return ""
+}
+
 // Principal returns the verified login and node name behind remoteAddr. Both
 // are empty when identity cannot be established.
 //

@@ -335,7 +335,7 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 		return
 	}
 	ln = newGatewayListener(r.ctx, ln, gate)
-	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
+	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name, NewStaticIdentityResolver(run.lc))
 	ln = configureServiceHTTP(srv, svc, ln, nil)
 	r.mu.Lock()
 	if r.ctx.Err() != nil {
