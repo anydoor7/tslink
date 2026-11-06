@@ -33,6 +33,8 @@ func accessFunnelConn(c net.Conn) *ipn.FunnelConn {
 			return conn
 		case *tls.Conn:
 			c = conn.NetConn()
+		case *helloConn:
+			c = conn.Conn
 		case *limitedTLSConn:
 			c = conn.tlsConn
 		case *limitedConn:

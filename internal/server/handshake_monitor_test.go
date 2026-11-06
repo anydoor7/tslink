@@ -10,10 +10,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/tsnet"
@@ -525,4 +528,109 @@ func unwrapTSNetServer(s tsnetServer) (*tsnet.Server, bool) {
 		return w.Server, true
 	}
 	return nil, false
+}
+
+// The ListenTLS mirror was copied from one tailscale.com version. A bump must
+// re-check tsnet's ListenTLS and then update tsnetMirrorVersion.
+func TestListenTLSMirrorMatchesTailscaleVersion(t *testing.T) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		t.Skip("no build info")
+	}
+	for _, dep := range info.Deps {
+		if dep.Path == "tailscale.com" {
+			if dep.Version != tsnetMirrorVersion {
+				t.Fatalf("go.mod has tailscale.com %s but helloTrackingServer.ListenTLS mirrors %s: diff tsnet.Server.ListenTLS, update the mirror, then tsnetMirrorVersion", dep.Version, tsnetMirrorVersion)
+			}
+			return
+		}
+	}
+	t.Fatal("tailscale.com not found in build info")
+}
+
+// weakRecorder records a weak pointer to every raw connection it accepts, so a
+// test can prove nothing retains them (no global registry, no leak).
+type weakRecorder struct {
+	net.Listener
+	mu   sync.Mutex
+	refs []weak.Pointer[net.TCPConn]
+	// dropAll closes every accepted conn before returning it, modelling the
+	// gateway admission-denied / admission-full path.
+	dropAll bool
+}
+
+func (w *weakRecorder) Accept() (net.Conn, error) {
+	c, err := w.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		w.mu.Lock()
+		w.refs = append(w.refs, weak.Make(tc))
+		w.mu.Unlock()
+	}
+	if w.dropAll {
+		_ = c.Close()
+	}
+	return c, nil
+}
+
+func (w *weakRecorder) live() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := 0
+	for _, r := range w.refs {
+		if r.Value() != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// Connections accepted and then dropped before any handshake (cap reject, or a
+// gateway denial/admission-full drop) must leave nothing retained.
+func TestHelloTrackingRetainsNothingForDroppedConnections(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		limit   int
+		dropAll bool
+	}{{"cap_reject", 1, false}, {"dropped_before_handshake", 64, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := slog.Default()
+			installCaptureLogger()
+			t.Cleanup(func() { slog.SetDefault(old) })
+			cert := httptest.NewTLSServer(http.NotFoundHandler())
+			defer cert.Close()
+			raw, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := &weakRecorder{Listener: raw, dropAll: tc.dropAll}
+			tracked := newHelloTrackingTLSListener(rec, cert.TLS.Clone())
+			limited := newLimitedListener(tracked, tc.limit, "http", "photos", nil)
+			srv := newHTTPServerFn(http.NotFoundHandler())
+			ln := configureServiceHTTP(srv, registry.Service{Name: "photos", Type: registry.TypeProxy}, limited, nil)
+			done := make(chan struct{})
+			go func() { defer close(done); _ = srv.Serve(ln) }()
+			for i := 0; i < 50; i++ {
+				c, err := net.Dial("tcp", raw.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				c.Close()
+			}
+			waitHandshakeCond(t, func() bool { rec.mu.Lock(); defer rec.mu.Unlock(); return len(rec.refs) == 50 })
+			srv.Close()
+			ln.Close()
+			<-done
+			deadline := time.Now().Add(10 * time.Second)
+			for rec.live() != 0 {
+				runtime.GC()
+				if time.Now().After(deadline) {
+					t.Fatalf("%d of 50 dropped connections are still retained after close and GC", rec.live())
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
+	}
 }

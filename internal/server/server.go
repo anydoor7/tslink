@@ -72,9 +72,13 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 // before/after hello. Everything else is the embedded tsnet.Server.
 type helloTrackingServer struct{ *tsnet.Server }
 
+const tsnetMirrorVersion = "v1.104.1"
+
 // ListenTLS mirrors tailscale.com tsnet.Server.ListenTLS (v1.104.1): same
 // preconditions, same tailnet listener, and a TLS config whose only content is
 // the node's certificate provider. Funnel listeners keep tsnet's own path.
+// tsnetMirrorVersion is the tailscale.com version this was copied from;
+// TestListenTLSMirrorMatchesTailscaleVersion fails when go.mod moves.
 func (s *helloTrackingServer) ListenTLS(network, addr string) (net.Listener, error) {
 	if network != "tcp" {
 		return nil, fmt.Errorf("ListenTLS(%q, %q): only tcp is supported", network, addr)
@@ -303,7 +307,7 @@ func (c *limitedTLSConn) HandshakeContext(ctx context.Context) error {
 	}
 	start := time.Now()
 	err := c.tlsConn.HandshakeContext(ctx)
-	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err, takeHelloState(c.tlsConn.NetConn()))
+	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err, takeHelloState(c.tlsConn))
 	return err
 }
 

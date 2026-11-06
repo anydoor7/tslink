@@ -33,15 +33,15 @@ const (
 // Error classes reported for a failed TLS handshake.
 const (
 	// handshakeClassTimeout is a timeout on a connection whose ClientHello
-	// arrival is not tracked (Funnel listeners and other custom TLS configs).
+	// arrival is not tracked: every connection to a Funnel-enabled app.
 	handshakeClassTimeout = "timeout"
 	// timeout_before_hello: the handshake budget expired and no ClientHello had
-	// arrived, so the client never sent (or the network never delivered) its
-	// first flight. Server load is not the explanation.
+	// been parsed. Either the client or network did not deliver it, or TSLink
+	// was too starved to read it; this is not proof the server is innocent.
 	handshakeClassTimeoutBeforeHello = "timeout_before_hello"
-	// timeout_after_hello: the ClientHello arrived and the handshake still did
-	// not finish in budget, so the server (certificate lookup, CPU) or the rest
-	// of the exchange stalled.
+	// timeout_after_hello: the ClientHello was parsed and the handshake still
+	// did not finish in budget (certificate lookup, CPU, or the rest of the
+	// exchange stalled).
 	handshakeClassTimeoutAfterHello = "timeout_after_hello"
 	handshakeClassEOF               = "eof"
 	handshakeClassReset             = "reset"
@@ -72,7 +72,13 @@ func classifyHandshakeError(err error) (class, detail string) {
 	}
 	// TSLink serves on gVisor (tsnet): gonet reports a tcpip error as
 	// &net.OpError{Err: errors.New(err.String())}, a plain string, never a
-	// syscall errno. These are the fixed strings from gvisor tcpip/errors.go.
+	// syscall errno. "connection reset by peer", "connection aborted" and
+	// "endpoint is closed for send" are fixed strings from gvisor
+	// tcpip/errors.go; "broken pipe" is syscall.EPIPE's text, kept for
+	// completeness. Caveat: gonet also returns "endpoint is closed for send"
+	// after a LOCAL close. Today a local close only follows listener close
+	// (events dropped as teardown) or the context-deadline path (reported as a
+	// timeout first), but a future local-close path would be logged as reset.
 	if errors.As(err, &opErr) && opErr.Err != nil {
 		switch opErr.Err.Error() {
 		case "connection reset by peer", "connection aborted", "broken pipe", "endpoint is closed for send":
@@ -313,51 +319,58 @@ func (m *handshakeMonitor) emit(w *handshakeWindow, lookup bool) {
 	}
 }
 
-// helloSeenConns holds raw connections whose ClientHello has been parsed, and
-// helloTrackedConns those accepted from a tracking listener. Entries live for
-// one handshake: limitedTLSConn takes both when it reports the result.
-var (
-	helloSeenConns    sync.Map
-	helloTrackedConns sync.Map
-)
+// helloConn wraps the raw transport under a tracked TLS connection. The
+// GetConfigForClient hook reaches it through ClientHelloInfo.Conn and sets seen
+// when a ClientHello has been parsed; the connection reads it back through
+// tls.Conn.NetConn. The flag lives and dies with the connection, so there is no
+// registry to leak when a connection is dropped before its handshake.
+type helloConn struct {
+	net.Conn
+	seen atomic.Bool
+}
 
-// newHelloTrackingTLSListener is tls.NewListener plus a GetConfigForClient hook
-// that notes when a ClientHello arrives. The hook returns (nil, nil), which
-// keeps the config unchanged, so TLS behaviour is identical. Only connections
-// accepted here are split into before/after hello; others stay untracked.
+// helloTrackingListener is tls.NewListener with a transport wrapper and a
+// GetConfigForClient hook (which returns nil, nil and so keeps the config
+// unchanged). Only connections accepted here are split into before/after
+// hello; others are untracked.
+type helloTrackingListener struct {
+	net.Listener
+	cfg *tls.Config
+}
+
 func newHelloTrackingTLSListener(inner net.Listener, cfg *tls.Config) net.Listener {
+	cfg = cfg.Clone()
 	prior := cfg.GetConfigForClient
 	cfg.GetConfigForClient = func(hi *tls.ClientHelloInfo) (*tls.Config, error) {
-		helloSeenConns.Store(hi.Conn, struct{}{})
+		if hc, ok := hi.Conn.(*helloConn); ok {
+			hc.seen.Store(true)
+		}
 		if prior != nil {
 			return prior(hi)
 		}
 		return nil, nil
 	}
-	return &helloTrackingListener{Listener: tls.NewListener(inner, cfg)}
+	return &helloTrackingListener{Listener: inner, cfg: cfg}
 }
 
-type helloTrackingListener struct{ net.Listener }
-
-// Accept returns the *tls.Conn unchanged (limitedListener needs that type).
+// Accept returns a *tls.Conn (limitedListener needs that type) over a helloConn.
 func (l *helloTrackingListener) Accept() (net.Conn, error) {
 	c, err := l.Listener.Accept()
-	if tc, ok := c.(*tls.Conn); ok && err == nil {
-		helloTrackedConns.Store(tc.NetConn(), struct{}{})
+	if err != nil {
+		return nil, err
 	}
-	return c, err
+	return tls.Server(&helloConn{Conn: c}, l.cfg), nil
 }
 
-// takeHelloState reports whether the ClientHello arrived on raw and drops the
-// entries. A conn not accepted from a tracking listener is helloUntracked.
-func takeHelloState(raw net.Conn) helloState {
-	_, seen := helloSeenConns.LoadAndDelete(raw)
-	_, tracked := helloTrackedConns.LoadAndDelete(raw)
+// takeHelloState reports whether a ClientHello arrived on the connection under
+// tc. A conn not accepted from a tracking listener is helloUntracked.
+func takeHelloState(tc *tls.Conn) helloState {
+	hc, ok := tc.NetConn().(*helloConn)
 	switch {
-	case seen:
+	case !ok:
+		return helloUntracked
+	case hc.seen.Load():
 		return helloSeen
-	case tracked:
-		return helloNotSeen
 	}
-	return helloUntracked
+	return helloNotSeen
 }
