@@ -211,6 +211,8 @@ var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
     <true/>
     <key>ThrottleInterval</key>
     <integer>{{.ThrottleInterval | xmlesc "ThrottleInterval"}}</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
     <key>StandardOutPath</key>
     <string>{{.OutLog | xmlesc "OutLog"}}</string>
     <key>StandardErrorPath</key>
@@ -241,8 +243,12 @@ This command:
   3. Logs stdout to ~/.config/tslink/logs/tslink.out.log
   4. Logs stderr to ~/.config/tslink/logs/tslink.err.log
   5. Uses launchd ThrottleInterval=30 to avoid tight restart loops on failures
-  6. Reloads the agent immediately with bootout-then-bootstrap
-  7. Falls back from gui/$(id -u) to user/$(id -u) when no desktop session exists for this user
+  6. Runs with launchd ProcessType=Interactive: serve is the network path for
+     every exposed app, so it must keep its scheduling priority when the Mac is
+     saturated (the default Standard type runs at a lower base priority than
+     ordinary user processes)
+  7. Reloads the agent immediately with bootout-then-bootstrap
+  8. Falls back from gui/$(id -u) to user/$(id -u) when no desktop session exists for this user
 
 Re-running 'tslink install' is the supported upgrade path. Before replacing an
 existing plist, TSLink saves it and verifies whether launchd owns the running

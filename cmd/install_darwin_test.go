@@ -280,6 +280,7 @@ func TestPlistTemplateIncludesRestartThrottle(t *testing.T) {
 		"<key>KeepAlive</key>",
 		"<key>ThrottleInterval</key>",
 		"<integer>30</integer>",
+		"<key>ProcessType</key>\n    <string>Interactive</string>",
 	} {
 		if !strings.Contains(plist, want) {
 			t.Fatalf("plist missing %q:\n%s", want, plist)
