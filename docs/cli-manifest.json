@@ -3336,6 +3336,45 @@
       }
     },
     {
+      "path": "tslink startup",
+      "short": "Choose which services the daemon starts first",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink startup list",
+      "short": "Show the order the daemon starts service nodes in",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink startup set",
+      "short": "Set a service's startup priority; higher starts first, 0 clears it",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
       "path": "tslink status",
       "short": "Show TSLink status",
       "flags": [

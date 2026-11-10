@@ -1160,7 +1160,14 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		s.removeRuntimeSnapshot()
 		return outcome, errors.Join(removedIdentityErr, err)
 	}
-	for _, name := range desiredOrder {
+	// Nodes start one at a time, so the operator's startup priorities decide
+	// which services are back first after a daemon restart. An unreadable
+	// hint file only costs that ordering: it must not hold any service back.
+	priorities, err := registry.LoadStartupPriorities(regPath)
+	if err != nil {
+		slog.Warn("startup priorities unreadable; starting nodes in registry order", "path", registry.StartupPriorityPath(regPath), "error", err)
+	}
+	for _, name := range registry.StartupOrder(desiredOrder, priorities) {
 		svc := desired[name]
 		if _, failed := identityFailures[name]; failed {
 			continue

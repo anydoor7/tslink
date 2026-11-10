@@ -41,6 +41,8 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink tags set <service> <tag>` | Replace a service's tags |
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
 | `tslink tags delete-remote <tag> --force --manage-acl` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks and explicit remote-write opt-in |
+| `tslink startup list` | Show the order the daemon starts service nodes in, with each service's startup priority |
+| `tslink startup set <service> <priority>` | Start a service earlier (higher priority) or later (negative, passed after `--`) after a daemon restart; `0` clears it |
 | `tslink invite user <email>` | Invite a user to join the tailnet; requires a user-owned API access token |
 | `tslink invite device <service> <email>` | Share a TSLink-owned service device with an external user; requires exact node ownership proof. For an HTTP/file app it also saves the person's access with no expiry (an existing grant keeps its deadline; use `people add --for` to limit it) |
 | `tslink invite list` | List open user and TSLink-owned device invites |
@@ -66,6 +68,19 @@ registered service name, even while `status` is `needs_login`. Names may receive
 a collision suffix; use the returned name for `url`, `status --urls --name`, and
 `remove`. Never guess or fall back to the requested name. MCP `share` returns
 the same required field for continuation and `unshare`.
+
+The daemon starts service nodes one at a time, so after a restart the last
+service is reachable some time after the first. `tslink startup set <service>
+<priority>` moves a service earlier: higher priorities start first, services with
+equal priority keep registry order, and the default is `0`. Priorities live in
+`startup-priority.json` beside `registry.json` (`{"schema_version":1,"services":{"<name>":<priority>}}`),
+not in the registry, because the registry is decoded strictly and a TSLink build
+that predates priorities would refuse a service carrying an unknown key. Older
+builds ignore the file, so downgrading only loses the ordering. The daemon reads
+the file on every reconciliation and applies it to nodes that still have to start;
+an unreadable file is logged and nodes start in registry order. `add` and `remove`
+do not touch the file: re-adding a removed name keeps its old priority, and
+`tslink startup set <name> 0` clears an entry even for a name that is gone.
 
 During initial `serve` startup, a registry notification for the same state
 reuses the pending node construction. A changed state still supersedes the

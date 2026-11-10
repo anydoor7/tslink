@@ -136,6 +136,7 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink config":     {},
 	"tslink invite":     {},
 	"tslink registry":   {},
+	"tslink startup":    {},
 	"tslink tags":       {},
 	"tslink template":   {},
 
@@ -155,6 +156,7 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink invite revoke":    {}, // ExactArgs(1)
 	"tslink invite user":      {}, // ExactArgs(1)
 	"tslink remove":           {}, // ExactArgs(1)
+	"tslink startup set":      {}, // ExactArgs(2)
 	"tslink tags add":         {}, // ExactArgs(2)
 	"tslink tags set":         {}, // ExactArgs(2)
 	"tslink tags set-default": {}, // ExactArgs(1)
@@ -174,6 +176,7 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink config list":    {}, // exit 0. Reads the isolated config; keyring suppressed.
 	"tslink list":           {}, // exit 0. Reads the isolated registry/PID/snapshot; absent registry => empty list.
 	"tslink tags list":      {}, // exit 0. Reads the isolated registry.
+	"tslink startup list":   {}, // exit 0. Reads the isolated registry and startup-priority.json.
 	"tslink status":         {}, // exit 0. Reads the isolated registry/PID/snapshot.
 	"tslink logs":           {}, // exit 0. Opens only the isolated log path; absent => no entries.
 	"tslink registry check": {}, // exit 0. Reads, or on failure lstats, only the path it was given; creates nothing.
