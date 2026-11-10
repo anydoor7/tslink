@@ -174,6 +174,7 @@ func (l *gatewayListener) admissions() {
 		go func() {
 			defer workers.Done()
 			defer func() { <-slots }()
+			defer recoverConnPanic("gateway", l.gate.svc.Name, func() { _ = c.Close() })
 			if l.gate.admit(l.ctx, remote) {
 				// Defence in depth: Accept also selects on cancellation. Avoid
 				// offering an already-cancelled connection to the handoff select.

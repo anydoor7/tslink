@@ -403,6 +403,9 @@ func (l *headerBudgetListener) acceptLoop() {
 func (l *headerBudgetListener) prepare(c net.Conn) {
 	defer l.workers.Done()
 	var native *tls.Conn
+	// Closing c also frees its connection-cap slot. Nothing after the
+	// handoff to Accept can panic, so c is never closed under net/http.
+	defer recoverConnPanic("http", l.service, func() { l.closePrepared(c, native) })
 	handshake := func(ctx context.Context) error { return native.HandshakeContext(ctx) }
 	switch c := c.(type) {
 	case *tls.Conn:

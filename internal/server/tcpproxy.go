@@ -54,6 +54,7 @@ func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
 			go func() {
 				defer handlers.Done()
 				defer func() { <-sem }()
+				defer recoverConnPanic("tcp", name, func() { _ = conn.Close() })
 				handleTCPConn(ctx, conn, target, name)
 			}()
 		default:
@@ -82,8 +83,14 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 	defer backendConn.Close()
 	enableTCPKeepAlive(backendConn)
 
+	// A panic on one direction closes both ends, which also ends the other.
+	drop := func() {
+		_ = clientConn.Close()
+		_ = backendConn.Close()
+	}
 	done := make(chan struct{})
 	go func() {
+		defer recoverConnPanic("tcp", name, drop)
 		select {
 		case <-ctx.Done():
 			_ = clientConn.Close()
@@ -99,6 +106,7 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 	// client → backend
 	go func() {
 		defer wg.Done()
+		defer recoverConnPanic("tcp", name, drop)
 		_, _ = io.Copy(backendConn, clientConn)
 		// Signal backend that client is done writing
 		if halfCloser, ok := backendConn.(interface{ CloseWrite() error }); ok {
@@ -109,6 +117,7 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 	// backend → client
 	go func() {
 		defer wg.Done()
+		defer recoverConnPanic("tcp", name, drop)
 		_, _ = io.Copy(clientConn, backendConn)
 		// Signal client that backend is done writing
 		if halfCloser, ok := clientConn.(interface{ CloseWrite() error }); ok {
