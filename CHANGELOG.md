@@ -11,6 +11,7 @@ surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
 ### Fixed
 
+- The daemon no longer exits with a nil pointer dereference when a connection dies during its TLS handshake. Since the handshake logging above, recording such a handshake read the peer address after gVisor had already dropped it; each occurrence restarted the daemon and every node. The address is now read when the connection is accepted, so the failure is still attributed to the client. The gateway connection gate and TCP access records read the peer the same nil-safe way.
 - A finished health check now frees its slot before reporting the result, so the next check of the same app is never skipped as still running.
 
 ## [0.3.1] - 2026-10-27

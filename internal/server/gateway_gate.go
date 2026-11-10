@@ -162,10 +162,11 @@ func (l *gatewayListener) admissions() {
 			l.err = err
 			return
 		}
+		remote := remoteAddrString(c)
 		select {
 		case slots <- struct{}{}:
 		default:
-			l.gate.drop(c.RemoteAddr().String())
+			l.gate.drop(remote)
 			_ = c.Close()
 			continue
 		}
@@ -173,7 +174,7 @@ func (l *gatewayListener) admissions() {
 		go func() {
 			defer workers.Done()
 			defer func() { <-slots }()
-			if l.gate.admit(l.ctx, c.RemoteAddr().String()) {
+			if l.gate.admit(l.ctx, remote) {
 				// Defence in depth: Accept also selects on cancellation. Avoid
 				// offering an already-cancelled connection to the handoff select.
 				if l.ctx.Err() == nil {
@@ -186,7 +187,7 @@ func (l *gatewayListener) admissions() {
 				_ = c.Close()
 				return
 			}
-			l.gate.drop(c.RemoteAddr().String())
+			l.gate.drop(remote)
 			_ = c.Close()
 		}()
 	}

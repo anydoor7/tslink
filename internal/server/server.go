@@ -264,7 +264,10 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 		case l.sem <- struct{}{}:
 			limited := &limitedConn{Conn: conn, release: func() { <-l.sem }}
 			if tlsConn, ok := conn.(*tls.Conn); ok {
-				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn, monitor: l.handshakes}, nil
+				// Read the peer now, while the transport is connected: a
+				// connection that dies during its handshake has no address by
+				// the time the failure is recorded.
+				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn, monitor: l.handshakes, remote: remoteAddrString(tlsConn)}, nil
 			}
 			return limited, nil
 		default:
@@ -293,6 +296,8 @@ type limitedTLSConn struct {
 	*limitedConn
 	tlsConn *tls.Conn
 	monitor *handshakeMonitor
+	// remote is the peer address read at accept time; "" if already unknown.
+	remote string
 	// timed is set by the first handshake call. net/http and the header-budget
 	// listener both call HandshakeContext on one connection; later calls return
 	// the finished result at once and must not be counted again.
@@ -307,7 +312,7 @@ func (c *limitedTLSConn) HandshakeContext(ctx context.Context) error {
 	}
 	start := time.Now()
 	err := c.tlsConn.HandshakeContext(ctx)
-	c.monitor.observe(c.tlsConn.RemoteAddr().String(), time.Since(start), err, takeHelloState(c.tlsConn))
+	c.monitor.observe(c.remote, time.Since(start), err, takeHelloState(c.tlsConn))
 	return err
 }
 

@@ -49,7 +49,7 @@ func tcpAccessBegin(ctx context.Context, conn net.Conn, name, reason string) (ne
 	start := time.Now()
 	at := opts.now().UTC()
 	id := fmt.Sprintf("%x-%x", at.UnixNano(), tcpAccessSequence.Add(1))
-	remote := conn.RemoteAddr().String()
+	remote := remoteAddrString(conn)
 	decision := "allowed"
 	if reason != "" {
 		decision = "denied"
