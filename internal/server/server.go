@@ -56,7 +56,7 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 		// tailnet into a self-imposed first-run failure.
 		advertiseTags = nil
 	}
-	return &helloTrackingServer{&tsnet.Server{
+	return &helloTrackingServer{Server: &tsnet.Server{
 		Hostname:      svc.Name,
 		Dir:           stateDir,
 		AuthKey:       authKey,
@@ -69,8 +69,14 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 
 // helloTrackingServer serves ListenTLS the way tsnet does, with a hook that
 // records ClientHello arrival so a handshake timeout can be split into
-// before/after hello. Everything else is the embedded tsnet.Server.
-type helloTrackingServer struct{ *tsnet.Server }
+// before/after hello, and hands out a node LocalAPI client that stays in
+// process (LocalClient). Everything else is the embedded tsnet.Server.
+type helloTrackingServer struct {
+	*tsnet.Server
+
+	lcMu sync.Mutex
+	lc   *LocalClient
+}
 
 const tsnetMirrorVersion = "v1.104.1"
 
