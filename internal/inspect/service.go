@@ -5,6 +5,7 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/anydoor7/tslink/internal/registry"
 )
@@ -37,6 +38,27 @@ type EndpointView struct {
 	State   string `json:"state"`
 	Host    string `json:"host,omitempty"`
 	Port    int    `json:"port,omitempty"`
+}
+
+// ExactURL returns the endpoint's address when runtime evidence made it
+// exact. It is the one definition of "this endpoint has a usable URL"; an
+// expected template (anything still carrying <tailnet>) never qualifies.
+func (e EndpointView) ExactURL() (string, bool) {
+	if e.State != EndpointStateExact || e.Display == "" || strings.Contains(e.Display, "<tailnet>") {
+		return "", false
+	}
+	return e.Display, true
+}
+
+// ExactHTTPSURL is ExactURL restricted to HTTP endpoints. Both https and
+// public_https qualify: Funnel changes who can reach the node, not its
+// address, so a Funnel-enabled node (including a guest-gated one) keeps the
+// same https://<node host> URL its tailnet users already have.
+func (e EndpointView) ExactHTTPSURL() (string, bool) {
+	if e.Kind != EndpointKindHTTPS && e.Kind != EndpointKindPublicHTTPS {
+		return "", false
+	}
+	return e.ExactURL()
 }
 
 type ExposureView struct {

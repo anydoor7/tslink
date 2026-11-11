@@ -218,8 +218,7 @@ func listSummary(svc StatusServiceView) ListServiceSummary {
 	if svc.RuntimeState == tsruntime.ServiceRuntimeFailed {
 		summary.State = tsruntime.ServiceRuntimeFailed
 	}
-	if svc.Endpoint.State == inspect.EndpointStateExact && svc.Endpoint.Display != "" && !strings.Contains(svc.Endpoint.Display, "<tailnet>") {
-		url := svc.Endpoint.Display
+	if url, ok := svc.Endpoint.ExactURL(); ok {
 		summary.URL = &url
 		summary.URLPending = false
 		summary.State = inspect.EndpointStateExact

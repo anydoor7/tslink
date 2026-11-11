@@ -126,8 +126,11 @@ func peopleURLsFromRegistry(paths sharePaths, reg *registry.Registry, issues []r
 		return urls
 	}
 	for _, svc := range snapshot.Services {
-		if svc.RuntimeState == tsruntime.ServiceRuntimeRunning && svc.Endpoint.State == "exact" && svc.Endpoint.Kind == "https" {
-			urls[svc.Name] = svc.Endpoint.Display
+		if svc.RuntimeState != tsruntime.ServiceRuntimeRunning {
+			continue
+		}
+		if u, ok := svc.Endpoint.ExactHTTPSURL(); ok {
+			urls[svc.Name] = u
 		}
 	}
 	return urls

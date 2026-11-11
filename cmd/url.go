@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -43,12 +42,9 @@ func exactServiceURL(result StatusURLsResult, name string) (serviceURLResolution
 		if svc.Name != name {
 			continue
 		}
-		ready := svc.Endpoint.State == inspect.EndpointStateExact &&
-			svc.Endpoint.Display != "" &&
-			!strings.Contains(svc.Endpoint.Display, "<tailnet>")
-		if ready {
+		if exact, ok := svc.Endpoint.ExactURL(); ok {
 			return serviceURLResolution{
-				Result:   URLResult{Name: name, URL: svc.Endpoint.Display, State: inspect.EndpointStateExact, PortalURL: svc.PortalURL},
+				Result:   URLResult{Name: name, URL: exact, State: inspect.EndpointStateExact, PortalURL: svc.PortalURL},
 				Endpoint: svc.Endpoint,
 			}, true, true
 		}
