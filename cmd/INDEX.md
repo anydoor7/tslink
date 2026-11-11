@@ -122,6 +122,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - guest_test.go: CLI/MCP masking, policy and diagnosis controls.
 
 - `guest_human_test.go`: human summaries and readable recipient expiry.
+- `guest_second_link_test.go`: second, replacement and concurrent `--print-link` while the guest Funnel gate is up (runtime-built `public_https` snapshots), unready and stale-snapshot refusals with the rerun hint, people list URL of a grant on a later-gated app, and the open-Funnel conflict.
 
 # Access requests and phone onboarding
 
