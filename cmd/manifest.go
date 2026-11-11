@@ -266,7 +266,7 @@ func Manifest() CLIManifest {
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
 	case "tslink guest create":
-		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant, expiry and use counters."}, "link": {Type: "string|null", Description: "Bearer link only with explicit print-link; otherwise null."}, "message": {Type: "string", Description: "Plain-language message for the recipient."}, "edge_state": {Type: "string", Description: "Configured state; verify Funnel through status."}}
+		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant, expiry and use counters."}, "link": {Type: "string|null", Description: "Bearer link only with explicit print-link; otherwise null."}, "message": {Type: "string", Description: "Plain-language message for the recipient."}, "edge_state": {Type: "string", Description: "Configured state; verify Funnel through status."}, "removed_gateway_route": {Type: "object|null", Description: "Home gateway route removed by this create (port, message); null when none was removed."}, "request_body_limit": {Type: "object", Description: "Per-request upload cap guests meet (max_body_bytes, -1 for unlimited) and the command that raises it."}}
 	case "tslink guest list":
 		return map[string]JSONResultFieldInfo{"grants": {Type: "array", Description: "Nonsecret guest grants."}}
 	case "tslink guest show", "tslink guest revoke":

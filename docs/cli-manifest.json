@@ -1544,6 +1544,14 @@
         "message": {
           "type": "string",
           "description": "Plain-language message for the recipient."
+        },
+        "removed_gateway_route": {
+          "type": "object|null",
+          "description": "Home gateway route removed by this create (port, message); null when none was removed."
+        },
+        "request_body_limit": {
+          "type": "object",
+          "description": "Per-request upload cap guests meet (max_body_bytes, -1 for unlimited) and the command that raises it."
         }
       }
     },

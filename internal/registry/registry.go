@@ -1685,7 +1685,11 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 						svc.ControlURL = existing.ControlURL
 					}
 					if !options.ExplicitFields["funnel"] {
+						// The guest gate is part of the public edge: an add
+						// that leaves Funnel unspecified keeps it, so request
+						// limits and other HTTP fields stay changeable.
 						svc.Funnel, svc.PublicAck, svc.NoAutoProvision = existing.Funnel, existing.PublicAck, existing.NoAutoProvision
+						svc.GuestGate = existing.GuestGate
 					}
 				}
 				if svc.PortalRoute == nil {
@@ -1897,6 +1901,7 @@ func RemoveAndReturnWithinAuthorizedContext(ctx context.Context, path, name stri
 				}
 				reg.Services = remaining
 				removeAppGrants(reg, name)
+				revokeAppGuests(reg, name)
 				if err := save(path, reg); err != nil {
 					return err
 				}

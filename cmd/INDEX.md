@@ -122,6 +122,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - guest_test.go: CLI/MCP masking, policy and diagnosis controls.
 
 - `guest_human_test.go`: human summaries and readable recipient expiry.
+- `guest_gateway_route_test.go`: first guest link on a fresh gateway install removes the default route (human, JSON, MCP, compiled binary with isolated HOME), refusals for routes others depend on, url_not_ready keeps the route, bounded URL wait, nothing re-routes a gated app, limit change on a gated app, remove revokes links, people refusal on a gated app, recipe request-limit default.
 - `guest_second_link_test.go`: second, replacement and concurrent `--print-link` while the guest Funnel gate is up (runtime-built `public_https` snapshots), unready and stale-snapshot refusals with the rerun hint, people list URL of a grant on a later-gated app, and the open-Funnel conflict.
 
 # Access requests and phone onboarding

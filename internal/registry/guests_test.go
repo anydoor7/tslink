@@ -245,7 +245,9 @@ func TestGuestSaveFailureAndMissingService(t *testing.T) {
 	if _, e = Remove(path, "photos"); e != nil {
 		t.Fatal(e)
 	}
-	if _, r := FindGuestToken(path, "photos", token, guestTestNow); r != "mismatched" {
+	// remove revokes the app's links (revokeAppGuests), so a missing service
+	// reports revoked rather than mismatched; either way nothing is granted.
+	if _, r := FindGuestToken(path, "photos", token, guestTestNow); r != "revoked" {
 		t.Fatal("missing service granted", r)
 	}
 	if _, r := CheckGuest(path, "photos", "missing", guestTestNow, false, false); r != "invalid_token" {
@@ -254,7 +256,7 @@ func TestGuestSaveFailureAndMissingService(t *testing.T) {
 	if _, _, e = CreateGuest(path, guestOptions()); e == nil {
 		t.Fatal("missing service created grant")
 	}
-	if _, r := CheckGuestPIN(path, "photos", v.ID, "975310", guestTestNow); r != "mismatched" {
+	if _, r := CheckGuestPIN(path, "photos", v.ID, "975310", guestTestNow); r != "revoked" {
 		t.Fatal(r)
 	}
 	if _, e = ListGuests(filepath.Join(t.TempDir(), "missing"), guestTestNow); e != nil {

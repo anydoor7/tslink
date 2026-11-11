@@ -32,6 +32,22 @@ type guestCreateResult struct {
 	Link      *string            `json:"link"`
 	Message   string             `json:"message"`
 	EdgeState string             `json:"edge_state"`
+	// RemovedGatewayRoute reports the home gateway route this create removed
+	// in the same registry write; null when nothing was removed.
+	RemovedGatewayRoute *guestRemovedRoute `json:"removed_gateway_route"`
+	// RequestBodyLimit states the per-request upload cap guests meet, so an
+	// upload app's owner sees it before a guest's upload is refused.
+	RequestBodyLimit guestBodyLimit `json:"request_body_limit"`
+}
+
+type guestBodyLimit struct {
+	MaxBodyBytes int64  `json:"max_body_bytes"`
+	Message      string `json:"message"`
+}
+
+type guestRemovedRoute struct {
+	Port    int    `json:"port"`
+	Message string `json:"message"`
 }
 
 func createGuest(paths sharePaths, args guestArguments, now time.Time) (guestCreateResult, error) {
@@ -49,24 +65,31 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	// Resolve the trustworthy node authority before changing the fingerprint.
 	// A create that raises the app's Funnel deadline (the first one always
 	// does) changes the registry fingerprint, so a create issued before the
-	// daemon republishes runtime.json lands here too. Nothing is saved; the
-	// hint says how to wait for the URL and rerun. No wait happens here, so a
-	// genuinely unready node fails at once.
+	// daemon republishes runtime.json lands here too. Nothing is saved, no
+	// gateway route is removed, and the hint says how to wait for the URL and
+	// rerun. The wait is bounded by guestURLWait and only spent while a
+	// running daemon may still publish the node; an enrollment handoff or a
+	// stopped daemon fails at once.
 	base := ""
 	if args.PrintLink {
-		base = peopleURLs(paths)[args.App]
-		u, e := url.Parse(base)
-		if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			notReady := registry.URLNotReadyError(args.App).(registry.CodedError)
-			notReady.Next = append(notReady.Next, "no guest link was saved; rerun this guest create once the URL is exact")
-			return guestCreateResult{}, notReady
+		var e error
+		if base, e = guestNodeURL(ctx, paths, args.App); e != nil {
+			return guestCreateResult{}, e
 		}
 	}
-	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now})
+	removedRoute := 0
+	var svc registry.Service
+	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now, RemovedRoute: &removedRoute, SavedService: &svc})
 	if e != nil {
 		return guestCreateResult{}, e
 	}
 	r := guestCreateResult{Grant: grant, Message: fmt.Sprintf("Open the private link in your browser. Access ends %s. You do not need to install anything or create a Tailscale account.", guestExpiryDate(grant.ExpiresAt)), EdgeState: "configured; check status for Funnel availability"}
+	if limits := svc.EffectiveRequestLimits(); limits != nil {
+		r.RequestBodyLimit = guestBodyLimit{MaxBodyBytes: limits.MaxBodyBytes, Message: fmt.Sprintf("Uploads through %s are capped at %s per request; larger uploads are refused with HTTP 413. Raise it with: %s", args.App, registry.RequestBodyLimitText(limits.MaxBodyBytes), registry.RequestLimitCommand(svc, registry.CodeRequestBodyLimit))}
+	}
+	if removedRoute != 0 {
+		r.RemovedGatewayRoute = &guestRemovedRoute{Port: removedRoute, Message: fmt.Sprintf("Removed %s from the home gateway (port %d): guest-gated apps cannot be routed. You still reach it at its own URL (tslink url %s).", args.App, removedRoute, args.App)}
+	}
 	if grant.PINRequired {
 		r.Message += " Enter the PIN I send separately."
 	}
@@ -77,6 +100,37 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	}
 	return r, nil
 }
+
+// guestURLWait bounds how long guest create --print-link waits for a running
+// daemon to publish the app's exact node URL, as people add does with
+// peopleRuntimeWait. A test replaces it.
+var guestURLWait = 3 * time.Second
+
+func guestNodeURL(ctx context.Context, paths sharePaths, app string) (string, error) {
+	deadline := time.Now().Add(guestURLWait)
+	for {
+		base := peopleURLs(paths)[app]
+		if u, e := url.Parse(base); e == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" {
+			return base, nil
+		}
+		if handoff, ok := validAuthHandoffForService(paths.PID, app); ok {
+			return "", registry.CodedError{Code: registry.CodeEnrollmentRequired, Message: "Authorize this app's node before creating a printed guest link; no guest link was saved", Next: []string{"Open " + handoff.AuthURL, "tslink url " + app + " --wait=30s", "rerun this guest create"}, MessageOnly: true}
+		}
+		if !inviteIsRunningFn(paths.PID) || !time.Now().Before(deadline) {
+			notReady := registry.URLNotReadyError(app).(registry.CodedError)
+			notReady.Next = append(notReady.Next, "no guest link was saved; rerun this guest create once the URL is exact")
+			return "", notReady
+		}
+		timer := time.NewTimer(min(50*time.Millisecond, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func guestPINInput(c *cobra.Command) (string, error) {
 	var raw []byte
 	var e error
@@ -124,6 +178,12 @@ func newGuestCmd() *cobra.Command {
 			output.WriteJSON(c.OutOrStdout(), output.NewSuccess("guest create", r))
 		} else {
 			fmt.Fprintf(c.OutOrStdout(), "Guest %s for %s until %s\n%s\n", r.Grant.ID, r.Grant.App, guestExpiryDate(r.Grant.ExpiresAt), r.Message)
+			if r.RemovedGatewayRoute != nil {
+				fmt.Fprintln(c.OutOrStdout(), r.RemovedGatewayRoute.Message)
+			}
+			if r.RequestBodyLimit.Message != "" {
+				fmt.Fprintln(c.OutOrStdout(), r.RequestBodyLimit.Message)
+			}
 			if r.Link == nil {
 				fmt.Fprintln(c.OutOrStdout(), "Link hidden. Tokens cannot be recovered; create with --print-link to deliver a new link.")
 			}
