@@ -113,7 +113,8 @@ later ones within 30 seconds are published together at the end of that window.
 Warnings last until the service node restarts. Change limits with
 `tslink limits set <app> --max-request-body 4GiB` (MCP `limits_set`): it changes
 only the named limits, keeps every other setting and works on apps with guest
-links. Re-running add instead replaces the whole service, so omitted add flags
+links. It restarts the app's node: open connections and uploads in flight end and
+guests must reopen their link, so set limits before sending a link. Re-running add instead replaces the whole service, so omitted add flags
 reset. A share will not reuse an existing service with different effective
 limits. The conflict lists each differing limit, its existing/requested value
 and the flag to pass to `tslink limits set`.

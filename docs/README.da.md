@@ -116,7 +116,7 @@ Private modtagere skal have Tailscale. Gæstelinks er offentlige, kan videresend
 
 ```sh
 tslink people add alice@example.com --apps notes --for 7d   # a tailnet member, for 7 days
-tslink add photos --proxy localhost:3000                     # then a browser link, no Tailscale needed:
+tslink add photos --proxy localhost:3000                     # finish the node sign-in it prints, then a browser link:
 tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```

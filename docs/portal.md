@@ -98,7 +98,12 @@ instead. TCP, Funnel and browser guest-link apps cannot be gateway routes. The
 first `tslink guest create` on a routed app removes its route in the same write
 when only the owner and admins use it and the app's own node is running with
 an exact URL, and says so; otherwise it refuses, keeps the route and names the
-next command ([guest links](guest-links.md)).
+next command ([guest links](guest-links.md)). Over HTTP MCP, the changes of a
+routed app (`add`, `unshare`, `health_set`, `limits_set`, `guest_create`,
+`portal_route_*`) require the current portal owner, checked in the write
+transaction; the check covers routed apps only, so an app that leaves the
+gateway through its first guest link is from then on governed by the MCP owner
+role alone.
 
 New private HTTP/file apps receive stable routes automatically when the gateway is enabled; their own app nodes and URLs remain. Authorization also routes supported existing apps as needed. Running `portal enable` without gateway options preserves an existing mode and defaults a new portal to gateway mode.
 `--gateway` alone retains its existing range and tag. Range or tag options require
