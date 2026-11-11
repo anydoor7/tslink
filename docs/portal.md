@@ -23,7 +23,7 @@ The portal and private HTTP/file app listeners use the same `AppAccessDecisionAt
 
 `--owner` is the exact Tailscale login of the person maintaining these apps. A new gateway may temporarily have no owner or admins. After credential-free enrollment, only that gateway's verified untagged self account can become owner. Tagged/OAuth enrollment leaves ownership unset and reports "Choose the account that will manage your apps"; use the local command to choose it. Remote callers cannot claim an unset owner. Omitting `--owner` or `--admins` on re-enable preserves the existing identities. `--admins` explicitly designates additional **TSLink app administrators**. These identities can open all private HTTP/file apps, and the portal shows them every registered app. This is an authorization choice; choose these identities carefully. Roles are retained on disable, while a people revocation tombstone takes precedence. They do not override Tailscale network policy or the app's own login. Raw TCP does not enforce `allow` or WhoIs; the registry refuses `allowed_users` for TCP. Ungated public Funnel bypasses the private identity gate. TCP and ungated public services cannot be restricted per person by TSLink, so their cards appear **only for the owner/admins**, as an inventory. Their cards say: "Anyone who can reach this device can connect; TSLink can't limit it per person." Omitting them from other visitors' directories does not decide or deny those visitors' network/public access. Private HTTP and file cards exactly follow the shared enforcement decision, including legacy allow rules, grants, deadlines, tags and tombstones.
 
-Guest-gated public apps also appear only in owner/admin inventory. Their private listener still enforces people grants and revocation; public requests require a guest link.
+Guest-gated public apps also appear only in owner/admin inventory. Their private listener still enforces people grants given before the gate and revocation; new people grants are refused while the gate is up, and public requests require a guest link.
 
 Runtime and health observations are collected only after directory filtering. Registry parsing still depends on registry size; the portal makes no constant-time or remote timing-side-channel guarantee.
 
@@ -94,7 +94,10 @@ keeps its existing port. To select a range, use
 existing route ports must still fit. `portal route add photos --port 9001`
 selects an explicit port. `portal route remove photos` removes only that route.
 A portal-only app must retain a route; remove that app with `tslink remove`
-instead. TCP, Funnel and browser guest-link apps cannot be gateway routes.
+instead. TCP, Funnel and browser guest-link apps cannot be gateway routes. The
+first `tslink guest create` on a routed app removes its route in the same write
+when only the owner and admins use it, and says so; otherwise it refuses and
+names `tslink portal route remove <app>` ([guest links](guest-links.md)).
 
 New private HTTP/file apps receive stable routes automatically when the gateway is enabled; their own app nodes and URLs remain. Authorization also routes supported existing apps as needed. Running `portal enable` without gateway options preserves an existing mode and defaults a new portal to gateway mode.
 `--gateway` alone retains its existing range and tag. Range or tag options require

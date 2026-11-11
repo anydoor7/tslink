@@ -116,7 +116,8 @@ Serve 足够应付你自己启动、在自己手机上打开的一个应用。TS
 
 ```sh
 tslink people add alice@example.com --apps notes --for 7d   # a tailnet member, for 7 days
-tslink guest create notes --for 3d --public --print-link    # a browser link, no Tailscale needed
+tslink add photos --proxy localhost:3000                     # then a browser link, no Tailscale needed:
+tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 

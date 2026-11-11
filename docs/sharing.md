@@ -60,7 +60,7 @@ target reuses its existing service instead of creating suffixed orphan nodes.
 ## Photo and video uploads
 
 Choose a finite limit large enough for a whole upload request, including its
-multipart metadata. For a photo app or video library:
+multipart metadata. For a photo app or video library on the tailnet:
 
 ```bash
 tslink add photos --proxy localhost:2283 --max-request-body 20GiB --request-read-timeout 2m
@@ -68,6 +68,14 @@ tslink share 2283 --name photos --max-request-body 20GiB --request-read-timeout 
 tslink status --urls
 tslink list --verbose
 ```
+
+These limits size one request; they do not make every path fast. Through
+Funnel (guest links and public URLs), one upload stream measured about 0.65 to
+1.5 MB/s on 2026-11-11 on one host, against about 35 MB/s over the tailnet on
+the same path: 40 GB would take 11 hours or more. One host on one day, not a
+guarantee; Tailscale documents non-configurable Funnel bandwidth limits. Send
+very large files over the private tailnet path ([people grants](people.md),
+with a device invitation for an outsider).
 
 Services without settings keep a 32 MiB body cap, 10s request header timeout,
 30s upload inactivity window and 60s keep-alive idle timeout. Increase the
@@ -81,7 +89,11 @@ spent waiting for the backend to accept the preceding bytes is excluded, and
 successful reads let an upload continue indefinitely. Response streams and
 WebSocket upgrades have no upload deadline. A phone sending data regularly can
 therefore take longer than 30 seconds; a stalled proxy upload receives a clear 408.
-Oversized bodies receive 413, including unknown-length chunked uploads. An
+Oversized bodies receive 413, including unknown-length chunked uploads. A
+refused upload gets TSLink's JSON error envelope with code `request_body_limit`
+(or `request_read_timeout` for a stalled one) and a message that states the
+limit, so an upload client can tell what happened; it names neither the app's
+service name nor an owner flag. An
 incomplete HTTP/1 request header receives 408 before the handler starts.
 If a handler rejects or ignores a body, its remaining HTTP/1 body is discarded
 with an absolute deadline of at most 1s (or the shorter read inactivity window).
@@ -93,7 +105,10 @@ finishing during cleanup cannot renew its deadline or generate an upload-timeout
 warning. Completed bodies keep the usual connection reuse behavior.
 
 The owner gets a structured service/limit log and a runtime warning in
-`status --urls` and `list --verbose`; `doctor` points to the flag to adjust.
+`status --urls` and `list --verbose`, repeated as a `doctor` finding. The
+warning says the app is rejecting requests, counts the rejections since the
+app's node started, gives the most recent time and the `tslink add ...` command
+that raises the limit. The count is republished at most every 30 seconds.
 Warnings last until the service node restarts. Re-run add with the complete
 service configuration when changing limits, because omitted add flags reset.
 A share will not reuse an existing service with different effective limits.
@@ -104,9 +119,11 @@ Backends must handle partial uploads on failure; their own limits still apply.
 For agents, the CLI JSON results expose effective `request_limits` in bytes
 and duration strings. MCP add/share accept `request_limits` with `max_body`,
 `unlimited_ack`, `header_timeout`, `read_timeout` and `idle_timeout`.
-Application recipes can call `registry.RecommendedUploadLimits()` to recommend
-20 GiB and a 2m inactivity window for Immich, Nextcloud or Jellyfin; recipe
-wiring is separate from these limits and must retain the app's own requirements.
+A recipe in the catalog can carry finite `request_limits` (the same fields as
+MCP `request_limits`); a new service from that recipe uses them unless the
+request-limit flags (MCP `request_limits`) are given. Recipes never select an
+unlimited body. `registry.RecommendedUploadLimits()` returns 20 GiB and a 2m
+inactivity window as a starting point for such a recipe.
 
 ## Share for a chosen time
 
