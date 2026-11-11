@@ -153,6 +153,17 @@ func PersonGrantActiveAt(p Person, app string, now time.Time) bool {
 	return false
 }
 
+// GuestGatedPeopleError refuses a new people grant on a guest-gated app.
+// The gate keeps people enforcement on the private tailnet listener
+// (AppAccessDecisionAt), so grants given before it keep working. The common
+// grant action also prepares the person's address (a home gateway route or
+// the legacy allow list, and device invitations to it) and refuses apps whose
+// edge is public since a3e7837; a gated app also cannot be routed. The gate is
+// sticky, so the way to a new grant is a start-over.
+func GuestGatedPeopleError(svc Service) error {
+	return CodedError{Code: "people_service_unsupported", Message: fmt.Sprintf("%s has guest links (a guest gate): people grants given before the gate keep working on its private tailnet address, but new people grants cannot be added while the gate is up", svc.Name), Next: []string{"tslink remove " + svc.Name + " (ends its guest links and people grants)", fmt.Sprintf("tslink add %s --proxy %s", svc.Name, svc.Target), "rerun this people grant"}}
+}
+
 func PeopleServiceSupported(svc Service) bool {
 	return (!svc.Funnel || svc.GuestGate) && (svc.Type == TypeProxy || svc.Type == TypeFile)
 }
@@ -417,7 +428,10 @@ func changePersonInRegistry(ctx context.Context, reg *Registry, who string, apps
 				if !personHasGrant(result, svc.Name) {
 					continue
 				}
-				if svc.Funnel || svc.GuestGate {
+				if svc.GuestGate {
+					return GuestGatedPeopleError(*svc)
+				}
+				if svc.Funnel {
 					return CodedError{Code: "people_service_unsupported", Message: "public and browser-guest apps use their existing access settings"}
 				}
 				if GatewayEnabled(reg) {

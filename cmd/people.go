@@ -276,7 +276,10 @@ func grantAccess(ctx context.Context, paths sharePaths, intent grantAccessIntent
 			}
 			found = true
 			appControlURLs[app] = svc.ControlURL
-			if !registry.PeopleServiceSupported(svc) || svc.Funnel || svc.GuestGate {
+			if svc.GuestGate {
+				return PeopleResult{}, registry.GuestGatedPeopleError(svc)
+			}
+			if !registry.PeopleServiceSupported(svc) || svc.Funnel {
 				return PeopleResult{}, registry.CodedError{Code: "people_service_unsupported", Message: app + " cannot apply per-person private app access (TCP and public/browser access use their existing settings)"}
 			}
 			if svc.PortalOnly && !registry.GatewayEnabled(reg) {
