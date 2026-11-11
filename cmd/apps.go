@@ -54,8 +54,12 @@ type RecipeResult struct {
 	Next           []string            `json:"next"`
 }
 
+// recipeLookupFn is the catalog lookup; a test supplies a recipe the built-in
+// catalog does not have.
+var recipeLookupFn = recipes.Lookup
+
 func recipeService(req recipeRequest) (recipes.Recipe, registry.Service, error) {
-	r, ok := recipes.Lookup(req.RecipeID)
+	r, ok := recipeLookupFn(req.RecipeID)
 	if !ok {
 		return r, registry.Service{}, output.ErrNotFound(fmt.Sprintf("recipe %q not found; run tslink apps list", req.RecipeID))
 	}
@@ -88,7 +92,12 @@ func recipeService(req recipeRequest) (recipes.Recipe, registry.Service, error) 
 			health.Path = r.HealthPath
 		}
 	}
-	p := AddParams{Now: req.Now, Health: &health, RequestLimits: req.RequestLimits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
+	limits := req.RequestLimits
+	if limits == nil && r.RequestLimits != nil {
+		copied := *r.RequestLimits
+		limits = &copied
+	}
+	p := AddParams{Now: req.Now, Health: &health, RequestLimits: limits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
 	svc, err := buildService(p)
 	if err != nil {
 		return r, svc, err

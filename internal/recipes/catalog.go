@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/registry"
 	"net/url"
 	"strings"
 )
@@ -45,6 +46,10 @@ type Recipe struct {
 	SafetyLevel     string        `json:"safety_level"`
 	SafetyNote      string        `json:"safety_note"`
 	Notes           []Note        `json:"notes"`
+	// RequestLimits is the recipe's finite HTTP limit default for apps that
+	// take large uploads; explicit request-limit flags (MCP request_limits)
+	// replace it. Recipes never select an unlimited body.
+	RequestLimits *registry.RequestLimits `json:"request_limits,omitempty"`
 }
 type Catalog struct {
 	SchemaVersion  int      `json:"schema_version"`

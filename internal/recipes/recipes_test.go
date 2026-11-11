@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testwait"
 )
 
@@ -364,5 +365,23 @@ func TestLoopbackRefusalWithFakeDial(t *testing.T) {
 	_, err := dialLoopback(context.Background(), "tcp", "127.0.0.1:80", dial)
 	if err != nil || calls != 1 {
 		t.Fatalf("positive dial control: %d %v", calls, err)
+	}
+}
+
+// A recipe may carry finite request limits for upload apps; the catalog never
+// selects an unlimited body and every limit it carries is valid.
+func TestCatalogRequestLimitsAreFiniteAndValid(t *testing.T) {
+	for _, r := range List().Recipes {
+		if r.RequestLimits == nil {
+			continue
+		}
+		limits, err := registry.ResolveRequestLimits(r.RequestLimits)
+		if err != nil || limits.MaxBodyBytes < 0 || r.RequestLimits.UnlimitedAck {
+			t.Fatalf("recipe %s request limits %+v: %v", r.ID, r.RequestLimits, err)
+		}
+	}
+	c := decodeCatalog([]byte(`{"schema_version":1,"catalog_version":2,"recipes":[{"id":"upload-app","request_limits":{"max_body":"4GiB","read_timeout":"2m"}}]}`))
+	if got := c.Recipes[0].RequestLimits; got == nil || got.MaxBody != "4GiB" || got.ReadTimeout != "2m" {
+		t.Fatalf("catalog entry did not carry request limits: %+v", got)
 	}
 }
