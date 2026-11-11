@@ -368,20 +368,38 @@ func TestLoopbackRefusalWithFakeDial(t *testing.T) {
 	}
 }
 
-// A recipe may carry finite request limits for upload apps; the catalog never
-// selects an unlimited body and every limit it carries is valid.
-func TestCatalogRequestLimitsAreFiniteAndValid(t *testing.T) {
-	for _, r := range List().Recipes {
+// recipeLimitProblems lists recipes whose request limits are unlimited or
+// invalid; the catalog must have none.
+func recipeLimitProblems(c Catalog) []string {
+	var bad []string
+	for _, r := range c.Recipes {
 		if r.RequestLimits == nil {
 			continue
 		}
 		limits, err := registry.ResolveRequestLimits(r.RequestLimits)
 		if err != nil || limits.MaxBodyBytes < 0 || r.RequestLimits.UnlimitedAck {
-			t.Fatalf("recipe %s request limits %+v: %v", r.ID, r.RequestLimits, err)
+			bad = append(bad, r.ID)
 		}
 	}
-	c := decodeCatalog([]byte(`{"schema_version":1,"catalog_version":2,"recipes":[{"id":"upload-app","request_limits":{"max_body":"4GiB","read_timeout":"2m"}}]}`))
-	if got := c.Recipes[0].RequestLimits; got == nil || got.MaxBody != "4GiB" || got.ReadTimeout != "2m" {
+	return bad
+}
+
+// A recipe may carry finite request limits for upload apps; the catalog never
+// selects an unlimited body and every limit it carries is valid. The check is
+// shown to discriminate on a synthetic catalog before it is trusted on the
+// built-in one, which may carry no limits at all yet.
+func TestCatalogRequestLimitsAreFiniteAndValid(t *testing.T) {
+	control := decodeCatalog([]byte(`{"schema_version":1,"catalog_version":2,"recipes":[` +
+		`{"id":"upload-app","request_limits":{"max_body":"4GiB","read_timeout":"2m"}},` +
+		`{"id":"unlimited","request_limits":{"max_body":"unlimited","unlimited_ack":true}},` +
+		`{"id":"invalid","request_limits":{"max_body":"lots"}}]}`))
+	if got := recipeLimitProblems(control); len(got) != 2 || got[0] != "unlimited" || got[1] != "invalid" {
+		t.Fatalf("control catalog problems = %v, want [unlimited invalid]", got)
+	}
+	if got := control.Recipes[0].RequestLimits; got == nil || got.MaxBody != "4GiB" || got.ReadTimeout != "2m" {
 		t.Fatalf("catalog entry did not carry request limits: %+v", got)
+	}
+	if got := recipeLimitProblems(List()); len(got) != 0 {
+		t.Fatalf("built-in recipes with unlimited or invalid request limits: %v", got)
 	}
 }
