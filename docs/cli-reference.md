@@ -134,6 +134,8 @@ App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps, cons
 
 `tslink health set <app> [--path P] [--status-min N] [--status-max N] [--body S] [--timeout D] [--interval D] [--reset]` changes only an existing app's health check in one registry transaction and keeps access, tags, people scope, routes and the enrolled node; the MCP tool is `health_set`. Path, status and body are proxy-only (`health_option_unsupported`, exit 2); an unknown app is `not_found` (exit 5).
 
+`tslink limits set <app> [--max-request-body SIZE] [--ack-unlimited-request-body] [--request-header-timeout D] [--request-read-timeout D] [--idle-timeout D]` changes only an existing proxy or file app's HTTP request limits in one registry transaction and keeps target, access, routes, health, preserve-host, the guest gate and the enrolled node; it works on guest-gated apps, where `add` is refused. Omitted options keep their stored value; an empty value returns that limit to its default; `unlimited` needs the acknowledgement. The MCP tool is `limits_set` (`max_body`, `unlimited_ack`, `header_timeout`, `read_timeout`, `idle_timeout`). Raw TCP is refused (`invalid_request_limits`, exit 2); an unknown app is `not_found` (exit 5).
+
 HTTP/TCP health checks enforce the registry's target-safety rules. Node-key expiry refreshes independently of `--health-interval` and is invalidated when a node is replaced. Each service has one read per pool; queue admission has a separate five-second bound, and unattempted checks preserve failure counts and observation timestamps. Stuck pools report `alerts.monitor_error=health_monitor_saturated` with monitor saturation/recovery events and a doctor warning. Ready results persist in batches; unchanged state does not write. Status and doctor read events and monitor state from the durable journal; snapshots may only supplement write errors. Notification delivery uses a bounded queue; commands have a 10-second deadline plus up to 250 ms of pipe cleanup, and cancellation counts as failure.
 
 ### Application recipes
@@ -171,10 +173,11 @@ All timeout overrides are positive Go durations (for example `30s`, `2m`).
 Settings apply to proxy and file services; raw TCP rejects HTTP request limits.
 The upload inactivity window covers active body reads on HTTP/1 and HTTP/2;
 backend backpressure and slow responses do not consume it.
-An add replacing a name resets omitted limits to defaults, like other add flags.
+An add replacing a name resets omitted limits to defaults, like other add flags;
+`tslink limits set` changes limits alone.
 A share only reuses a service with equivalent effective limits.
 Limit conflicts name the differing flags and their existing/requested values;
-use add with the complete service configuration to reconfigure them.
+change them in place with `tslink limits set <app>` and those flags.
 Unused or rejected HTTP/1 bodies have an absolute cleanup deadline of at most
 1s, shortened by `--request-read-timeout` when below 1s. Incomplete cleanup closes
 the connection without imposing a total timeout on accepted uploads.
@@ -230,7 +233,7 @@ MCP shared reads (`status`, `health`, `doctor`, `list`, `url`, share/add polling
 
 ## Browser guest links
 
-`tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` creates a finite one-app browser grant. First enabling the mandatory Funnel gate requires `--public`; existing open Funnel must first be disabled. PIN comes from hidden terminal input or stdin. Only `--print-link` discloses the bearer URL; it needs a current exact node URL (waits up to 3 s for a running daemon to publish it). The first link removes the app's home gateway route when only the owner and admins use it (`removed_gateway_route`) and otherwise refuses with `portal_route_guest_refused` and the next command; the result also states the app's upload cap (`request_body_limit`). `guest list`, `guest show <id>` and `guest revoke <id>` never return token hashes or tokens. MCP owner-only tools: `guest_create`, `guest_list`, `guest_show`, `guest_revoke`. See [guest links](guest-links.md) for stable fields, migration, cookies, PIN limits and comparison with people grants.
+`tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` creates a finite one-app browser grant. First enabling the mandatory Funnel gate requires `--public`; existing open Funnel must first be disabled. PIN comes from hidden terminal input or stdin. Only `--print-link` discloses the bearer URL; it needs a current exact node URL (waits up to 3 s for a running daemon to publish it; a stopped daemon fails at once with `url_not_ready`, exit 5, and a node that still needs browser authorization with `enrollment_required`, exit 3). The first link removes the app's home gateway route when only the owner and admins use it and the app's own node is running with an exact URL (`removed_gateway_route`); otherwise it refuses with `portal_route_guest_refused` or `url_not_ready` and keeps the route; the result also states the app's upload cap (`request_body_limit`). `add` on a guest-gated app is refused; change limits with `limits set`. `guest list`, `guest show <id>` and `guest revoke <id>` never return token hashes or tokens. MCP owner-only tools: `guest_create`, `guest_list`, `guest_show`, `guest_revoke`. See [guest links](guest-links.md) for stable fields, migration, cookies, PIN limits and comparison with people grants.
 
 Human guest list/show/revoke output includes label, app, local expiry with named zone and relative time, status and uses. Revoke confirms the ID; sendable create messages include a readable expiry. JSON is unchanged.
 

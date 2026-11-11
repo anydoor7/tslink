@@ -135,7 +135,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Guest links and new public URLs expire and work for web apps only; folders, files and TCP ports stay private. They run over Funnel, which is slow for very large files (about 0.65 to 1.5 MB/s per upload stream measured on 2026-11-11); use people grants for big transfers. [People](docs/people.md) · [Guest links](docs/guest-links.md) · [Public access](docs/funnel.md)
+Guest links and new public URLs expire and work for web apps only; folders, files and TCP ports stay private. They run over Funnel, which is slow for very large files (about 0.65 to 1.5 MB/s per upload stream measured on 2026-11-11); for big transfers, use people grants on an app without guest links. [People](docs/people.md) · [Guest links](docs/guest-links.md) · [Public access](docs/funnel.md)
 
 <a id="architecture"></a>
 

@@ -75,7 +75,7 @@ Funnel (guest links and public URLs), one upload stream measured about 0.65 to
 the same path: 40 GB would take 11 hours or more. One host on one day, not a
 guarantee; Tailscale documents non-configurable Funnel bandwidth limits. Send
 very large files over the private tailnet path ([people grants](people.md),
-with a device invitation for an outsider).
+with a device invitation for an outsider) on an app without guest links.
 
 Services without settings keep a 32 MiB body cap, 10s request header timeout,
 30s upload inactivity window and 60s keep-alive idle timeout. Increase the
@@ -107,13 +107,16 @@ warning. Completed bodies keep the usual connection reuse behavior.
 The owner gets a structured service/limit log and a runtime warning in
 `status --urls` and `list --verbose`, repeated as a `doctor` finding. The
 warning says the app is rejecting requests, counts the rejections since the
-app's node started, gives the most recent time and the `tslink add ...` command
-that raises the limit. The count is republished at most every 30 seconds.
-Warnings last until the service node restarts. Re-run add with the complete
-service configuration when changing limits, because omitted add flags reset.
-A share will not reuse an existing service with different effective limits.
-The conflict lists each differing limit, its existing/requested value and the
-flag to use when reconfiguring with add.
+app's node started, gives the most recent time and the `tslink limits set ...`
+command that raises the limit. The first rejection is published at once;
+later ones within 30 seconds are published together at the end of that window.
+Warnings last until the service node restarts. Change limits with
+`tslink limits set <app> --max-request-body 4GiB` (MCP `limits_set`): it changes
+only the named limits, keeps every other setting and works on apps with guest
+links. Re-running add instead replaces the whole service, so omitted add flags
+reset. A share will not reuse an existing service with different effective
+limits. The conflict lists each differing limit, its existing/requested value
+and the flag to pass to `tslink limits set`.
 Backends must handle partial uploads on failure; their own limits still apply.
 
 For agents, the CLI JSON results expose effective `request_limits` in bytes
