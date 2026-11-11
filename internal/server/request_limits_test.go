@@ -942,7 +942,7 @@ func TestRequestLimitsTLSProgressAndStall(t *testing.T) {
 				if progress {
 					want = http.StatusNoContent
 				}
-				if resp.StatusCode != want || (!progress && !strings.Contains(string(body), "--request-read-timeout")) {
+				if resp.StatusCode != want || (!progress && !strings.Contains(string(body), `"code":"request_read_timeout"`)) {
 					t.Fatalf("status=%d body=%q, want %d", resp.StatusCode, body, want)
 				}
 				if h2 && resp.ProtoMajor != 2 {
@@ -1100,13 +1100,22 @@ func TestRequestLimitsRejectKnownAndChunkedWith413(t *testing.T) {
 			if resp.StatusCode != tc.status {
 				t.Fatalf("status=%d body=%q want %d", resp.StatusCode, message, tc.status)
 			}
-			if tc.status == 413 && !strings.Contains(string(message), "--max-request-body") {
-				t.Fatalf("unclear error %s", message)
+			// An upload client reads a stable code and the limit; the body
+			// names neither the service nor an owner-only CLI flag.
+			if tc.status == 413 {
+				if resp.Header.Get("Content-Type") != "application/json" || !strings.Contains(string(message), `"code":"request_body_limit"`) || !strings.Contains(string(message), "Upload too large: this app accepts at most 8 bytes per request") {
+					t.Fatalf("unclear error %s (%s)", message, resp.Header.Get("Content-Type"))
+				}
+				for _, leak := range []string{"photos", "--max-request-body"} {
+					if strings.Contains(string(message), leak) {
+						t.Fatalf("visitor body leaks %q: %s", leak, message)
+					}
+				}
 			}
 		})
 	}
 	got := warnings.snapshot()
-	if len(got) != 1 || got[0].Code != registry.CodeRequestBodyLimit || !strings.Contains(got[0].Message, "photos") {
+	if len(got) != 1 || got[0].Code != registry.CodeRequestBodyLimit || !strings.Contains(got[0].Message, `Service "photos" is rejecting requests over its request_body_limit (8 bytes). Raise it with: tslink add photos --proxy  --max-request-body <value>`) || !strings.Contains(got[0].Message, "Rejected 2 request(s) since the app started") {
 		t.Fatalf("warnings=%+v", got)
 	}
 	found := false
@@ -1168,7 +1177,7 @@ func TestRequestLimitsSlowProgressAndStall(t *testing.T) {
 					t.Fatal("progress produced warning")
 				}
 			} else {
-				if resp.StatusCode != 408 || !strings.Contains(string(message), "--request-read-timeout") {
+				if resp.StatusCode != 408 || !strings.Contains(string(message), `"code":"request_read_timeout"`) {
 					t.Fatalf("stalled status=%d body=%s", resp.StatusCode, message)
 				}
 				got := warnings.snapshot()
@@ -2007,4 +2016,29 @@ func assertTLSHandshakeDeadline(t *testing.T) {
 			t.Error("failed handshake retained pending connection")
 		}
 	})
+}
+
+// The owner's warning counts every rejection and carries the most recent
+// time, but republishes the snapshot only on the first rejection and then at
+// most once per limitWarningRepublish.
+func TestServiceLimitWarningsCountAndThrottleRepublish(t *testing.T) {
+	clock := time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)
+	warnings := &serviceLimitWarnings{now: func() time.Time { return clock }}
+	view := inspect.WarningView{Code: registry.CodeRequestBodyLimit, Severity: "warning", Source: "http.request_limits", Message: "Service \"photos\" is rejecting requests."}
+	var published []bool
+	for _, step := range []time.Duration{0, time.Second, 10 * time.Second, limitWarningRepublish, time.Second} {
+		clock = clock.Add(step)
+		published = append(published, warnings.add(view))
+	}
+	if fmt.Sprint(published) != "[true false false true false]" {
+		t.Fatalf("republish decisions = %v", published)
+	}
+	got := warnings.snapshot()
+	want := "Service \"photos\" is rejecting requests. Rejected 5 request(s) since the app started; most recent at 2030-07-10T12:00:42Z."
+	if len(got) != 1 || got[0].Message != want {
+		t.Fatalf("snapshot = %+v, want %q", got, want)
+	}
+	if other := warnings.add(inspect.WarningView{Code: registry.CodeRequestReadTimeout}); !other {
+		t.Fatal("a second limit's first rejection was not published")
+	}
 }

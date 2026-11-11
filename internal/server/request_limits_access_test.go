@@ -71,7 +71,7 @@ func TestRequestLimitsAfterAccessAnswersOversizeOnlyToAnAdmittedCaller(t *testin
 	}
 
 	admittedBig, warned := serve(limited, admitting, big)
-	if admittedBig.status != http.StatusRequestEntityTooLarge || admittedBig.reached || !strings.Contains(admittedBig.body, "service photos: request body exceeds 8 bytes") {
+	if admittedBig.status != http.StatusRequestEntityTooLarge || admittedBig.reached || !strings.Contains(admittedBig.body, `"code":"request_body_limit"`) || !strings.Contains(admittedBig.body, "at most 8 bytes per request") {
 		t.Fatalf("an admitted caller is not told the limit: %+v", admittedBig)
 	}
 	if len(warned) != 1 || warned[0].Code != registry.CodeRequestBodyLimit {

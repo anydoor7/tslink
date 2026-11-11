@@ -146,7 +146,7 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if failure := requestFailure(r, err); failure != nil {
 				accessDeny(r, "limits")
-				http.Error(w, failure.message, failure.status)
+				writeLimitRefusal(w, r, failure)
 				return
 			}
 			if denyGuestProxyCancellation(w, r, err) {

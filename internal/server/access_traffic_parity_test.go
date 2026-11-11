@@ -392,7 +392,7 @@ func TestAccessTrafficHandlerParity(t *testing.T) {
 			case "oversized":
 				// Authorized on both paths, so the limit answers on both, with the
 				// same text.
-				if direct.Reason != "limits" || gateway.Reason != "limits" || !strings.Contains(pages[""], "photos") || !strings.Contains(pages[""], "exceeds 8 bytes") {
+				if direct.Reason != "limits" || gateway.Reason != "limits" || !strings.Contains(pages[""], `"code":"request_body_limit"`) || !strings.Contains(pages[""], "at most 8 bytes per request") || pages[""] != pages["portal"] {
 					t.Fatalf("limit outcome: direct=%+v gateway=%+v page=%q", direct, gateway, pages[""])
 				}
 			case "closing":

@@ -18,7 +18,23 @@ import (
 
 type requestLimitError struct {
 	code, message, limit string
-	status               int
+	// visitor is what the caller reads: the limit and what happened, without
+	// the service name or owner instructions. display is the limit for the
+	// owner's warning; limit stays the machine value logged.
+	visitor, display string
+	status           int
+}
+
+// writeLimitRefusal answers a request a limit refused with TSLink's generated
+// response: an HTML page for a browser navigation, otherwise the JSON error
+// envelope with the stable code (request_body_limit, request_read_timeout),
+// so an upload client's XHR or fetch can tell what happened.
+func writeLimitRefusal(w http.ResponseWriter, r *http.Request, e *requestLimitError) {
+	gatewayErrorPage(w, r, e.status, e.code, e.visitor, "")
+}
+
+func bodyLimitError(service string, limit int64) *requestLimitError {
+	return &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service, limit), limit: fmt.Sprint(limit), display: registry.RequestBodyLimitText(limit), visitor: "Upload too large: this app accepts at most " + registry.RequestBodyLimitText(limit) + " per request. Ask the person who shared it to raise the limit.", status: http.StatusRequestEntityTooLarge}
 }
 
 func (e *requestLimitError) Error() string { return e.message }
@@ -32,22 +48,47 @@ type requestBudgetState struct {
 	readDone chan struct{} // joins timeout classification without locking across Read
 }
 
-// Retain at most one warning per limit for this node lifetime. Repeated
-// violations still log, but cannot grow snapshots or trigger repeated writes.
+// Retain at most one warning per limit for this node lifetime, with a count
+// and the time of the most recent rejection, so status and doctor say that
+// requests are being rejected now. Repeated violations still log; the
+// snapshot is republished on the first one and then at most once per
+// limitWarningRepublish, so a burst of rejected uploads cannot turn into a
+// burst of snapshot writes.
 type serviceLimitWarnings struct {
 	mu       sync.Mutex
-	warnings []inspect.WarningView
+	now      func() time.Time // captured where the node starts (serverNowFn)
+	warnings []limitWarning
 }
+
+type limitWarning struct {
+	view      inspect.WarningView
+	count     uint64
+	last      time.Time
+	published time.Time
+}
+
+const limitWarningRepublish = 30 * time.Second
 
 func (s *serviceLimitWarnings) add(w inspect.WarningView) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, prior := range s.warnings {
-		if prior.Code == w.Code {
-			return false
+	now := time.Now()
+	if s.now != nil {
+		now = s.now()
+	}
+	for i := range s.warnings {
+		prior := &s.warnings[i]
+		if prior.view.Code == w.Code {
+			prior.count++
+			prior.last = now
+			if now.Sub(prior.published) < limitWarningRepublish {
+				return false
+			}
+			prior.published = now
+			return true
 		}
 	}
-	s.warnings = append(s.warnings, w)
+	s.warnings = append(s.warnings, limitWarning{view: w, count: 1, last: now, published: now})
 	return true
 }
 func (s *serviceLimitWarnings) snapshot() []inspect.WarningView {
@@ -56,7 +97,13 @@ func (s *serviceLimitWarnings) snapshot() []inspect.WarningView {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]inspect.WarningView(nil), s.warnings...)
+	out := make([]inspect.WarningView, 0, len(s.warnings))
+	for _, w := range s.warnings {
+		view := w.view
+		view.Message += fmt.Sprintf(" Rejected %d request(s) since the app started; most recent at %s.", w.count, w.last.UTC().Format(time.RFC3339))
+		out = append(out, view)
+	}
+	return out
 }
 
 // RequestLimitsMiddleware streams the original body. Deadlines are renewed
@@ -87,7 +134,8 @@ func RequestLimitsAfterAccess(service registry.Service, report func(inspect.Warn
 type requestRefusal struct {
 	status  int
 	message string
-	report  func() // the owner's warning and log, raised only for a caller let through
+	limit   *requestLimitError // a limit refusal answers with writeLimitRefusal
+	report  func()             // the owner's warning and log, raised only for a caller let through
 }
 
 type requestRefusalKey struct{}
@@ -97,6 +145,10 @@ func (p *requestRefusal) answer(w http.ResponseWriter, r *http.Request) {
 		p.report()
 	}
 	accessDeny(r, "limits")
+	if p.limit != nil {
+		writeLimitRefusal(w, r, p.limit)
+		return
+	}
 	http.Error(w, p.message, p.status)
 }
 
@@ -128,7 +180,7 @@ func requestLimits(service registry.Service, report func(inspect.WarningView), a
 	reject := func(e *requestLimitError) {
 		slog.Warn("request limit exceeded", "code", e.code, "name", service.Name, "limit", e.limit, "status", e.status)
 		if report != nil {
-			report(inspect.WarningView{Code: e.code, Severity: "warning", Source: "http.request_limits", Message: fmt.Sprintf("Service %q hit %s (%s); adjust %s on add or share.", service.Name, e.code, e.limit, registry.RequestLimitFlag(e.code))})
+			report(inspect.WarningView{Code: e.code, Severity: "warning", Source: "http.request_limits", Message: fmt.Sprintf("Service %q is rejecting requests over its %s (%s). Raise it with: %s", service.Name, e.code, e.display, registry.RequestLimitCommand(service, e.code))})
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,8 +210,8 @@ func requestLimits(service registry.Service, report func(inspect.WarningView), a
 		// Bound that disposal even for file handlers, ACL denial and early 413.
 		defer wrapped.Close()
 		if limits.MaxBodyBytes >= 0 && r.ContentLength > limits.MaxBodyBytes {
-			e := &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service.Name, limits.MaxBodyBytes), limit: fmt.Sprint(limits.MaxBodyBytes), status: http.StatusRequestEntityTooLarge}
-			refusal := &requestRefusal{status: e.status, message: e.message, report: func() { reject(e) }}
+			e := bodyLimitError(service.Name, limits.MaxBodyBytes)
+			refusal := &requestRefusal{status: e.status, message: e.message, limit: e, report: func() { reject(e) }}
 			if !afterAccess {
 				refusal.answer(w, r)
 				return
@@ -260,9 +312,9 @@ func (b *progressBody) Read(p []byte) (int, error) {
 	var tooLarge *http.MaxBytesError
 	var failure *requestLimitError
 	if errors.As(err, &tooLarge) {
-		failure = &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", b.service, tooLarge.Limit), limit: fmt.Sprint(tooLarge.Limit), status: http.StatusRequestEntityTooLarge}
+		failure = bodyLimitError(b.service, tooLarge.Limit)
 	} else if isTimeout(err) {
-		failure = &requestLimitError{code: registry.CodeRequestReadTimeout, message: fmt.Sprintf("service %s: request body made no progress for %s; adjust --request-read-timeout", b.service, b.idle), limit: b.idle.String(), status: http.StatusRequestTimeout}
+		failure = &requestLimitError{code: registry.CodeRequestReadTimeout, message: fmt.Sprintf("service %s: request body made no progress for %s; adjust --request-read-timeout", b.service, b.idle), limit: b.idle.String(), display: b.idle.String(), visitor: "Upload stalled: no data arrived for " + b.idle.String() + ".", status: http.StatusRequestTimeout}
 	}
 	if failure != nil {
 		if b.state.failure == nil {

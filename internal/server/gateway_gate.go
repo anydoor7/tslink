@@ -265,7 +265,11 @@ var gatewayPage = template.Must(template.New("gateway-message").Parse(`<!doctype
 // navigation, the JSON error envelope otherwise. dashboard, when set, is linked
 // from the HTML page; an app refusal passes none.
 func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason, message, dashboard string) {
-	w.Header().Set("Cache-Control", "no-store")
+	// A listener that already set a stricter no-store policy (the portal's
+	// "private, no-store") keeps it.
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if gatewayBrowser(r) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")

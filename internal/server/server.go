@@ -2534,7 +2534,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 	}
 
-	limitWarnings := &serviceLimitWarnings{}
+	limitWarnings := &serviceLimitWarnings{now: serverNowFn}
 	reportLimit := func(warning inspect.WarningView) {
 		if limitWarnings.add(warning) {
 			s.mu.Lock()

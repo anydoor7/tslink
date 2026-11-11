@@ -119,6 +119,33 @@ func (s Service) EffectiveRequestLimits() *EffectiveRequestLimits {
 	return &value
 }
 
+// RequestBodyLimitText renders a byte limit for people, with the exact byte
+// count; -1 is an acknowledged unlimited body.
+func RequestBodyLimitText(n int64) string {
+	if n < 0 {
+		return "unlimited"
+	}
+	for _, unit := range []struct {
+		name  string
+		scale int64
+	}{{"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}} {
+		if n >= unit.scale && n%unit.scale == 0 {
+			return fmt.Sprintf("%d %s (%d bytes)", n/unit.scale, unit.name, n)
+		}
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
+// RequestLimitCommand is the add command that changes one limit and keeps the
+// app's target; the owner chooses the value.
+func RequestLimitCommand(svc Service, code string) string {
+	target := "--proxy " + svc.Target
+	if svc.Type == TypeFile {
+		target = "--dir " + svc.Path
+	}
+	return fmt.Sprintf("tslink add %s %s %s <value>", svc.Name, target, RequestLimitFlag(code))
+}
+
 func RequestLimitFlag(code string) string {
 	switch code {
 	case CodeRequestBodyLimit:
