@@ -35,6 +35,7 @@ var mcpToolTitles = map[string]string{
 	"app_restart":         "Restart an app's gateway node",
 	"health":              "Read app health",
 	"health_set":          "Configure app health checks",
+	"limits_set":          "Configure app request limits",
 	"mcp_audit":           "Read the mutation journal",
 	"access_log":          "Read access logs",
 	"access_summary":      "Summarize access logs",

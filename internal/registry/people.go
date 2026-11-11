@@ -161,7 +161,7 @@ func PersonGrantActiveAt(p Person, app string, now time.Time) bool {
 // edge is public since a3e7837; a gated app also cannot be routed. The gate is
 // sticky, so the way to a new grant is a start-over.
 func GuestGatedPeopleError(svc Service) error {
-	return CodedError{Code: "people_service_unsupported", Message: fmt.Sprintf("%s has guest links (a guest gate): people grants given before the gate keep working on its private tailnet address, but new people grants cannot be added while the gate is up", svc.Name), Next: []string{"tslink remove " + svc.Name + " (ends its guest links and people grants)", fmt.Sprintf("tslink add %s --proxy %s", svc.Name, svc.Target), "rerun this people grant"}}
+	return CodedError{Code: "people_service_unsupported", Message: fmt.Sprintf("%s has guest links (a guest gate): people grants given before the gate keep working on its private tailnet address, but new people grants cannot be added while the gate is up", svc.Name), Next: []string{"tslink remove " + svc.Name + " (ends its guest links and people grants)", fmt.Sprintf("tslink add %s --proxy <target> (its current target)", svc.Name), "rerun this people grant"}}
 }
 
 func PeopleServiceSupported(svc Service) bool {

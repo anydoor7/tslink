@@ -70,25 +70,59 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	// rerun. The wait is bounded by guestURLWait and only spent while a
 	// running daemon may still publish the node; an enrollment handoff or a
 	// stopped daemon fails at once.
+	//
+	// Removing a home gateway route needs the same evidence, with or without
+	// --print-link: the app's own node must be running with an exact URL, or
+	// the app could end with no address. A route someone else depends on is
+	// refused first, so that answer does not wait on the node.
 	base := ""
-	if args.PrintLink {
+	removingRoute := false
+	if reg, _, err := registry.Preflight(paths.Registry); err == nil {
+		for _, s := range reg.Services {
+			if s.Name != args.App {
+				continue
+			}
+			// The same authority as every other mutation of a routed app,
+			// checked again under the registry lock by CreateGuest.
+			if err := authorizePortalServiceMutation(ctx, reg, s); err != nil {
+				return guestCreateResult{}, err
+			}
+			if !s.GuestGate && (s.PortalRoute != nil || s.PortalOnly) {
+				if err := registry.GuestRouteRemovable(reg, s); err != nil {
+					return guestCreateResult{}, err
+				}
+				removingRoute = true
+			}
+		}
+	}
+	if args.PrintLink || removingRoute {
 		var e error
 		if base, e = guestNodeURL(ctx, paths, args.App); e != nil {
+			if removingRoute {
+				if coded, ok := e.(registry.CodedError); ok {
+					coded.Next = append(coded.Next, "the home gateway route was kept")
+					e = coded
+				}
+			}
 			return guestCreateResult{}, e
 		}
 	}
 	removedRoute := 0
 	var svc registry.Service
-	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now, RemovedRoute: &removedRoute, SavedService: &svc})
+	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now, RemovedRoute: &removedRoute, SavedService: &svc, AllowRouteRemoval: removingRoute, Authorize: func(reg *registry.Registry, s registry.Service) error {
+		return authorizePortalServiceMutation(ctx, reg, s)
+	}})
 	if e != nil {
 		return guestCreateResult{}, e
 	}
 	r := guestCreateResult{Grant: grant, Message: fmt.Sprintf("Open the private link in your browser. Access ends %s. You do not need to install anything or create a Tailscale account.", guestExpiryDate(grant.ExpiresAt)), EdgeState: "configured; check status for Funnel availability"}
-	if limits := svc.EffectiveRequestLimits(); limits != nil {
-		r.RequestBodyLimit = guestBodyLimit{MaxBodyBytes: limits.MaxBodyBytes, Message: fmt.Sprintf("Uploads through %s are capped at %s per request; larger uploads are refused with HTTP 413. Raise it with: %s", args.App, registry.RequestBodyLimitText(limits.MaxBodyBytes), registry.RequestLimitCommand(svc, registry.CodeRequestBodyLimit))}
+	if limits := svc.EffectiveRequestLimits(); limits != nil && limits.MaxBodyBytes < 0 {
+		r.RequestBodyLimit = guestBodyLimit{MaxBodyBytes: -1, Message: fmt.Sprintf("Uploads through %s have no body size cap (acknowledged unlimited).", args.App)}
+	} else if limits != nil {
+		r.RequestBodyLimit = guestBodyLimit{MaxBodyBytes: limits.MaxBodyBytes, Message: fmt.Sprintf("Uploads through %s are capped at %s per request; larger uploads are refused with HTTP 413. Raise it with: %s", args.App, registry.RequestBodyLimitText(limits.MaxBodyBytes), registry.RequestLimitCommand(svc.Name, registry.CodeRequestBodyLimit))}
 	}
 	if removedRoute != 0 {
-		r.RemovedGatewayRoute = &guestRemovedRoute{Port: removedRoute, Message: fmt.Sprintf("Removed %s from the home gateway (port %d): guest-gated apps cannot be routed. You still reach it at its own URL (tslink url %s).", args.App, removedRoute, args.App)}
+		r.RemovedGatewayRoute = &guestRemovedRoute{Port: removedRoute, Message: fmt.Sprintf("Removed %s from the home gateway (port %d): guest-gated apps cannot be routed. Its own node is running at %s.", args.App, removedRoute, base)}
 	}
 	if grant.PINRequired {
 		r.Message += " Enter the PIN I send separately."

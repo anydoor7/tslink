@@ -22,6 +22,8 @@ This index records the people sharing lifecycle implementation and regression te
 - `health.go`: health formatting, configuration flags and durable alert journal reads.
 - `status.go`: runtime observations and durable event projection; see repository `AGENTS.md` for the other CLI commands.
 - `health_test.go`: CLI, MCP, event stream and doctor health projections.
+- `limits_set.go`: `tslink limits set` and the limits_set MCP tool: in-place request-limit change under the portal-owner authority, works on guest-gated apps.
+- `limits_set_test.go`: limits set keeps every other byte (gated app with health and preserve-host, remote portal-only app), unlimited acknowledgement, reset to defaults, TCP and unknown-app refusals.
 - `status_registry_read_test.go`: deterministic registry removal, reorder and replacement health regressions for command and read-only status.
 - `regression_stale_alerts_test.go`: newer durable events and journal errors survive stale runtime snapshots.
 - `regression_doctor_journal_test.go`: doctor journal authority and monitor-warning projections.
@@ -122,7 +124,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - guest_test.go: CLI/MCP masking, policy and diagnosis controls.
 
 - `guest_human_test.go`: human summaries and readable recipient expiry.
-- `guest_gateway_route_test.go`: first guest link on a fresh gateway install removes the default route (human, JSON, MCP, compiled binary with isolated HOME), refusals for routes others depend on, url_not_ready keeps the route, bounded URL wait, nothing re-routes a gated app, limit change on a gated app, remove revokes links, people refusal on a gated app, recipe request-limit default.
+- `guest_gateway_route_test.go`: first guest link on a fresh gateway install removes the default route only with a running own node (human, JSON, MCP), refusals for routes others depend on (gateway-only admins included), no route removal without node evidence, bounded URL wait, nothing re-routes a gated app (add refused, names limits set), compiled-binary sequence with isolated HOME, hints never repeat a credentialed target, people refusal on a gated app, recipe request-limit default.
 - `guest_second_link_test.go`: second, replacement and concurrent `--print-link` while the guest Funnel gate is up (runtime-built `public_https` snapshots), unready and stale-snapshot refusals with the rerun hint, people list URL of a grant on a later-gated app, and the open-Funnel conflict.
 
 # Access requests and phone onboarding

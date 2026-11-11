@@ -1685,11 +1685,7 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 						svc.ControlURL = existing.ControlURL
 					}
 					if !options.ExplicitFields["funnel"] {
-						// The guest gate is part of the public edge: an add
-						// that leaves Funnel unspecified keeps it, so request
-						// limits and other HTTP fields stay changeable.
 						svc.Funnel, svc.PublicAck, svc.NoAutoProvision = existing.Funnel, existing.PublicAck, existing.NoAutoProvision
-						svc.GuestGate = existing.GuestGate
 					}
 				}
 				if svc.PortalRoute == nil {
@@ -1732,7 +1728,7 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			outcome.Replaced = &previous
 			svc.CreatedAt = existing.CreatedAt
 			if existing.GuestGate && !svc.GuestGate {
-				return guestError("conflict", "guest gate is sticky; remove and re-add the service to disable it")
+				return CodedError{Code: "conflict", Message: fmt.Sprintf("%s has guest links (a guest gate), and add would replace the whole service; the gate is sticky", svc.Name), Next: []string{"change request limits in place: tslink limits set " + svc.Name + " --max-request-body <value>", "change the health check in place: tslink health set " + svc.Name, "to return to private mode, remove and re-add it (ends its guest links): tslink remove " + svc.Name}}
 			}
 			svc.PeopleScoped = svc.PeopleScoped || existing.PeopleScoped
 			if err := ValidateService(svc); err != nil {
@@ -1878,6 +1874,12 @@ func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within
 
 // Authorization precedes both registry removal and ownership-ledger retirement.
 func RemoveAndReturnWithinAuthorizedContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error, authorize func(*Registry, Service) error) (removedService Service, removed bool, err error) {
+	var revoked []GuestGrant
+	defer func() {
+		if err == nil && removed {
+			err = recordGuestRevocations(ctx, path, time.Time{}, revoked)
+		}
+	}()
 	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
@@ -1901,8 +1903,9 @@ func RemoveAndReturnWithinAuthorizedContext(ctx context.Context, path, name stri
 				}
 				reg.Services = remaining
 				removeAppGrants(reg, name)
-				revokeAppGuests(reg, name)
+				revoked = revokeAppGuests(reg, name)
 				if err := save(path, reg); err != nil {
+					revoked = nil
 					return err
 				}
 				removedService, removed = svc, true
@@ -1990,6 +1993,12 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 }
 
 func RemoveIfUnchangedContext(ctx context.Context, path string, expected Service) (removed bool, err error) {
+	var revoked []GuestGrant
+	defer func() {
+		if err == nil && removed {
+			err = recordGuestRevocations(ctx, path, time.Time{}, revoked)
+		}
+	}()
 	err = withLockContext(ctx, path, func() error {
 		mark, err := readRegistryBytes(tentativeMarkPath(path, expected.Name))
 		if errors.Is(err, fs.ErrNotExist) {
@@ -2012,7 +2021,9 @@ func RemoveIfUnchangedContext(ctx context.Context, path string, expected Service
 			}
 			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
 			removeAppGrants(reg, expected.Name)
+			revoked = revokeAppGuests(reg, expected.Name)
 			if err := save(path, reg); err != nil {
+				revoked = nil
 				return err
 			}
 			removed = true

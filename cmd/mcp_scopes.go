@@ -86,7 +86,7 @@ func mcpCallApps(a mcpActions, tool string, raw json.RawMessage) ([]string, erro
 	}
 	apps := []string{}
 	switch tool {
-	case "app_restart", "people_grant", "people_revoke", "guest_create", "portal_route_add", "portal_route_remove", "health_set":
+	case "app_restart", "people_grant", "people_revoke", "guest_create", "portal_route_add", "portal_route_remove", "health_set", "limits_set":
 		apps = append(apps, args.App)
 	case "access_log", "access_summary":
 		if args.App != "" {

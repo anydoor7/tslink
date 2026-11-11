@@ -726,6 +726,7 @@ type mcpActions struct {
 	personApp         func(context.Context, string, string, string, bool, bool) (any, error)
 	appRestart        func(context.Context, string) (any, error)
 	healthSet         func(context.Context, healthSetArguments) (any, error)
+	limitsSet         func(context.Context, limitsSetArguments) (any, error)
 	guest             func(context.Context, string, guestArguments) (any, error)
 	peopleChange      func(context.Context, peopleArguments, bool) (any, error)
 	peopleList        func() (any, error)
@@ -966,6 +967,9 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		},
 		healthSet: func(ctx context.Context, args healthSetArguments) (any, error) {
 			return setHealthContext(ctx, paths.Registry, args)
+		},
+		limitsSet: func(ctx context.Context, args limitsSetArguments) (any, error) {
+			return setLimitsContext(ctx, paths.Registry, args)
 		},
 		appRestart: func(ctx context.Context, app string) (any, error) {
 			session, _ := mcpscope.FromContext(ctx)
@@ -1840,6 +1844,12 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 			return refusal, nil
 		}
 		data, err = actions.healthSet(ctx, args)
+	case "limits_set":
+		var args limitsSetArguments
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args), mcpRequiredArgument{"app", args.App}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.limitsSet(ctx, args)
 	case "mcp_audit":
 		var args struct{}
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {

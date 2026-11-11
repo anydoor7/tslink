@@ -1051,8 +1051,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// bytes, which took the contract past 6000 (6048 measured); 6100 keeps
 	// that and no more. Unified access adds four stable failure codes and four
 	// add lifetime/disclosure flags (6183 bytes); retain a bounded 6250 ceiling.
-	if len(data) >= 6250 {
-		t.Fatalf("compact manifest = %d bytes, want < 6250", len(data))
+	// limits set adds one command group with one leaf and five flags (6344
+	// measured); 6400 keeps that and no more.
+	if len(data) >= 6400 {
+		t.Fatalf("compact manifest = %d bytes, want < 6400", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

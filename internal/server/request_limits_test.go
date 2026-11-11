@@ -1103,7 +1103,7 @@ func TestRequestLimitsRejectKnownAndChunkedWith413(t *testing.T) {
 			// An upload client reads a stable code and the limit; the body
 			// names neither the service nor an owner-only CLI flag.
 			if tc.status == 413 {
-				if resp.Header.Get("Content-Type") != "application/json" || !strings.Contains(string(message), `"code":"request_body_limit"`) || !strings.Contains(string(message), "Upload too large: this app accepts at most 8 bytes per request") {
+				if resp.Header.Get("Content-Type") != "application/json" || resp.Header.Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(string(message), `"code":"request_body_limit"`) || !strings.Contains(string(message), "Upload too large: this app accepts at most 8 bytes per request") {
 					t.Fatalf("unclear error %s (%s)", message, resp.Header.Get("Content-Type"))
 				}
 				for _, leak := range []string{"photos", "--max-request-body"} {
@@ -1115,7 +1115,7 @@ func TestRequestLimitsRejectKnownAndChunkedWith413(t *testing.T) {
 		})
 	}
 	got := warnings.snapshot()
-	if len(got) != 1 || got[0].Code != registry.CodeRequestBodyLimit || !strings.Contains(got[0].Message, `Service "photos" is rejecting requests over its request_body_limit (8 bytes). Raise it with: tslink add photos --proxy  --max-request-body <value>`) || !strings.Contains(got[0].Message, "Rejected 2 request(s) since the app started") {
+	if len(got) != 1 || got[0].Code != registry.CodeRequestBodyLimit || !strings.Contains(got[0].Message, `Service "photos" is rejecting requests over its request_body_limit (8 bytes). Raise it with: tslink limits set photos --max-request-body <value>`) || !strings.Contains(got[0].Message, "Rejected 2 request(s) since the app started") {
 		t.Fatalf("warnings=%+v", got)
 	}
 	found := false
@@ -1242,10 +1242,12 @@ func TestRequestLimitsHeader408AndKeepAliveIdle(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 408 || !strings.Contains(string(body), "--request-header-timeout") {
-		t.Fatalf("header response %d %s", resp.StatusCode, body)
+	// The caller may be anyone, so the body names neither the service nor an
+	// owner flag; the owner's warning names the in-place command.
+	if resp.StatusCode != 408 || string(body) != "request_header_timeout: request headers did not arrive within 100ms" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("header response %d %q %v", resp.StatusCode, body, resp.Header)
 	}
-	if got := warnings.snapshot(); len(got) != 1 || got[0].Code != registry.CodeRequestHeaderTimeout {
+	if got := warnings.snapshot(); len(got) != 1 || got[0].Code != registry.CodeRequestHeaderTimeout || !strings.Contains(got[0].Message, "tslink limits set phone --request-header-timeout <value>") {
 		t.Fatalf("warnings=%+v", got)
 	}
 	// The first request's header budget also applies when no header byte arrives.
@@ -2040,5 +2042,40 @@ func TestServiceLimitWarningsCountAndThrottleRepublish(t *testing.T) {
 	}
 	if other := warnings.add(inspect.WarningView{Code: registry.CodeRequestReadTimeout}); !other {
 		t.Fatal("a second limit's first rejection was not published")
+	}
+}
+
+// A burst inside the republish window is published once more at its end, so
+// status and doctor do not keep the first count of the burst.
+func TestServiceLimitWarningsTrailingPublishAfterABurst(t *testing.T) {
+	clock := time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	published := make(chan []inspect.WarningView, 4)
+	warnings := &serviceLimitWarnings{now: func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }, window: 50 * time.Millisecond}
+	warnings.publish = func() { published <- warnings.snapshot() }
+	view := inspect.WarningView{Code: registry.CodeRequestBodyLimit, Message: "Service \"photos\" is rejecting requests."}
+	if !warnings.add(view) {
+		t.Fatal("first rejection not published at once")
+	}
+	for i := 0; i < 4; i++ {
+		mu.Lock()
+		clock = clock.Add(time.Millisecond)
+		mu.Unlock()
+		if warnings.add(view) {
+			t.Fatal("rejection inside the window published at once")
+		}
+	}
+	select {
+	case got := <-published:
+		if len(got) != 1 || !strings.Contains(got[0].Message, "Rejected 5 request(s)") || !strings.Contains(got[0].Message, "2030-07-10T12:00:00Z") {
+			t.Fatalf("trailing publish = %+v", got)
+		}
+	case <-time.After(testwait.Budget(t)):
+		t.Fatal("no trailing publish after the burst")
+	}
+	select {
+	case got := <-published:
+		t.Fatalf("second trailing publish without new rejections: %+v", got)
+	case <-time.After(150 * time.Millisecond):
 	}
 }

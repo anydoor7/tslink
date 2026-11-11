@@ -270,6 +270,7 @@ func gatewayErrorPage(w http.ResponseWriter, r *http.Request, status int, reason
 	if w.Header().Get("Cache-Control") == "" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if gatewayBrowser(r) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")

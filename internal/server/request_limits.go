@@ -53,10 +53,15 @@ type requestBudgetState struct {
 // requests are being rejected now. Repeated violations still log; the
 // snapshot is republished on the first one and then at most once per
 // limitWarningRepublish, so a burst of rejected uploads cannot turn into a
-// burst of snapshot writes.
+// burst of snapshot writes. A refusal inside the window schedules one
+// trailing publish at its end, so the last count of a burst is not left
+// unpublished until some unrelated snapshot write.
 type serviceLimitWarnings struct {
 	mu       sync.Mutex
 	now      func() time.Time // captured where the node starts (serverNowFn)
+	window   time.Duration    // limitWarningRepublish unless a test sets it
+	publish  func()           // writes the runtime snapshot; nil in tests that only read
+	pending  bool             // a trailing publish is scheduled
 	warnings []limitWarning
 }
 
@@ -81,7 +86,15 @@ func (s *serviceLimitWarnings) add(w inspect.WarningView) bool {
 		if prior.view.Code == w.Code {
 			prior.count++
 			prior.last = now
-			if now.Sub(prior.published) < limitWarningRepublish {
+			window := s.window
+			if window == 0 {
+				window = limitWarningRepublish
+			}
+			if since := now.Sub(prior.published); since < window {
+				if !s.pending && s.publish != nil {
+					s.pending = true
+					time.AfterFunc(window-since, s.trailingPublish)
+				}
 				return false
 			}
 			prior.published = now
@@ -91,6 +104,21 @@ func (s *serviceLimitWarnings) add(w inspect.WarningView) bool {
 	s.warnings = append(s.warnings, limitWarning{view: w, count: 1, last: now, published: now})
 	return true
 }
+func (s *serviceLimitWarnings) trailingPublish() {
+	s.mu.Lock()
+	s.pending = false
+	now := time.Now()
+	if s.now != nil {
+		now = s.now()
+	}
+	for i := range s.warnings {
+		s.warnings[i].published = now
+	}
+	publish := s.publish
+	s.mu.Unlock()
+	publish()
+}
+
 func (s *serviceLimitWarnings) snapshot() []inspect.WarningView {
 	if s == nil {
 		return nil
@@ -180,7 +208,7 @@ func requestLimits(service registry.Service, report func(inspect.WarningView), a
 	reject := func(e *requestLimitError) {
 		slog.Warn("request limit exceeded", "code", e.code, "name", service.Name, "limit", e.limit, "status", e.status)
 		if report != nil {
-			report(inspect.WarningView{Code: e.code, Severity: "warning", Source: "http.request_limits", Message: fmt.Sprintf("Service %q is rejecting requests over its %s (%s). Raise it with: %s", service.Name, e.code, e.display, registry.RequestLimitCommand(service, e.code))})
+			report(inspect.WarningView{Code: e.code, Severity: "warning", Source: "http.request_limits", Message: fmt.Sprintf("Service %q is rejecting requests over its %s (%s). Raise it with: %s", service.Name, e.code, e.display, registry.RequestLimitCommand(service.Name, e.code))})
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -568,13 +596,15 @@ func (c *headerBudgetConn) Read(p []byte) (int, error) {
 	if isTimeout(err) && !c.readStopped && !c.rejected && (c.state == http.StateNew || (c.state == http.StateIdle && c.started)) {
 		c.rejected = true
 		// A keep-alive with no next request is an ordinary idle close, not a warning.
-		msg := fmt.Sprintf("service %s: request header timeout (%s); adjust --request-header-timeout", c.owner.service, c.owner.timeout)
+		// The caller may be anyone in front of every gate, so the body names
+		// neither the service nor an owner flag; the owner's warning does.
+		msg := fmt.Sprintf("request_header_timeout: request headers did not arrive within %s", c.owner.timeout)
 		slog.Warn("request limit exceeded", "code", registry.CodeRequestHeaderTimeout, "name", c.owner.service, "limit", c.owner.timeout, "status", 408)
 		if c.owner.report != nil {
-			c.owner.report(inspect.WarningView{Code: registry.CodeRequestHeaderTimeout, Severity: "warning", Source: "http.request_limits", Message: msg})
+			c.owner.report(inspect.WarningView{Code: registry.CodeRequestHeaderTimeout, Severity: "warning", Source: "http.request_limits", Message: fmt.Sprintf("Service %q is rejecting requests over its %s (%s). Raise it with: %s", c.owner.service, registry.CodeRequestHeaderTimeout, c.owner.timeout, registry.RequestLimitCommand(c.owner.service, registry.CodeRequestHeaderTimeout))})
 		}
 		_ = c.Conn.SetWriteDeadline(time.Now().Add(time.Second))
-		_, _ = fmt.Fprintf(c.Conn, "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(msg), msg)
+		_, _ = fmt.Fprintf(c.Conn, "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %d\r\n\r\n%s", len(msg), msg)
 	}
 	return n, err
 }

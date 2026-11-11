@@ -112,23 +112,34 @@ type CreateGuestOptions struct {
 	RemovedRoute *int
 	// SavedService receives the gated service as committed.
 	SavedService *Service
+	// Authorize runs under the registry lock against the service as it was
+	// before this create (route included), like the other mutations of a
+	// routed app (authorizePortalServiceMutation).
+	Authorize func(*Registry, Service) error
+	// AllowRouteRemoval is set by a caller that has seen the app's own node
+	// running with an exact URL. Without it a routed app keeps its route and
+	// the create is refused: removing the route would leave the app with no
+	// confirmed address.
+	AllowRouteRemoval bool
 }
 
-// guestRouteRemovable decides whether the first guest link may take the app
+// GuestRouteRemovable decides whether the first guest link may take the app
 // off the home gateway. Guest-gated apps cannot be routed (ValidateGateway),
 // so the route has to go. The registry does not record whether a route was
 // created by default or by `portal route add`, so the rule asks who would lose
 // an address instead: the owner and admins keep the app through its own node
 // (PrivateAppAccessAt admits them on every listener), while people grants,
 // legacy allow entries and cross-origin routes are someone else's dependency
-// and a portal-only app has no other address at all.
-func guestRouteRemovable(reg *Registry, s Service) error {
+// and a portal-only app has no other address at all. Admission is not
+// reachability: a device-invited person, or one invited to the gateway node,
+// reaches only the gateway, so they count even when they are an admin.
+func GuestRouteRemovable(reg *Registry, s Service) error {
 	if s.PortalOnly {
 		message := fmt.Sprintf("%s is reachable only through the home gateway (portal-only); guest links need the app's own node, and removing its route would leave it with no address", s.Name)
 		if s.Upstream == "tailnet" {
 			return CodedError{Code: "portal_route_guest_refused", Message: message + "; a remote tailnet upstream has no own node, so guest links are unavailable for it", Next: []string{"share a local proxy app instead: tslink add <app> --proxy <host:port>"}}
 		}
-		return CodedError{Code: "portal_route_guest_refused", Message: message + "; re-adding it without --portal-only gives it its own node and drops its people grants", Next: []string{"tslink remove " + s.Name, fmt.Sprintf("tslink add %s --proxy %s", s.Name, s.Target), "rerun this guest create"}}
+		return CodedError{Code: "portal_route_guest_refused", Message: message + "; re-adding it without --portal-only gives it its own node and drops its people grants", Next: []string{"tslink remove " + s.Name, fmt.Sprintf("tslink add %s --proxy <target> (its current target)", s.Name), "rerun this guest create"}}
 	}
 	administrators := map[string]bool{}
 	if reg.Portal != nil {
@@ -139,7 +150,7 @@ func guestRouteRemovable(reg *Registry, s Service) error {
 	}
 	var dependents []string
 	for _, p := range reg.People {
-		if !p.Revoked && !administrators[p.Login] && personHasGrant(p, s.Name) {
+		if !p.Revoked && personHasGrant(p, s.Name) && (!administrators[p.Login] || gatewayOnlyPerson(p)) {
 			dependents = append(dependents, p.Login)
 		}
 	}
@@ -157,10 +168,24 @@ func guestRouteRemovable(reg *Registry, s Service) error {
 	return CodedError{Code: "portal_route_guest_refused", Message: "guest-gated apps cannot have a home gateway route, and removing this one is not automatic: " + reason, Next: []string{"tslink portal route remove " + s.Name, "rerun this guest create"}}
 }
 
+// gatewayOnlyPerson reports a person whose device reaches TSLink through the
+// gateway node: a device-invited guest or the holder of a gateway invite.
+func gatewayOnlyPerson(p Person) bool {
+	if PersonIsGuest(p) {
+		return true
+	}
+	for _, op := range p.Invites {
+		if op.TargetKind == InviteTargetGateway {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateGuest enables the gate and the public edge atomically. An existing
 // open Funnel must be disabled first, so this command never silently adopts it.
 // The first link also removes a home gateway route nobody else depends on
-// (guestRouteRemovable); both changes are one locked registry write.
+// (GuestRouteRemovable); both changes are one locked registry write.
 func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token string, err error) {
 	if !validGuestLabel(o.Label) {
 		return view, "", guestError(errcode.UsageError, "label must be valid text of at most 200 bytes")
@@ -192,7 +217,9 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 	}
 	removedRoute := 0
 	var saved Service
-	err = withLockContext(mutationContext(o.Context), path, func() error {
+	var orphans []GuestGrant
+	ctx := mutationContext(o.Context)
+	err = withLockContext(ctx, path, func() error {
 		if err := authorizeLifetime(o.Context, "guest_create", o.App, l, o.Now); err != nil {
 			return err
 		}
@@ -210,6 +237,11 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 				continue
 			}
 			found = true
+			if o.Authorize != nil {
+				if e := o.Authorize(reg, *s); e != nil {
+					return e
+				}
+			}
 			if s.Type != TypeProxy || s.ControlURL != "" {
 				return guestError(errcode.UsageError, "guest links require a proxy using the default Tailscale control server")
 			}
@@ -220,11 +252,21 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 				return FunnelPublicAckError()
 			}
 			if !s.GuestGate && (s.PortalRoute != nil || s.PortalOnly) {
-				if e := guestRouteRemovable(reg, *s); e != nil {
+				if e := GuestRouteRemovable(reg, *s); e != nil {
 					return e
+				}
+				if !o.AllowRouteRemoval {
+					return CodedError{Code: CodeURLNotReady, Message: fmt.Sprintf("%s keeps its home gateway route: its own node has not reported an exact URL, so removing the route could leave it with no address; nothing was changed", s.Name), Next: []string{"tslink status --json", "tslink url " + s.Name + " --wait=30s", "rerun this guest create"}, MessageOnly: true}
 				}
 				removedRoute = s.PortalRoute.Port
 				s.PortalRoute = nil
+			}
+			if !s.GuestGate {
+				// Grants already in the ledger for an ungated app belong to
+				// an earlier app of the same name (removed before remove
+				// revoked them, or edited by hand): never let them through
+				// the new gate.
+				orphans = revokeAppGuests(reg, o.App)
 			}
 			s.GuestGate, s.Funnel, s.PublicAck = true, true, true
 			if s.FunnelExpiresAt == nil || s.FunnelExpiresAt.Before(g.ExpiresAt) {
@@ -244,6 +286,9 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 	if err != nil {
 		return GuestView{}, "", err
 	}
+	if err := recordGuestRevocations(ctx, path, o.Now, orphans); err != nil {
+		return GuestView{}, "", err
+	}
 	if o.RemovedRoute != nil && removedRoute != 0 {
 		*o.RemovedRoute = removedRoute
 	}
@@ -257,12 +302,30 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 // write, as removeAppGrants does for people grants. Without it a later app
 // that reuses the name and raises a gate would make the old, never-revoked
 // links valid again. Revocation keeps the grants as history and is permanent.
-func revokeAppGuests(reg *Registry, app string) {
+// It returns the grants it flipped, for their lifecycle receipts.
+func revokeAppGuests(reg *Registry, app string) []GuestGrant {
+	var flipped []GuestGrant
 	for i := range reg.Guests {
-		if reg.Guests[i].App == app {
+		if reg.Guests[i].App == app && !reg.Guests[i].Revoked {
 			reg.Guests[i].Revoked = true
+			flipped = append(flipped, reg.Guests[i])
 		}
 	}
+	return flipped
+}
+
+// recordGuestRevocations writes one guest_revoked receipt per grant a
+// committed write revoked, as RevokeGuestContext does for one link.
+func recordGuestRevocations(ctx context.Context, path string, now time.Time, grants []GuestGrant) error {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for _, g := range grants {
+		if err := mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpaudit.LocalActor(), now, mcpaudit.Change{Action: "guest_revoked", App: g.App, ID: g.ID, ExpiresAt: &g.ExpiresAt}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ListGuests(path string, now time.Time) ([]GuestView, error) {

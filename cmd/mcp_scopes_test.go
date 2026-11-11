@@ -42,7 +42,7 @@ var scopeExpected = map[string]string{
 	"guest_create": "owner", "guest_list": "owner", "guest_show": "owner", "guest_revoke": "owner",
 	"requests_list": "requests", "requests_approve": "requests", "requests_deny": "requests",
 	"access_log": "read", "access_summary": "read",
-	"app_restart": "operate-app", "health": "read", "mcp_audit": "owner", "health_set": "owner",
+	"app_restart": "operate-app", "health": "read", "mcp_audit": "owner", "health_set": "owner", "limits_set": "owner",
 }
 
 func TestMCPScopeProjectionAndMalformedInputs(t *testing.T) {

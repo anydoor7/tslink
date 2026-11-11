@@ -160,7 +160,7 @@ func TestRequestLimitsShareConflictDiagnostic(t *testing.T) {
 			if err == nil {
 				t.Fatal("different limits accepted")
 			}
-			for _, text := range []string{"request limits", tc.flag, tc.before, tc.after, "reconfigure"} {
+			for _, text := range []string{"request limits", tc.flag, tc.before, tc.after, "tslink limits set photos"} {
 				if !strings.Contains(err.Error(), text) {
 					t.Errorf("conflict %q omits %q", err, text)
 				}

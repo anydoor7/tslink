@@ -2020,6 +2020,63 @@
       }
     },
     {
+      "path": "tslink limits",
+      "short": "Manage app HTTP request limits",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink limits set",
+      "short": "Change only an app's HTTP request limits, keeping everything else",
+      "flags": [
+        {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge --max-request-body unlimited"
+        },
+        {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Keep-alive idle timeout (default 60s)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum request body: bytes, B, KiB/MiB/GiB/TiB, KB/MB/GB/TB or unlimited (default 32MiB)"
+        },
+        {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Time allowed for request headers (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Request body inactivity window (default 30s)"
+        }
+      ]
+    },
+    {
       "path": "tslink list",
       "short": "List registered services",
       "flags": [

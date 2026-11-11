@@ -2535,13 +2535,16 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	}
 
 	limitWarnings := &serviceLimitWarnings{now: serverNowFn}
+	limitWarnings.publish = func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if node := s.nodes[svc.Name]; node != nil && node.limitWarnings == limitWarnings {
+			s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
+		}
+	}
 	reportLimit := func(warning inspect.WarningView) {
 		if limitWarnings.add(warning) {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			if node := s.nodes[svc.Name]; node != nil && node.limitWarnings == limitWarnings {
-				s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
-			}
+			limitWarnings.publish()
 		}
 	}
 	// A caller who is not let through is told so, not the request limit: the

@@ -32,6 +32,8 @@ func gatewayMutationCases() []gatewayMutationCase {
 		{"re-add-routed", "add", map[string]any{"name": "app", "type": "proxy", "target": "localhost:10", "no_daemon_install": true}},
 		{"remove-routed", "unshare", map[string]any{"name": "app"}},
 		{"health-set-routed", "health_set", map[string]any{"app": "app", "path": "/health"}},
+		{"limits-set-routed", "limits_set", map[string]any{"app": "app", "max_body": "64MiB"}},
+		{"guest-create-routed", "guest_create", map[string]any{"app": "app", "for": "2h", "public": true}},
 		{"disable", "portal_disable", map[string]any{}},
 	}
 }
@@ -57,6 +59,9 @@ func TestGatewayMCPServiceMutationsRequireOwner(t *testing.T) {
 	for _, tc := range gatewayMutationCases()[3:] {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := gatewayAuthorityPaths(t)
+			if tc.tool == "guest_create" {
+				guestAuthorityRuntime(t, paths)
+			}
 			actions := defaultMCPActions(paths, io.Discard)
 			outsider := httptest.NewServer(mcpHTTPControlPlaneHandler(t, []string{"operator"}, "operator", actions))
 			defer outsider.Close()
@@ -127,6 +132,9 @@ func TestGatewayMCPOwnerChangesBeforeWrite(t *testing.T) {
 	for _, tc := range gatewayMutationCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := gatewayAuthorityPaths(t)
+			if tc.tool == "guest_create" {
+				guestAuthorityRuntime(t, paths)
+			}
 			reg, err := registry.Load(paths.Registry)
 			if err != nil {
 				t.Fatal(err)
@@ -169,6 +177,14 @@ func TestGatewayMCPOwnerChangesBeforeWrite(t *testing.T) {
 			case "health_set":
 				original := actions.healthSet
 				actions.healthSet = func(ctx context.Context, a healthSetArguments) (any, error) { return original(wrap(ctx), a) }
+			case "limits_set":
+				original := actions.limitsSet
+				actions.limitsSet = func(ctx context.Context, a limitsSetArguments) (any, error) { return original(wrap(ctx), a) }
+			case "guest_create":
+				original := actions.guest
+				actions.guest = func(ctx context.Context, name string, a guestArguments) (any, error) {
+					return original(wrap(ctx), name, a)
+				}
 			}
 			srv := httptest.NewServer(mcpHTTPControlPlaneHandler(t, []string{"owner"}, "owner", actions))
 			defer srv.Close()

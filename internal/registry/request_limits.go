@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -136,14 +138,10 @@ func RequestBodyLimitText(n int64) string {
 	return fmt.Sprintf("%d bytes", n)
 }
 
-// RequestLimitCommand is the add command that changes one limit and keeps the
-// app's target; the owner chooses the value.
-func RequestLimitCommand(svc Service, code string) string {
-	target := "--proxy " + svc.Target
-	if svc.Type == TypeFile {
-		target = "--dir " + svc.Path
-	}
-	return fmt.Sprintf("tslink add %s %s %s <value>", svc.Name, target, RequestLimitFlag(code))
+// RequestLimitCommand changes one limit in place (limits set), keeping every
+// other field of the app; the owner chooses the value.
+func RequestLimitCommand(app, code string) string {
+	return fmt.Sprintf("tslink limits set %s %s <value>", app, RequestLimitFlag(code))
 }
 
 func RequestLimitFlag(code string) string {
@@ -157,4 +155,82 @@ func RequestLimitFlag(code string) string {
 	default:
 		return ""
 	}
+}
+
+// RequestLimitsUpdate changes named request limits in place. A nil field
+// keeps the stored value; an empty string returns that limit to its default.
+type RequestLimitsUpdate struct {
+	MaxBody, HeaderTimeout, ReadTimeout, IdleTimeout *string
+	UnlimitedAck                                     *bool
+}
+
+func (u RequestLimitsUpdate) Empty() bool {
+	return u.MaxBody == nil && u.HeaderTimeout == nil && u.ReadTimeout == nil && u.IdleTimeout == nil && u.UnlimitedAck == nil
+}
+
+// Apply returns the stored limits after the update, nil when every limit is
+// the default. A new body size drops an earlier unlimited acknowledgement
+// unless the update gives one again.
+func (u RequestLimitsUpdate) Apply(current *RequestLimits) *RequestLimits {
+	next := RequestLimits{}
+	if current != nil {
+		next = *current
+	}
+	set := func(dst *string, v *string) {
+		if v != nil {
+			*dst = strings.TrimSpace(*v)
+		}
+	}
+	set(&next.MaxBody, u.MaxBody)
+	set(&next.HeaderTimeout, u.HeaderTimeout)
+	set(&next.ReadTimeout, u.ReadTimeout)
+	set(&next.IdleTimeout, u.IdleTimeout)
+	if u.MaxBody != nil {
+		next.UnlimitedAck = false
+	}
+	if u.UnlimitedAck != nil {
+		next.UnlimitedAck = *u.UnlimitedAck
+	}
+	if next == (RequestLimits{}) {
+		return nil
+	}
+	return &next
+}
+
+// SetRequestLimitsContext changes only an app's request limits in one
+// registry transaction; every other field, the guest gate included, is kept.
+// authorize runs under the lock against the stored service.
+func SetRequestLimitsContext(ctx context.Context, path, app string, u RequestLimitsUpdate, authorize func(*Registry, Service) error) (svc Service, changed bool, err error) {
+	err = withLockContext(mutationContext(ctx), path, func() error {
+		reg, err := loadForMutation(path)
+		if err != nil {
+			return err
+		}
+		for i := range reg.Services {
+			if reg.Services[i].Name != app {
+				continue
+			}
+			current := reg.Services[i]
+			if authorize != nil {
+				if err := authorize(reg, current); err != nil {
+					return err
+				}
+			}
+			svc = current
+			svc.RequestLimits = u.Apply(current.RequestLimits)
+			before, _ := json.Marshal(current.RequestLimits)
+			after, _ := json.Marshal(svc.RequestLimits)
+			if string(before) == string(after) {
+				return nil
+			}
+			if err := ValidateService(svc); err != nil {
+				return err
+			}
+			reg.Services[i] = svc
+			changed = true
+			return save(path, reg)
+		}
+		return CodedError{Code: "not_found", Message: "service not found: " + app}
+	})
+	return svc, changed, err
 }

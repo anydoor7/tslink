@@ -2,7 +2,7 @@
 
 TSLink speaks MCP over two transports. Both serve the same tool registry, so a
 client written against either works against the other. An owner session lists
-48 tools and scoped roles list fewer; the live `tools/list` is authoritative.
+49 tools and scoped roles list fewer; the live `tools/list` is authoritative.
 
 | | `tslink mcp` | `tslink serve --mcp` |
 |---|---|---|
