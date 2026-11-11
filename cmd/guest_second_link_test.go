@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/errcode"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -169,16 +171,84 @@ func TestGuestCreateStillRefusesAnEndpointThatIsNotReady(t *testing.T) {
 	}
 }
 
-// People grants on a guest-gated app report the node's URL too: Funnel changes
-// who can reach the node, not its address.
-func TestPeopleURLsIncludeAGuestGatedApp(t *testing.T) {
+// A person granted an app before its guest gate was raised still sees the
+// app's URL in people views: Funnel changes who can reach the node, not its
+// address. (people add/update refuse a gated app outright with
+// people_service_unsupported, so views of existing grants are the reachable
+// people effect.)
+func TestPeopleListShowsTheURLOfAGrantWhoseAppBecameGuestGated(t *testing.T) {
 	paths, now := guestSecondLinkSetup(t)
+	oldClock := peopleNowFn
+	peopleNowFn = func() time.Time { return now }
+	t.Cleanup(func() { peopleNowFn = oldClock })
+	expiry := now.Add(48 * time.Hour)
+	if _, err := registry.ChangePerson(paths.Registry, "alice@example.com", []string{"photos"}, &expiry, true, false); err != nil {
+		t.Fatal(err)
+	}
 	publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost)
 	createPrintedGuest(t, paths, now)
 	if ep := publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost); ep.Kind != inspect.EndpointKindPublicHTTPS {
 		t.Fatalf("precondition: kind = %q", ep.Kind)
 	}
-	if got := peopleURLs(paths)["photos"]; got != "https://"+guestSecondLinkHost {
-		t.Fatalf("people URL = %q", got)
+	list, err := listPeople(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.People) != 1 || len(list.People[0].Grants) != 1 {
+		t.Fatalf("people = %+v", list.People)
+	}
+	if got := list.People[0].Grants[0].URL; got != "https://"+guestSecondLinkHost {
+		t.Fatalf("grant URL = %q", got)
+	}
+}
+
+// Pins the staleness window (review r1 F2): a create that raises the Funnel
+// deadline changes the registry fingerprint, so a second --print-link issued
+// before the daemon republishes fails with url_not_ready, saves nothing, and
+// says how to recover. After the republish the same create succeeds. A create
+// that does not extend the deadline leaves the fingerprint alone and needs no
+// republish.
+func TestGuestCreateBeforeTheDaemonRepublishesFailsWithARerunHint(t *testing.T) {
+	paths, now := guestSecondLinkSetup(t)
+	publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost)
+	createPrintedGuest(t, paths, now) // 2h: raises the gate and the deadline
+	_, err := createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true, PrintLink: true}, now)
+	var coded registry.CodedError
+	if !errors.As(err, &coded) || coded.Code != registry.CodeURLNotReady {
+		t.Fatalf("err = %v, want url_not_ready", err)
+	}
+	next := strings.Join(coded.Next, "\n")
+	if !strings.Contains(next, "tslink url photos --wait=30s") || !strings.Contains(next, "rerun this guest create") {
+		t.Fatalf("next = %q", next)
+	}
+	if guests, err := registry.ListGuests(paths.Registry, now); err != nil || len(guests) != 1 {
+		t.Fatalf("refused create saved a grant: %d, %v", len(guests), err)
+	}
+	publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost)
+	createPrintedGuest(t, paths, now) // 2h: deadline unchanged, fingerprint unchanged
+	if _, err := createGuest(paths, guestArguments{App: "photos", For: "1h", Public: true, PrintLink: true}, now); err != nil {
+		t.Fatalf("create within the existing deadline without a republish: %v", err)
+	}
+}
+
+// An open (ungated) Funnel app reaches CreateGuest's conflict instead of a
+// misleading url_not_ready, and nothing is saved (review r1 F5).
+func TestGuestCreateOnAnOpenFunnelAppIsAConflict(t *testing.T) {
+	paths, now := guestSecondLinkSetup(t)
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "open", Type: registry.TypeProxy, Target: "http://127.0.0.1:3001", Funnel: true, PublicAck: true}); err != nil {
+		t.Fatal(err)
+	}
+	if ep := publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost); ep.Kind != inspect.EndpointKindHTTPS {
+		t.Fatalf("precondition: photos kind = %q", ep.Kind)
+	}
+	if got := peopleURLs(paths)["open"]; got != "https://"+guestSecondLinkHost {
+		t.Fatalf("precondition: open app has no exact URL: %q", got)
+	}
+	_, err := createGuest(paths, guestArguments{App: "open", For: "2h", Public: true, PrintLink: true}, now)
+	if code, ok := registry.ErrorCode(err); !ok || code != errcode.Conflict {
+		t.Fatalf("err = %v, want conflict", err)
+	}
+	if guests, err := registry.ListGuests(paths.Registry, now); err != nil || len(guests) != 0 {
+		t.Fatalf("conflict saved a grant: %d, %v", len(guests), err)
 	}
 }

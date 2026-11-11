@@ -47,12 +47,19 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 		return guestCreateResult{}, e
 	}
 	// Resolve the trustworthy node authority before changing the fingerprint.
+	// A create that raises the app's Funnel deadline (the first one always
+	// does) changes the registry fingerprint, so a create issued before the
+	// daemon republishes runtime.json lands here too. Nothing is saved; the
+	// hint says how to wait for the URL and rerun. No wait happens here, so a
+	// genuinely unready node fails at once.
 	base := ""
 	if args.PrintLink {
 		base = peopleURLs(paths)[args.App]
 		u, e := url.Parse(base)
 		if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return guestCreateResult{}, registry.URLNotReadyError(args.App)
+			notReady := registry.URLNotReadyError(args.App).(registry.CodedError)
+			notReady.Next = append(notReady.Next, "no guest link was saved; rerun this guest create once the URL is exact")
+			return guestCreateResult{}, notReady
 		}
 	}
 	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now})

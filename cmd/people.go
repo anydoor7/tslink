@@ -101,6 +101,10 @@ func peopleURLs(paths sharePaths) map[string]string {
 	return peopleURLsFromRegistry(paths, reg, issues)
 }
 
+// peopleURLsFromRegistry maps each running service to its exact HTTP node URL
+// from a current runtime snapshot, Funnel or not. Guest create uses it as the
+// node authority; people views look entries up only by grant app, and people
+// grants on Funnel apps are refused, so public apps in the map reach no grant.
 func peopleURLsFromRegistry(paths sharePaths, reg *registry.Registry, issues []registry.ServiceIssue) map[string]string {
 	urls := map[string]string{}
 	snapshot, err := tsruntime.Load(paths.Snapshot)
