@@ -137,6 +137,11 @@ type StatusServiceState struct {
 	FunnelExpiresAt *time.Time                       `json:"funnel_expires_at,omitempty"`
 	FunnelRemaining *string                          `json:"funnel_remaining,omitempty"`
 	Error           *tsruntime.ServiceError          `json:"error,omitempty"`
+	// Authorized is this service's share of AuthorizedServiceCount: the one
+	// per-service decision both are computed from. MCP status and health
+	// publish it so a reduced role's count is the owner's decision filtered
+	// to its apps, not a second rule.
+	Authorized bool `json:"-"`
 }
 
 type StatusURLsResult struct {
@@ -591,6 +596,9 @@ func (s statusRead) getPollableStatus(ctx context.Context, pidPath, regPath, sna
 			}
 		}
 	}
+	for i := range r.Services {
+		_, r.Services[i].Authorized = up[r.Services[i].Name]
+	}
 	setStatusContinuation(&r)
 	return r, nil
 }
@@ -617,6 +625,7 @@ func (s statusRead) statusFromGlobalFailure(ctx context.Context, pidPath, regPat
 			FunnelActive:    service.FunnelActive,
 			FunnelState:     service.FunnelState,
 			Error:           cloneServiceError(service.Error),
+			Authorized:      status == tsruntime.ServiceRuntimeRunning,
 		})
 		if status == tsruntime.ServiceRuntimeRunning {
 			r.NodeAuthorized = true

@@ -85,7 +85,7 @@ func TestMCPReducedDoctorReportsUnexpectedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := v.(DoctorResult)
+	result := v
 	if len(result.Findings) != 2 {
 		t.Fatalf("%+v", result.Findings)
 	}
@@ -166,10 +166,10 @@ func TestDoctorSuggestionIsAcceptedByHealthSet(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if len(v.(DoctorResult).Findings) != 1 {
+					if len(v.Findings) != 1 {
 						t.Fatalf("%+v", v)
 					}
-					f = v.(DoctorResult).Findings[0]
+					f = v.Findings[0]
 				}
 				next := f.Evidence["next"]
 				if next != "tslink health set app "+tc.flags || !strings.Contains(f.Message, next) {

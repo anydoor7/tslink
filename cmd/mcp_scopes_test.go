@@ -277,7 +277,7 @@ func scopeFixtureActions() mcpActions {
 		return map[string]any{"services": []ListServiceSummary{{Name: "photos", Type: registry.TypeProxy, State: "exact", FunnelState: "not_requested"}, {Name: "finance", Type: registry.TypeProxy, State: "failed", FunnelState: "not_requested"}}}, nil
 	}
 	a.status = func(ctx context.Context) (any, error) {
-		return mcpStatusSummary{GuestLinks: []registry.GuestView{}, DaemonState: "absent", ServiceCount: 99, AuthorizedServiceCount: 99, AuthURL: "secret-enrollment", Next: []string{"finance"}, Credentials: StatusCredentials{MetadataError: "finance-secret"}, MCPBindings: []mcpBindingView{{Binding: mcpscope.Binding{Principal: "finance-owner", Scope: mcpscope.Scope{Role: "owner"}}}}, Services: []mcpHealthService{{Name: "photos", Status: "up", Health: health.State{State: health.Degraded}}, {Name: "finance", Status: "up", Health: health.State{State: health.Down}}}}, nil
+		return mcpStatusSummary{GuestLinks: []registry.GuestView{}, DaemonState: "absent", ServiceCount: 99, AuthorizedServiceCount: 2, AuthURL: "secret-enrollment", Next: []string{"finance"}, Credentials: StatusCredentials{MetadataError: "finance-secret"}, MCPBindings: []mcpBindingView{{Binding: mcpscope.Binding{Principal: "finance-owner", Scope: mcpscope.Scope{Role: "owner"}}}}, Services: []mcpHealthService{{Name: "photos", Status: "up", Health: health.State{State: health.Degraded}, Authorized: true}, {Name: "finance", Status: "up", Health: health.State{State: health.Down}, Authorized: true}}}, nil
 	}
 	a.tagsList = func() (any, error) {
 		return TagsListResult{Services: []TagsServiceEntry{{Name: "photos", Tags: []string{"tag:photos"}}, {Name: "finance", Tags: []string{"tag:finance"}}}}, nil
@@ -309,8 +309,10 @@ func TestMCPScopesHTTPRealHandlerMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := map[string]bool{}
+			advertised := map[string]map[string]any{}
 			for _, tool := range listed.Tools {
 				got[tool.Name] = true
+				advertised[tool.Name] = mcpSchemaMap(t, tool.OutputSchema)
 			}
 			for _, definition := range mcpToolDefinitions {
 				tool := definition.Name
@@ -354,7 +356,11 @@ func TestMCPScopesHTTPRealHandlerMatrix(t *testing.T) {
 							if strings.Contains(string(encoded), "finance") || strings.Contains(string(encoded), "secret-") {
 								t.Fatalf("out-of-scope egress: %s", encoded)
 							}
-							validateAgainstToolOutputSchema(t, tool, result.StructuredContent)
+							// Validate against what this session's tools/list
+							// advertised, not the owner definition.
+							if err := validateMCPJSONSchema(advertised[tool], mcpJSONValue(t, result.StructuredContent), "$"); err != nil {
+								t.Fatalf("%s as %s: %v", tool, role, err)
+							}
 						}
 					})
 				}

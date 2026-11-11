@@ -217,12 +217,13 @@ type mcpHealthService struct {
 	Status        string                           `json:"status"`
 	Health        health.State                     `json:"health"`
 	NodeKey       health.Expiry                    `json:"node_key"`
+	Authorized    bool                             `json:"authorized"`
 }
 
 func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 	services := make([]mcpHealthService, 0, len(states))
 	for _, s := range states {
-		services = append(services, mcpHealthService{RequestLimits: s.RequestLimits, Warnings: s.Warnings, PreserveHost: s.PreserveHost, Name: s.Name, Status: s.Status, Health: s.Health, NodeKey: s.NodeKey})
+		services = append(services, mcpHealthService{RequestLimits: s.RequestLimits, Warnings: s.Warnings, PreserveHost: s.PreserveHost, Name: s.Name, Status: s.Status, Health: s.Health, NodeKey: s.NodeKey, Authorized: s.Authorized})
 	}
 	return services
 }

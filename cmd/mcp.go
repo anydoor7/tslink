@@ -271,6 +271,7 @@ var (
 			"status":         map[string]any{"type": "string"},
 			"health":         nestedObjectSchema("App health observation without response bodies."),
 			"node_key":       nestedObjectSchema("Reported node-key expiry."),
+			"authorized":     map[string]any{"type": "boolean", "description": "This service counts toward authorized_service_count: its node runs, or, for a portal-only app, its gateway route runs."},
 			"preserve_host":  map[string]any{"type": "boolean", "default": false, "description": "Configured canonical Host policy; absent when registry policy is unknown."},
 			"request_limits": mcpRequestLimitsOutputSchema,
 			"warnings":       mcpWarningArraySchema,
@@ -616,7 +617,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:        "doctor",
-		Description: "Run local TSLink diagnostics and return findings by severity. Use this when a share or URL is not working and status was not enough; it inspects local config, registry, credentials metadata and runtime state, writes nothing, and reports health_exit_code instead of failing.",
+		Description: "Run local TSLink diagnostics and return findings by severity. Use this when a share or URL is not working and status was not enough; it inspects local config, registry, credentials metadata and runtime state, writes nothing, and reports health_exit_code instead of failing. A reduced MCP role gets only the status reader's daemon state and health findings for its apps, with withheld naming the omitted fields.",
 		InputSchema: objectSchema(map[string]any{
 			"probe_external": map[string]any{"type": "boolean", "default": false, "description": "Also attempt a short TCP connection to non-loopback service targets. Leave false unless the user asked to test reachability of a remote backend."},
 		}),
@@ -1250,7 +1251,7 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 			Title:        title,
 			Description:  definition.Description,
 			InputSchema:  definition.InputSchema,
-			OutputSchema: definition.OutputSchema,
+			OutputSchema: mcpAdvertisedOutputSchema(definition, mcpSession(actions).Scope),
 			Annotations:  annotations,
 		}, mcpToolHandler(definition.Name, actions))
 	}

@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
-	"github.com/anydoor7/tslink/internal/health"
-	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
@@ -394,26 +392,14 @@ func mcpProject(tool string, data any, scope mcpscope.Scope) (any, error) {
 				out = append(out, svc)
 			}
 		}
-		return map[string]any{"services": out}, nil
+		return mcpScopedListResult{Services: out, Withheld: mcpScopedListWithheld()}, nil
 	case "status", "health":
-		var v mcpStatusSummary
-		if err := reprojectJSON(data, &v); err != nil {
+		out, err := mcpScopedStatus(data, scope, tool == "status")
+		if err != nil {
 			return nil, err
 		}
-		out := mcpStatusSummary{GuestLinks: []registry.GuestView{}, Services: []mcpHealthService{}, DaemonRunning: v.DaemonRunning, DaemonState: v.DaemonState}
-		for _, svc := range v.Services {
-			if scope.AllowsApp(svc.Name) {
-				svc.Warnings = nil
-				out.Services = append(out.Services, svc)
-				if svc.Status == "up" {
-					out.AuthorizedServiceCount++
-				}
-			}
-		}
-		out.ServiceCount = len(out.Services)
-		out.Authenticated, out.NodeAuthorized = out.AuthorizedServiceCount > 0, out.AuthorizedServiceCount > 0
 		if tool == "health" {
-			return map[string]any{"services": out.Services}, nil
+			return mcpScopedHealthResult{Services: out.Services, Withheld: mcpScopedHealthWithheld()}, nil
 		}
 		return out, nil
 	case "people_list", "people_grant", "people_revoke":
@@ -488,48 +474,6 @@ func mcpScopedPerson(p PeopleView, scope mcpscope.Scope) PeopleView {
 		}
 	}
 	return out
-}
-
-// Reduced doctor projects app observations from the shared read-only status
-// reader, including caller-bound supervision and credential inspection. It
-// avoids the full doctor host-discovery and external probes.
-func mcpScopedDoctor(ctx context.Context, actions mcpActions, scope mcpscope.Scope) (any, error) {
-	data, err := actions.status(ctx)
-	if err != nil {
-		return nil, err
-	}
-	data, err = mcpProject("health", data, scope)
-	if err != nil {
-		return nil, err
-	}
-	var v struct {
-		Services []mcpHealthService `json:"services"`
-	}
-	if err := reprojectJSON(data, &v); err != nil {
-		return nil, err
-	}
-	// Suggestions widen the stored health range, read without changing the
-	// registry. Without it they assume the default settings.
-	stored := map[string]*registry.HealthConfig{}
-	if actions.registryPath != "" {
-		if reg, _, err := registry.Preflight(actions.registryPath); err == nil {
-			for _, svc := range reg.Services {
-				stored[svc.Name] = svc.Health
-			}
-		}
-	}
-	result := DoctorResult{GuestLinks: []registry.GuestView{}, SchemaVersion: 1, ExecutionStatus: doctorExecutionCompleted, Findings: []DoctorFinding{}}
-	result.Counts.Services = len(v.Services)
-	for _, svc := range v.Services {
-		if svc.Health.State == health.Degraded && health.UnexpectedResponse(svc.Health.LastError) {
-			message, evidence := healthMismatchFinding(svc.Name, svc.Health.LastError, svc.Health.StatusCode, stored[svc.Name])
-			result.Findings = append(result.Findings, DoctorFinding{Code: inspect.WarningCodeAppProbeUnexpected, Severity: doctorSeverityWarning, Service: svc.Name, Area: "health", Message: message, Evidence: evidence})
-		} else if svc.Health.State == health.Down || svc.Health.State == health.Degraded {
-			result.Findings = append(result.Findings, DoctorFinding{Code: "app_health_unhealthy", Severity: doctorSeverityWarning, Service: svc.Name, Area: "health", Message: "App health observation is unhealthy"})
-		}
-	}
-	result.finalize()
-	return result, nil
 }
 
 type mcpBindingView struct {

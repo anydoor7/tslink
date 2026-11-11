@@ -1207,20 +1207,25 @@ func (r *DoctorResult) addFinding(code, service, area, message string, evidence 
 	r.Findings = append(r.Findings, finding)
 }
 
-func (r *DoctorResult) finalize() {
-	r.Counts.Findings = len(r.Findings)
-	for _, finding := range r.Findings {
+// tally counts findings by severity; Services is left to the caller.
+func (c *DoctorCounts) tally(findings []DoctorFinding) {
+	c.Findings = len(findings)
+	for _, finding := range findings {
 		switch finding.Severity {
 		case doctorSeverityInfo:
-			r.Counts.Info++
+			c.Info++
 		case doctorSeverityWarning:
-			r.Counts.Warnings++
+			c.Warnings++
 		case doctorSeverityError:
-			r.Counts.Errors++
+			c.Errors++
 		case doctorSeverityCritical:
-			r.Counts.Critical++
+			c.Critical++
 		}
 	}
+}
+
+func (r *DoctorResult) finalize() {
+	r.Counts.tally(r.Findings)
 	switch {
 	case r.Counts.Critical > 0:
 		r.Status = doctorStatusCritical

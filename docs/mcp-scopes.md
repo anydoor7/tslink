@@ -61,6 +61,31 @@ not returned. A viewer doctor reads scoped health observations and does not run
 fresh credential, host, supervisor or external probes. Read-only MCP access does
 not itself grant permission to open photos; manage app access separately.
 
+A reduced result never fills a hidden field with a zero value. `doctor`,
+`status`, `health` and `list` return a reduced shape, advertised to reduced
+roles in `tools/list` as its own output schema; owners keep the full schema.
+Each reduced result carries `withheld`, the owner fields this role may not see,
+and omits them. `services[].warnings` means per-service warnings were removed;
+for `list`, `services[].error.message` is replaced by a fixed placeholder and
+`services[].error.next` and `.provision` are removed.
+
+Reduced `status` keeps `daemon_running` and `daemon_state` exactly as the owner
+sees them. `authorized_service_count` and each service's `authorized` flag are
+the owner status reader's own per-service decision, filtered to the role's
+apps. It withholds the host-level `authenticated` and `node_authorized` (they
+also judge the portal node and pending logins) plus supervision, credentials,
+`credential_stored`, access-log, alert, portal, binding and guest-link state.
+
+Reduced `doctor` states only what the status reader states: `daemon.running`
+and `daemon.state` (the status `daemon_state`, verbatim). It withholds
+`daemon.identity_unverified`, PID and build. `running: false` with `absent` or
+`unknown` does not prove no daemon process exists. The owner doctor also asks
+the OS supervisor and recognizes a foreign PID; the reduced path does not.
+`findings_scope: "app_health"` says findings and counts cover only health
+observations of the role's apps. The host-wide verdict (`status`,
+`health_status`, `health_exit_code`) is withheld, so an empty finding list does
+not mean the host is healthy. Ask the owner to run `tslink doctor` for that.
+
 ## Remote bindings and expiry
 
 `mcp.allow` remains an owner allowlist. To reduce an existing login's authority,
@@ -161,6 +186,6 @@ Audit entries separate `identity.login` and `identity.node` from the matched `pr
 
 Daemon bootstrap keeps the caller session through scope inspection, installer conflict checks, supervision checks before and after installation, definition writes, and manager commands. Each manager query checks the session before invocation and adds its existing timeout to the caller context, so cancellation stops an in-flight query subprocess. Bounded restoration of a prior installation and failure cleanup may continue after cancellation or expiry. Legacy journal `who`/`scope` fields are read as `principal`/`role` without inventing missing identity; journal reads reject a regular file anywhere in the parent directory chain.
 
-Shared status reads retain the caller context through MCP `status`, `health`, owner and reduced `doctor`, `list`, `url`, share/add outcome polling, and owner event snapshots. Supervision queries stop when the caller cancels and check session expiry before starting each process. Reduced doctor projects app observations from the shared status reader; that reader also inspects supervision and stored credentials, without running full doctor host-discovery or external probes. An MCP inspection denial remains `mcp_scope_denied`; a setup inspection failure for a caller without an MCP session, including cancellation, retains `daemon_setup_failed` and recovery guidance.
+Shared status reads retain the caller context through MCP `status`, `health`, owner and reduced `doctor`, `list`, `url`, share/add outcome polling, and owner event snapshots. Supervision queries stop when the caller cancels and check session expiry before starting each process. Reduced doctor projects app observations and daemon liveness from the shared status reader; that reader also inspects supervision and stored credentials, without running full doctor host-discovery or external probes, and the reduced result withholds what it inspected. An MCP inspection denial remains `mcp_scope_denied`; a setup inspection failure for a caller without an MCP session, including cancellation, retains `daemon_setup_failed` and recovery guidance.
 
 Bounded manager compensation derives its context from the caller and retains identity and scope. Only restoration of captured prior state and disabling an uncertain replacement use an independent lifetime; ordinary manager reads and replacement activation retain request cancellation and expiry.

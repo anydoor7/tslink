@@ -93,7 +93,12 @@ This index records the app recipe additions; the CLI manifest describes the comp
 # Scoped MCP permissions
 
 - `mcp_scopes.go`: shared tool authorization, output filtering, reduced stdio launch and owner audit CLI.
+- `mcp_scoped_results.go`: reduced-role doctor/status/health/list result types, derived `withheld` lists and the output schemas advertised to reduced roles.
 - `mcp_scopes_test.go`: complete role/tool/app matrix, real HTTP and stdio sessions, audit and expiry probes.
+- `mcp_scoped_doctor_withheld_test.go`: reduced `doctor`/`status`/`health`/`list` never report a hidden value as zero; hidden fields are absent and named in `withheld`.
+- `mcp_scoped_doctor_daemon_states_test.go`: reduced doctor daemon fields against the real owner doctor in every daemon state (running, absent, supervisor-held, foreign PID, zero services).
+- `mcp_scoped_reads_parity_test.go`: reduced status authorization equals the owner status reader's decision (portal-only route, registry global failure).
+- `mcp_scoped_results_test.go`: pinned `withheld` lists and reused owner type paths; per-role output schemas in `tools/list`.
 
 - `mcp_scopes_boundary_test.go`: MCP transaction, identity and app attribution correctness tests.
 
