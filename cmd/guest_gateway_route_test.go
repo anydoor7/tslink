@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // guestGatewaySetup builds the state of a genuinely new installation through
@@ -117,7 +119,7 @@ func TestGuestCreateReportsTheRouteRemovalInHumanAndMCPOutput(t *testing.T) {
 		if err := c.Execute(); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(out.String(), "Removed photos from the home gateway (port 8443): guest-gated apps cannot be routed. Its own node is running at https://"+guestSecondLinkHost+".") || !strings.Contains(out.String(), "Uploads through photos are capped at 32 MiB (33554432 bytes) per request; larger uploads are refused with HTTP 413. Raise it with: tslink limits set photos --max-request-body <value>") {
+		if !strings.Contains(out.String(), "Removed photos from the home gateway (port 8443): guest-gated apps cannot be routed. It stays reachable at its own URL https://"+guestSecondLinkHost+", which now restarts with its public Funnel listener; check tslink status or tslink doctor that Funnel came up.") || !strings.Contains(out.String(), "Uploads through photos are capped at 32 MiB (33554432 bytes) per request; larger uploads are refused with HTTP 413. Raise it with: tslink limits set photos --max-request-body <value>") {
 			t.Fatalf("human output = %q", out.String())
 		}
 	})
@@ -339,7 +341,7 @@ func TestGuestCreateFreshInstallCompiledSequence(t *testing.T) {
 	}
 	before, _ := os.ReadFile(regPath)
 	r, _, ok := run("guest", "create", "photos", "--for", "3d", "--label", "Aunt May", "--public")
-	if ok || !strings.Contains(r.Stdout, `"code":"url_not_ready"`) || !strings.Contains(r.Stdout, "the home gateway route was kept") {
+	if ok || !strings.Contains(r.Stdout, `"code":"url_not_ready"`) || !strings.Contains(r.Stdout, "the route was kept") {
 		t.Fatalf("guest create without a running node: %s", r.Stdout)
 	}
 	if after, _ := os.ReadFile(regPath); !bytes.Equal(before, after) {
@@ -471,13 +473,21 @@ func TestGuestCreateKeepsTheRouteWithoutAConfirmedNode(t *testing.T) {
 			before := guestRegistryBytes(t, paths)
 			_, err := createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true}, now)
 			var coded registry.CodedError
-			if !errors.As(err, &coded) || coded.Code != registry.CodeURLNotReady || !strings.Contains(strings.Join(coded.Next, "\n"), "the home gateway route was kept") {
+			if !errors.As(err, &coded) || coded.Code != registry.CodeURLNotReady || !strings.Contains(coded.Message, "needs photos's own node running with an exact URL before it can take the app off the home gateway") || !strings.Contains(coded.Message, "the route was kept") {
 				t.Fatalf("err = %v next %q", err, coded.Next)
 			}
 			if !bytes.Equal(before, guestRegistryBytes(t, paths)) {
 				t.Fatal("refused create changed the registry")
 			}
 		})
+	}
+	// R2-7: evidence for an earlier service of the same name does not count.
+	{
+		paths, now := guestGatewaySetup(t)
+		_, _, err := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{App: "photos", Value: "3d", PublicAck: true, Now: now, AllowRouteRemoval: true, EvidenceCreatedAt: guestRouteService(t, paths).CreatedAt.Add(-time.Second)})
+		if code, _ := registry.ErrorCode(err); code != registry.CodeURLNotReady || guestRouteService(t, paths).PortalRoute == nil {
+			t.Fatalf("stale evidence: %v", err)
+		}
 	}
 	// The registry layer refuses on its own when the caller has no evidence.
 	paths, now := guestGatewaySetup(t)
@@ -555,5 +565,94 @@ func TestGuestAndPeopleHintsNeverRepeatTheProxyTarget(t *testing.T) {
 		if strings.Contains(text, secret) || strings.Contains(text, "svcuser") {
 			t.Fatalf("%s repeats the target: %s", name, text)
 		}
+	}
+}
+
+// corruptAuditJournal makes every later receipt write fail.
+func corruptAuditJournal(t *testing.T, regPath string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(filepath.Dir(regPath), "mcp-audit.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R2-2: a receipt that cannot be written after remove committed is a warning:
+// device cleanup still runs and the command reports the removal.
+func TestRemoveStillCleansUpWhenTheRevocationReceiptFails(t *testing.T) {
+	paths, now := guestSecondLinkSetup(t)
+	if _, err := createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	corruptAuditJournal(t, paths.Registry)
+	oldDelete := deleteDevicesFn
+	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	cleaned := 0
+	deleteDevicesFn = func(context.Context, tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		cleaned++
+		return tailapi.CleanupResult{}, tailapi.ErrNoAPIClient
+	}
+	r, err := removeServiceResult(paths.Registry, filepath.Join(filepath.Dir(paths.Registry), "node-ownership.json"), "photos")
+	if err != nil {
+		t.Fatalf("remove after commit reported failure: %v", err)
+	}
+	if !r.Removed || cleaned != 1 || !strings.Contains(r.AuditWarning, "audit receipt unavailable") {
+		t.Fatalf("result %+v, cleanup calls %d", r, cleaned)
+	}
+}
+
+// R2-2: guest create that revoked an orphan keeps its token when the receipt
+// cannot be written.
+func TestGuestCreateKeepsItsLinkWhenAnOrphanReceiptFails(t *testing.T) {
+	paths, now := guestSecondLinkSetup(t)
+	if _, err := createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Remove(paths.Registry, "photos"); err != nil {
+		t.Fatal(err)
+	}
+	// As an older release left it: the removed app's link unrevoked.
+	raw, _ := os.ReadFile(paths.Registry)
+	raw = regexp.MustCompile(`"revoked":\s*true`).ReplaceAll(raw, []byte(`"revoked": false`))
+	if err := os.WriteFile(paths.Registry, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://127.0.0.1:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	corruptAuditJournal(t, paths.Registry)
+	publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost)
+	r, err := createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true, PrintLink: true}, now)
+	if err != nil {
+		t.Fatalf("committed create reported failure: %v", err)
+	}
+	if r.Link == nil || !strings.Contains(r.AuditWarning, "audit receipt unavailable") {
+		t.Fatalf("result %+v", r)
+	}
+	if _, reason := registry.FindGuestToken(paths.Registry, "photos", strings.TrimPrefix(*r.Link, "https://"+guestSecondLinkHost+"/guest/"), now); reason != "allowed" {
+		t.Fatalf("returned link = %s", reason)
+	}
+}
+
+// R2-6: an admin who reaches TSLink only through the gateway depends on the
+// route even without a grant for this app (admins open every app).
+func TestGuestCreateCountsAGatewayOnlyAdminWithoutAGrant(t *testing.T) {
+	paths, now := guestGatewaySetup(t)
+	reg, err := registry.Load(paths.Registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.Portal.Owner, reg.Portal.Admins = "owner@example.com", []string{"partner@other.example"}
+	reg.People = []registry.Person{{Login: "partner@other.example", Guest: true, Grants: []registry.PersonGrant{}}}
+	data, _ := json.Marshal(reg)
+	if err := os.WriteFile(paths.Registry, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Load(paths.Registry); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	publishGuestRuntime(t, paths, now, tsruntime.ServiceRuntimeRunning, guestSecondLinkHost)
+	_, err = createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true}, now)
+	if code, _ := registry.ErrorCode(err); code != "portal_route_guest_refused" || !strings.Contains(err.Error(), "partner@other.example") {
+		t.Fatalf("err = %v", err)
 	}
 }

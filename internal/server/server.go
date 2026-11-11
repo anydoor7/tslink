@@ -2902,6 +2902,7 @@ func (s *Server) stopNodeLocked(name string) {
 	}
 
 	node.cancel()
+	node.limitWarnings.stop()
 	if gate, ok := node.handlerCloser.(*guestGate); ok {
 		if err := gate.Close(); err != nil {
 			slog.Warn("guest counters flush failed", "name", name, "error", err)

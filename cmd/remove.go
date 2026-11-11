@@ -25,6 +25,9 @@ type RemoveResult struct {
 	DeviceCleanupSkipped bool   `json:"device_cleanup_skipped"`
 	DeviceSkipReason     string `json:"device_skip_reason,omitempty"`
 	DeviceWarning        string `json:"device_warning,omitempty"`
+	// AuditWarning reports guest_revoked receipts that could not be written
+	// after the removal committed; the removal and its cleanup still ran.
+	AuditWarning string `json:"audit_warning,omitempty"`
 	// NodeStateKeptReason explains a local tsnet state directory this command
 	// left in place, and only for the cause that reaches no other field here.
 	// A protected hostname or a skipped cleanup are already stated by
@@ -161,6 +164,13 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 	}, func(reg *registry.Registry, svc registry.Service) error {
 		return authorizePortalServiceMutation(ctx, reg, svc)
 	})
+	auditWarning := ""
+	var receipt registry.AuditReceiptError
+	if removed && errors.As(err, &receipt) {
+		// The removal committed; skipping the cleanup below would leave the
+		// node behind with nothing to finish it.
+		auditWarning, err = receipt.Error(), nil
+	}
 	if err != nil {
 		return RemoveResult{}, err
 	}
@@ -169,7 +179,7 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 		ownedNodeIDs = append(ownedNodeIDs, node.NodeID)
 	}
 
-	result := RemoveResult{Name: name, Removed: removed}
+	result := RemoveResult{Name: name, Removed: removed, AuditWarning: auditWarning}
 
 	if result.Removed {
 		if err := mcpscope.CheckEffect(ctx); err != nil {
@@ -252,6 +262,9 @@ func removeServiceWithContext(ctx context.Context, regPath, ownershipPath, name 
 	}
 	if result.DeviceWarning != "" && !isJSON {
 		fmt.Fprintf(errOut, humanText("→ warning: %s\n"), result.DeviceWarning)
+	}
+	if result.AuditWarning != "" && !isJSON {
+		fmt.Fprintf(errOut, humanText("→ warning: %s\n"), result.AuditWarning)
 	}
 
 	if isJSON {

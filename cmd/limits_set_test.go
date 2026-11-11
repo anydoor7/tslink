@@ -3,8 +3,10 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,10 +85,12 @@ func TestLimitsSetValidation(t *testing.T) {
 	if _, err := call(limitsSetArguments{App: "app"}); err == nil {
 		t.Fatal("empty update accepted")
 	}
-	if _, err := call(limitsSetArguments{App: "app", MaxBody: str("unlimited")}); err == nil {
-		t.Fatal("unlimited without acknowledgement accepted")
-	} else if code, _ := registry.ErrorCode(err); code != registry.CodeInvalidRequestLimits {
-		t.Fatalf("unlimited without ack: %v", err)
+	for _, bad := range []string{"unlimited", "banana"} {
+		_, err := call(limitsSetArguments{App: "app", MaxBody: str(bad)})
+		var coded registry.CodedError
+		if !errors.As(err, &coded) || coded.Code != registry.CodeInvalidRequestLimits || len(coded.Next) != 1 || coded.Next[0] != "tslink limits set --help" {
+			t.Fatalf("max body %q: %v next %q", bad, err, coded.Next)
+		}
 	}
 	if r, err := call(limitsSetArguments{App: "app", MaxBody: str("unlimited"), UnlimitedAck: &yes}); err != nil || r.RequestLimits.MaxBodyBytes != -1 {
 		t.Fatalf("acknowledged unlimited: %+v %v", r, err)
@@ -112,5 +116,23 @@ func TestLimitsSetValidation(t *testing.T) {
 		t.Fatal("unknown app accepted")
 	} else if code, _ := registry.ErrorCode(err); code != "not_found" {
 		t.Fatalf("unknown app: %v", err)
+	}
+}
+
+// R2-3: the help says the node restarts and to set limits before sending a link.
+func TestLimitsSetHelpSaysTheNodeRestarts(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"limits", "set"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"node restarts to apply new limits", "uploads in flight end", "guests must reopen their link", "Set limits before sending a guest link"} {
+		if !strings.Contains(cmd.Long, want) {
+			t.Errorf("limits set help lacks %q", want)
+		}
+	}
+	for _, tool := range mcpToolDefinitions {
+		if tool.Name == "limits_set" && !strings.Contains(tool.Description, "node restarts") {
+			t.Errorf("limits_set description lacks the restart: %v", tool.Description)
+		}
 	}
 }

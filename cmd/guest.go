@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -38,6 +39,9 @@ type guestCreateResult struct {
 	// RequestBodyLimit states the per-request upload cap guests meet, so an
 	// upload app's owner sees it before a guest's upload is refused.
 	RequestBodyLimit guestBodyLimit `json:"request_body_limit"`
+	// AuditWarning reports a lifecycle receipt that could not be written
+	// after the grant committed; the grant and link are valid.
+	AuditWarning string `json:"audit_warning,omitempty"`
 }
 
 type guestBodyLimit struct {
@@ -77,6 +81,7 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	// refused first, so that answer does not wait on the node.
 	base := ""
 	removingRoute := false
+	var evidenceCreatedAt time.Time
 	if reg, _, err := registry.Preflight(paths.Registry); err == nil {
 		for _, s := range reg.Services {
 			if s.Name != args.App {
@@ -91,7 +96,7 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 				if err := registry.GuestRouteRemovable(reg, s); err != nil {
 					return guestCreateResult{}, err
 				}
-				removingRoute = true
+				removingRoute, evidenceCreatedAt = true, s.CreatedAt
 			}
 		}
 	}
@@ -100,7 +105,7 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 		if base, e = guestNodeURL(ctx, paths, args.App); e != nil {
 			if removingRoute {
 				if coded, ok := e.(registry.CodedError); ok {
-					coded.Next = append(coded.Next, "the home gateway route was kept")
+					coded.Message = fmt.Sprintf("guest create needs %s's own node running with an exact URL before it can take the app off the home gateway (guest-gated apps cannot be routed); the route was kept and no guest link was saved: %s", args.App, coded.Message)
 					e = coded
 				}
 			}
@@ -109,20 +114,25 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	}
 	removedRoute := 0
 	var svc registry.Service
-	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now, RemovedRoute: &removedRoute, SavedService: &svc, AllowRouteRemoval: removingRoute, Authorize: func(reg *registry.Registry, s registry.Service) error {
+	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now, RemovedRoute: &removedRoute, SavedService: &svc, AllowRouteRemoval: removingRoute, EvidenceCreatedAt: evidenceCreatedAt, Authorize: func(reg *registry.Registry, s registry.Service) error {
 		return authorizePortalServiceMutation(ctx, reg, s)
 	}})
+	var receipt registry.AuditReceiptError
+	auditWarning := ""
+	if errors.As(e, &receipt) {
+		auditWarning, e = receipt.Error(), nil
+	}
 	if e != nil {
 		return guestCreateResult{}, e
 	}
-	r := guestCreateResult{Grant: grant, Message: fmt.Sprintf("Open the private link in your browser. Access ends %s. You do not need to install anything or create a Tailscale account.", guestExpiryDate(grant.ExpiresAt)), EdgeState: "configured; check status for Funnel availability"}
+	r := guestCreateResult{AuditWarning: auditWarning, Grant: grant, Message: fmt.Sprintf("Open the private link in your browser. Access ends %s. You do not need to install anything or create a Tailscale account.", guestExpiryDate(grant.ExpiresAt)), EdgeState: "configured; check status for Funnel availability"}
 	if limits := svc.EffectiveRequestLimits(); limits != nil && limits.MaxBodyBytes < 0 {
 		r.RequestBodyLimit = guestBodyLimit{MaxBodyBytes: -1, Message: fmt.Sprintf("Uploads through %s have no body size cap (acknowledged unlimited).", args.App)}
 	} else if limits != nil {
 		r.RequestBodyLimit = guestBodyLimit{MaxBodyBytes: limits.MaxBodyBytes, Message: fmt.Sprintf("Uploads through %s are capped at %s per request; larger uploads are refused with HTTP 413. Raise it with: %s", args.App, registry.RequestBodyLimitText(limits.MaxBodyBytes), registry.RequestLimitCommand(svc.Name, registry.CodeRequestBodyLimit))}
 	}
 	if removedRoute != 0 {
-		r.RemovedGatewayRoute = &guestRemovedRoute{Port: removedRoute, Message: fmt.Sprintf("Removed %s from the home gateway (port %d): guest-gated apps cannot be routed. Its own node is running at %s.", args.App, removedRoute, base)}
+		r.RemovedGatewayRoute = &guestRemovedRoute{Port: removedRoute, Message: fmt.Sprintf("Removed %s from the home gateway (port %d): guest-gated apps cannot be routed. It stays reachable at its own URL %s, which now restarts with its public Funnel listener; check tslink status or tslink doctor that Funnel came up.", args.App, removedRoute, base)}
 	}
 	if grant.PINRequired {
 		r.Message += " Enter the PIN I send separately."
@@ -214,6 +224,9 @@ func newGuestCmd() *cobra.Command {
 			fmt.Fprintf(c.OutOrStdout(), "Guest %s for %s until %s\n%s\n", r.Grant.ID, r.Grant.App, guestExpiryDate(r.Grant.ExpiresAt), r.Message)
 			if r.RemovedGatewayRoute != nil {
 				fmt.Fprintln(c.OutOrStdout(), r.RemovedGatewayRoute.Message)
+			}
+			if r.AuditWarning != "" {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: %s\n", r.AuditWarning)
 			}
 			if r.RequestBodyLimit.Message != "" {
 				fmt.Fprintln(c.OutOrStdout(), r.RequestBodyLimit.Message)

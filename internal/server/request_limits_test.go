@@ -2079,3 +2079,21 @@ func TestServiceLimitWarningsTrailingPublishAfterABurst(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 }
+
+// R2-8: stopping the node cancels a scheduled trailing publish.
+func TestServiceLimitWarningsStopCancelsTheTrailingPublish(t *testing.T) {
+	clock := time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)
+	published := make(chan struct{}, 4)
+	warnings := &serviceLimitWarnings{now: func() time.Time { return clock }, window: 30 * time.Millisecond}
+	warnings.publish = func() { published <- struct{}{} }
+	view := inspect.WarningView{Code: registry.CodeRequestBodyLimit}
+	warnings.add(view)
+	warnings.add(view) // schedules the trailing publish
+	warnings.stop()
+	warnings.add(view) // after stop: nothing scheduled
+	select {
+	case <-published:
+		t.Fatal("trailing publish ran after the node stopped")
+	case <-time.After(150 * time.Millisecond):
+	}
+}

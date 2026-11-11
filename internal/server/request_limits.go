@@ -62,7 +62,25 @@ type serviceLimitWarnings struct {
 	window   time.Duration    // limitWarningRepublish unless a test sets it
 	publish  func()           // writes the runtime snapshot; nil in tests that only read
 	pending  bool             // a trailing publish is scheduled
+	timer    *time.Timer      // the scheduled trailing publish
+	stopped  bool             // the node stopped: no further publishes
 	warnings []limitWarning
+}
+
+// stop cancels a scheduled trailing publish when the node stops, so no
+// goroutine outlives the node it reports on.
+func (s *serviceLimitWarnings) stop() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = true
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	s.pending = false
 }
 
 type limitWarning struct {
@@ -91,9 +109,9 @@ func (s *serviceLimitWarnings) add(w inspect.WarningView) bool {
 				window = limitWarningRepublish
 			}
 			if since := now.Sub(prior.published); since < window {
-				if !s.pending && s.publish != nil {
+				if !s.pending && !s.stopped && s.publish != nil {
 					s.pending = true
-					time.AfterFunc(window-since, s.trailingPublish)
+					s.timer = time.AfterFunc(window-since, s.trailingPublish)
 				}
 				return false
 			}
@@ -106,7 +124,11 @@ func (s *serviceLimitWarnings) add(w inspect.WarningView) bool {
 }
 func (s *serviceLimitWarnings) trailingPublish() {
 	s.mu.Lock()
-	s.pending = false
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.pending, s.timer = false, nil
 	now := time.Now()
 	if s.now != nil {
 		now = s.now()

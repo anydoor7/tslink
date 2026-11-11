@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -47,6 +48,11 @@ func setLimitsContext(ctx context.Context, regPath string, args limitsSetArgumen
 	svc, changed, err := registry.SetRequestLimitsContext(ctx, regPath, args.App, u, func(reg *registry.Registry, svc registry.Service) error {
 		return authorizePortalServiceMutation(ctx, reg, svc)
 	})
+	var coded registry.CodedError
+	if errors.As(err, &coded) && coded.Code == registry.CodeInvalidRequestLimits {
+		coded.Next = []string{"tslink limits set --help"}
+		return LimitsSetResult{}, coded
+	}
 	if err != nil {
 		return LimitsSetResult{}, err
 	}
@@ -75,7 +81,8 @@ func init() {
 			"Target, access, routes, health check, preserve-host, the guest gate and the enrolled node are kept. " +
 			"Unset options keep their stored value; an empty value returns that limit to its default " +
 			"(32MiB body, 10s header timeout, 30s read timeout, 60s idle timeout). unlimited needs --ack-unlimited-request-body. " +
-			"Use this instead of re-running add, which replaces the whole service and is refused on apps with guest links.",
+			"The app's node restarts to apply new limits: open connections and uploads in flight end, and guests must reopen their link (and enter its PIN again). " +
+			"Set limits before sending a guest link. Use this instead of re-running add, which replaces the whole service and is refused on apps with guest links.",
 		Example: "  tslink limits set photos --max-request-body 4GiB\n  tslink limits set photos --request-read-timeout 2m\n  tslink limits set photos --max-request-body ''",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
@@ -120,7 +127,7 @@ func init() {
 	mcpToolHints["limits_set"] = mcpHints(false, false, true, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
 		Name: "limits_set",
-		Description: "Change only one app's HTTP request limits in a single registry transaction. Keeps target, access, routes, health, preserve_host, the guest gate and the enrolled node; works on apps with guest links, where add is refused. " +
+		Description: "Change only one app's HTTP request limits in a single registry transaction. Keeps target, access, routes, health, preserve_host, the guest gate and the enrolled node; works on apps with guest links, where add is refused. The app's node restarts to apply new limits: open connections and in-flight uploads end and guests must reopen their link. " +
 			"Omitted fields keep their stored value; an empty string returns that limit to its default (32MiB body, 10s header, 30s read, 60s idle). max_body unlimited requires unlimited_ack true. " +
 			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only.",
 		InputSchema: objectSchema(map[string]any{

@@ -23,6 +23,7 @@ func ReadGuestGrants(path, app string, now time.Time) ([]GuestGrant, error) {
 		if svc.Name == app && svc.GuestGate && svc.Funnel && svc.PublicAck && !FunnelExpiredAt(svc, now) {
 			for _, grant := range reg.Guests {
 				if grant.App == app {
+					grant.Revoked = grant.Revoked || grantPredatesService(reg, grant)
 					grants = append(grants, grant)
 					overdue = overdue || (!grant.Revoked && !grant.Expired && !now.Before(grant.ExpiresAt))
 				}

@@ -121,6 +121,9 @@ type CreateGuestOptions struct {
 	// the create is refused: removing the route would leave the app with no
 	// confirmed address.
 	AllowRouteRemoval bool
+	// EvidenceCreatedAt is the created_at of the service the evidence was
+	// gathered for; a service re-created since then has no evidence.
+	EvidenceCreatedAt time.Time
 }
 
 // GuestRouteRemovable decides whether the first guest link may take the app
@@ -150,7 +153,9 @@ func GuestRouteRemovable(reg *Registry, s Service) error {
 	}
 	var dependents []string
 	for _, p := range reg.People {
-		if !p.Revoked && personHasGrant(p, s.Name) && (!administrators[p.Login] || gatewayOnlyPerson(p)) {
+		// Admins open every app without a grant of their own, so a
+		// gateway-only admin depends on this route even with no grant here.
+		if !p.Revoked && ((personHasGrant(p, s.Name) && !administrators[p.Login]) || (administrators[p.Login] && gatewayOnlyPerson(p))) {
 			dependents = append(dependents, p.Login)
 		}
 	}
@@ -255,7 +260,7 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 				if e := GuestRouteRemovable(reg, *s); e != nil {
 					return e
 				}
-				if !o.AllowRouteRemoval {
+				if !o.AllowRouteRemoval || !o.EvidenceCreatedAt.Equal(s.CreatedAt) {
 					return CodedError{Code: CodeURLNotReady, Message: fmt.Sprintf("%s keeps its home gateway route: its own node has not reported an exact URL, so removing the route could leave it with no address; nothing was changed", s.Name), Next: []string{"tslink status --json", "tslink url " + s.Name + " --wait=30s", "rerun this guest create"}, MessageOnly: true}
 				}
 				removedRoute = s.PortalRoute.Port
@@ -286,16 +291,15 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 	if err != nil {
 		return GuestView{}, "", err
 	}
-	if err := recordGuestRevocations(ctx, path, o.Now, orphans); err != nil {
-		return GuestView{}, "", err
-	}
 	if o.RemovedRoute != nil && removedRoute != 0 {
 		*o.RemovedRoute = removedRoute
 	}
 	if o.SavedService != nil {
 		*o.SavedService = saved
 	}
-	return g.View(o.Now), token, nil
+	// The grant is committed: its token is returned even when a receipt for
+	// a revoked orphan could not be written (AuditReceiptError).
+	return g.View(o.Now), token, recordGuestRevocations(ctx, path, o.Now, orphans)
 }
 
 // revokeAppGuests ends a removed app's guest links in the removal's own
@@ -314,15 +318,24 @@ func revokeAppGuests(reg *Registry, app string) []GuestGrant {
 	return flipped
 }
 
+// AuditReceiptError is a receipt that could not be written after its registry
+// change committed. Callers report the committed result and show this as a
+// warning: the change itself must not be retried or reported as failed.
+type AuditReceiptError struct{ Err error }
+
+func (e AuditReceiptError) Error() string { return e.Err.Error() }
+func (e AuditReceiptError) Unwrap() error { return e.Err }
+
 // recordGuestRevocations writes one guest_revoked receipt per grant a
-// committed write revoked, as RevokeGuestContext does for one link.
+// committed write revoked, as RevokeGuestContext does for one link. A failure
+// is an AuditReceiptError.
 func recordGuestRevocations(ctx context.Context, path string, now time.Time, grants []GuestGrant) error {
 	if now.IsZero() {
 		now = time.Now()
 	}
 	for _, g := range grants {
 		if err := mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpaudit.LocalActor(), now, mcpaudit.Change{Action: "guest_revoked", App: g.App, ID: g.ID, ExpiresAt: &g.ExpiresAt}); err != nil {
-			return err
+			return AuditReceiptError{Err: err}
 		}
 	}
 	return nil
@@ -342,9 +355,26 @@ func ListGuests(path string, now time.Time) ([]GuestView, error) {
 	pendingGuestViews(path, reg)
 	out := make([]GuestView, 0, len(reg.Guests))
 	for _, g := range reg.Guests {
-		out = append(out, g.View(now))
+		view := g.View(now)
+		view.Revoked = view.Revoked || grantPredatesService(reg, g)
+		out = append(out, view)
 	}
 	return out, nil
+}
+
+// grantPredatesService reports a grant created before the service now named
+// by its app was created: it belongs to an earlier app of the same name. add
+// keeps created_at when it updates a service and a re-created service gets a
+// new one, so such a grant never authorizes the current app, even when an
+// older release left it unrevoked and the name was re-gated there. A service
+// without created_at (legacy records) disables the test.
+func grantPredatesService(reg *Registry, g GuestGrant) bool {
+	for _, s := range reg.Services {
+		if s.Name == g.App {
+			return !s.CreatedAt.IsZero() && g.CreatedAt.Before(s.CreatedAt)
+		}
+	}
+	return false
 }
 func ShowGuest(path, id string, now time.Time) (GuestView, error) {
 	list, e := ListGuests(path, now)
@@ -435,7 +465,8 @@ func CheckGuest(path, app, id string, now time.Time, use, session bool) (view Gu
 			continue
 		}
 		view = g.View(now)
-		if g.Revoked {
+		if g.Revoked || grantPredatesService(reg, g) {
+			view.Revoked = true
 			return view, "revoked"
 		}
 		if g.Expired {

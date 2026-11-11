@@ -187,3 +187,55 @@ func TestRemoveIfUnchangedRevokesTheNamesGuestLinks(t *testing.T) {
 		t.Fatalf("guests after rollback: %+v %v", reg.Guests, err)
 	}
 }
+
+// R2-1: a link an older release revived (the name re-added and re-gated
+// there) predates the current service, so it never authorizes and lists as
+// revoked, even though the gate was already up when this release arrived.
+func TestAGrantOlderThanItsServiceNeverAuthorizes(t *testing.T) {
+	path := guestRegistry(t)
+	_, oldToken, err := CreateGuest(path, guestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(path, "photos"); err != nil {
+		t.Fatal(err)
+	}
+	writeOldRegistry(t, path, "photos")
+	if _, err := Add(path, Service{Name: "photos", Type: TypeProxy, Target: "http://127.0.0.1:4000"}); err != nil {
+		t.Fatal(err)
+	}
+	// Re-gate the way the old release did: a raw gate, without the sweep.
+	raw, _ := os.ReadFile(path)
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	svc := doc["services"].([]any)[0].(map[string]any)
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := reg.Services[0].CreatedAt
+	old := reg.Guests[0]
+	old.CreatedAt = created.Add(-time.Hour)
+	old.ExpiresAt = guestTestNow.Add(time.Hour)
+	expires := guestTestNow.Add(2 * time.Hour)
+	svc["guest_gate"], svc["funnel"], svc["public_ack"], svc["funnel_expires_at"] = true, true, true, expires
+	g := doc["guests"].([]any)[0].(map[string]any)
+	g["created_at"], g["expires_at"] = old.CreatedAt, old.ExpiresAt
+	raw, _ = json.Marshal(doc)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, reason := FindGuestToken(path, "photos", oldToken, guestTestNow); reason != "revoked" {
+		t.Fatalf("revived old link = %s, want revoked", reason)
+	}
+	list, err := ListGuests(path, guestTestNow)
+	if err != nil || len(list) != 1 || !list[0].Revoked {
+		t.Fatalf("guest list = %+v %v", list, err)
+	}
+	grants, err := ReadGuestGrants(path, "photos", guestTestNow)
+	if err != nil || len(grants) != 1 || !grants[0].Revoked {
+		t.Fatalf("monitor grants = %+v %v", grants, err)
+	}
+}
