@@ -8,6 +8,7 @@
 - [Release artifacts](docs/release-artifacts.md): release contents and CI gate.
 - [CI scripts](.github/scripts/INDEX.md): trusted classifier and hermetic regression tests.
 - [llms.txt](llms.txt): compact product documentation discovery index.
+- [gemini-extension.json](gemini-extension.json): Gemini CLI extension manifest; it runs the local `tslink mcp` server and is indexed by the geminicli.com gallery through the `gemini-cli-extension` topic.
 - [glama.json](glama.json): Glama directory maintainer claim for the listing at glama.ai/mcp/servers/anydoor7/tslink.
 - [server.json](server.json): MCP Registry preparation metadata; source-only installation is not publishable through the documented package types.
 - [Scoped third-party source](third_party/INDEX.md): pinned local dependency repairs and provenance.

@@ -1,0 +1,11 @@
+{
+  "name": "tslink",
+  "version": "0.4.0",
+  "description": "Open local dev servers, folders and apps on your phone through private Tailscale URLs. Runs the local `tslink mcp` server; install the tslink CLI first.",
+  "mcpServers": {
+    "tslink": {
+      "command": "tslink",
+      "args": ["mcp"]
+    }
+  }
+}
