@@ -3,6 +3,12 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
+## [Unreleased]
+
+### Added
+
+- `tslink doctor` reports `backend_loopback_shared` (warning, area `target_probe`, evidence `port` and `bind_probe`) for a reachable local proxy or TCP backend whose loopback address another local process could also bind. A backend on a wildcard address (`0.0.0.0` or `::`) allows that on macOS and Windows, and the second, more specific listener receives the connections TSLink makes. Doctor checks by trying that bind itself and closing it at once, so it needs no listener enumeration; Linux refuses the bind and reports nothing. Bind the backend to `127.0.0.1` and point the target at `127.0.0.1:<port>`. A bind that fails for another reason is `backend_loopback_probe_failed` (info).
+
 ## [0.4.0] - 2026-11-11
 
 Guest links work on a new installation in two commands, and remote MCP needs the portal owner for every public change. `tslink add` then `tslink guest create --public --print-link` now succeeds on a fresh install: the first guest link takes the app off the home gateway in the same write. `tslink limits set` changes an app's upload limits in place, including on an app with guest links, and an upload over the limit gets a JSON 413 that `status` and `doctor` count. `tslink remove` revokes the app's guest links, so a re-added app of the same name cannot bring old links back.

@@ -67,6 +67,7 @@ const (
 	// same classifier handles real Windows refused and reset connections.
 	windowsWSAECONNRESET   syscall.Errno = 10054
 	windowsWSAECONNREFUSED syscall.Errno = 10061
+	windowsWSAEADDRINUSE   syscall.Errno = 10048
 )
 
 var (
@@ -1026,6 +1027,7 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 		result.addFinding(code, svc.Name, "target_probe", inspect.WarningCodeRegistry[code].Description, nil)
 		return
 	}
+	diagnoseLoopbackExclusive(result, svc, target)
 	if svc.Type == registry.TypeProxy {
 		ctx, status := health.WithResponseStatus(health.WithCanonicalHost(context.Background(), result.canonicalHosts[svc.Name]))
 		if code := doctorHTTPProbeFn(ctx, svc); health.UnexpectedResponse(code) {
@@ -1036,6 +1038,76 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 		}
 	}
 
+}
+
+// diagnoseLoopbackExclusive runs after the backend answered a dial. On macOS
+// and Windows a listener on a wildcard address (0.0.0.0 or ::) lets any local
+// process bind 127.0.0.1 on the same port beside it, and the more specific
+// bind receives the connections TSLink makes; a backend listening on
+// 127.0.0.1 itself makes that bind fail with EADDRINUSE. Doctor asks the
+// operating system directly by trying that bind, so the check needs no
+// listener enumeration or permission to see other users' sockets, and it
+// reports nothing on a platform (Linux) that refuses the bind beside a
+// wildcard listener. The probe listener is closed at once without accepting;
+// a connection that arrives in that window is reset.
+func diagnoseLoopbackExclusive(result *DoctorResult, svc registry.Service, target doctorTarget) {
+	if target.External {
+		return
+	}
+	address := loopbackBindAddress(target)
+	if address == "" {
+		return
+	}
+	shared, err := doctorLoopbackSharedFn(address)
+	if err != nil {
+		result.addFinding(inspect.WarningCodeBackendLoopbackProbeFailed, svc.Name, "target_probe", "", map[string]string{
+			"port":       target.Port,
+			"bind_probe": address,
+			"error":      err.Error(),
+		})
+		return
+	}
+	if !shared {
+		return
+	}
+	result.addFinding(inspect.WarningCodeBackendLoopbackShared, svc.Name, "target_probe",
+		fmt.Sprintf("Backend port %s does not hold %s exclusively: it listens on a wildcard address (0.0.0.0 or ::) or on another address family, so another local process can bind %s and take the connections TSLink proxies to %q. Bind the backend to 127.0.0.1 only and point the target at 127.0.0.1:%s.",
+			target.Port, address, address, svc.Name, target.Port),
+		map[string]string{"port": target.Port, "bind_probe": address})
+}
+
+// loopbackBindAddress is the address a second local process would bind to
+// take TSLink's connections to a local target: the target's own loopback IP,
+// or 127.0.0.1 for localhost, an empty host or a wildcard (TSLink dials IPv4
+// first for localhost). It is empty for a non-loopback host.
+func loopbackBindAddress(target doctorTarget) string {
+	host := target.Host
+	if host == "" || strings.EqualFold(host, "localhost") || isUnspecifiedIP(host) {
+		host = "127.0.0.1"
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return ""
+	}
+	return net.JoinHostPort(ip.String(), target.Port)
+}
+
+// doctorLoopbackSharedFn binds the loopback address TSLink dials for a
+// reachable local backend and reports whether that second bind succeeded. The
+// cmd test binary replaces it so fake-reachable targets never bind real ports;
+// doctor_loopback_shared_test.go exercises the real one.
+var doctorLoopbackSharedFn = defaultDoctorLoopbackShared
+
+func defaultDoctorLoopbackShared(address string) (bool, error) {
+	ln, err := net.Listen("tcp", address)
+	if err == nil {
+		_ = ln.Close()
+		return true, nil
+	}
+	if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windowsWSAEADDRINUSE) {
+		return false, nil
+	}
+	return false, err
 }
 
 func classifyServiceTarget(svc registry.Service) (doctorTarget, error) {

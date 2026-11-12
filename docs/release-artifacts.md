@@ -37,11 +37,17 @@ Release assets are side-by-side files, not files embedded inside the archives. G
 
 The repository's [llms.txt](../llms.txt) stays with the online documentation rather
 than in binary archives or deb/rpm packages: its links follow `main`, not a frozen
-release manual. [server.json](../server.json) is an unpublished MCP Registry
-preparation file, with no supported source-only Go package declared; it also stays
-out of release payloads. JSON schema validity does not make it publishable. The
-owner must choose a real distribution and explicitly authorize any Registry
-submission. Neither file is executable configuration for TSLink.
+release manual. [server.json](../server.json) is the
+[MCP Registry](https://registry.modelcontextprotocol.io) entry `io.github.anydoor7/tslink`,
+first published for v0.4.0. Its one package is an MCP Bundle,
+`tslink-<version>-darwin-universal.mcpb`, attached to the GitHub release after the
+release workflow finishes: the signed and notarized darwin arm64 and amd64 binaries
+from the release archives, joined with `lipo` (each slice keeps its signature), plus
+a `manifest.json` that runs `tslink mcp`. It is macOS only; on Linux and Windows,
+install the CLI and configure `tslink mcp` directly. The bundle is not in
+`checksums.txt` or the artifact attestations; `server.json` records its SHA-256.
+`server.json` also stays out of release payloads. Neither file is executable
+configuration for TSLink.
 
 ### CI tiers and the release gate
 

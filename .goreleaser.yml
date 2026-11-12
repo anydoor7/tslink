@@ -40,8 +40,9 @@ archives:
         formats:
           - zip
     # The licence files and project documents travel inside every tar/zip.
-    # llms.txt follows online main docs; server.json is unpublished Registry
-    # preparation metadata. Both stay source-only (docs/release-artifacts.md).
+    # llms.txt follows online main docs; server.json is the MCP Registry entry,
+    # whose .mcpb is attached after release. Both stay source-only
+    # (docs/release-artifacts.md).
     files:
       - LICENSE
       - NOTICE

@@ -44,6 +44,8 @@ const (
 	WarningCodeTargetProbeFailed                   = "target_probe_failed"
 	WarningCodeTargetProbeRefused                  = "target_probe_refused"
 	WarningCodeTargetProbeTimeout                  = "target_probe_timeout"
+	WarningCodeBackendLoopbackShared               = "backend_loopback_shared"
+	WarningCodeBackendLoopbackProbeFailed          = "backend_loopback_probe_failed"
 	WarningCodeTargetInvalid                       = "target_invalid"
 	WarningCodeProxyNonLoopbackTarget              = "proxy_non_loopback_target"
 	WarningCodeTCPNonLoopbackTarget                = "tcp_non_loopback_target"
@@ -250,6 +252,13 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 	},
 	WarningCodeTargetProbeSkippedDaemon: {
 		Severity: "info", Source: "target_probe", Description: "Backend probe deferred until the TSLink daemon is running.",
+	},
+	WarningCodeBackendLoopbackShared: {
+		Severity: "warning", Source: "target_probe",
+		Description: "Another local process can bind the loopback address TSLink dials beside this backend and take its connections; bind the backend to 127.0.0.1 only and point the target at 127.0.0.1.",
+	},
+	WarningCodeBackendLoopbackProbeFailed: {
+		Severity: "info", Source: "target_probe", Description: "Whether the backend holds its loopback address exclusively could not be checked.",
 	},
 	WarningCodeDaemonPIDUnreadable: {
 		Severity:    "warning",

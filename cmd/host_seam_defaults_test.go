@@ -26,6 +26,10 @@ import (
 func installRefusingHostSeams() {
 	doctorTailscaleSSHFn = refuseDoctorTailscaleSSH
 	doctorLocalClientFn = refuseDoctorLocalClient
+	// Many doctor tests fake a reachable backend at an address nothing listens
+	// on; the real bind would succeed there and report a shared loopback that
+	// does not exist. Exclusive is the neutral answer for those tests.
+	doctorLoopbackSharedFn = func(string) (bool, error) { return false, nil }
 	loginNewValidationServerFn = refuseLoginValidationServer
 	serveNewServerFn = refuseServeNewServer
 	loginOpenBrowserFn = refuseOpenBrowser
