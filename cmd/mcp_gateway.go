@@ -155,7 +155,7 @@ func withPublicMutationGuard(ctx context.Context) context.Context {
 		// creation needs the portal owner, fail-closed while none is set.
 		if change.RouteAdded {
 			if err := requireRequestOwnerInRegistry(caller, before); err != nil {
-				return err
+				return registry.CodedError{Code: "access_request_owner_required", Message: "creating a home gateway route over remote MCP requires the current portal owner; nothing was changed", Next: []string{"Run the change as the portal owner, or with the local tslink CLI or stdio MCP on the gateway host"}}
 			}
 		}
 		if !change.Public {
