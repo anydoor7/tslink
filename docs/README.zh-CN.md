@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-访客链接和新建的公网 URL 会过期，而且只适用于 Web 应用；文件夹、文件和 TCP 端口始终保持私有。[人员授权](people.md) · [访客链接](guest-links.md) · [公网访问](funnel.md)
+访客链接和新建的公网 URL 会过期，而且只适用于 Web 应用；文件夹、文件和 TCP 端口始终保持私有。访客链接走 Funnel，传很大的文件会慢（2026-11-11 实测每路上传约 0.65 到 1.5 MB/s）；大文件请在不带访客链接的应用上用人员授权。[人员授权](people.md) · [访客链接](guest-links.md) · [公网访问](funnel.md)
 
 <a id="architecture"></a>
 

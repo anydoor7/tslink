@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Gæstelinks og nye offentlige URL'er udløber og virker kun til webapps; mapper, filer og TCP-porte forbliver private. [Personer](people.md) · [Gæstelinks](guest-links.md) · [Offentlig adgang](funnel.md)
+Gæstelinks og nye offentlige URL'er udløber og virker kun til webapps; mapper, filer og TCP-porte forbliver private. De kører over Funnel, som er langsom til meget store filer (ca. 0,65 til 1,5 MB/s pr. upload-strøm, målt 2026-11-11); brug persontilladelser på en app uden gæstelinks til store overførsler. [Personer](people.md) · [Gæstelinks](guest-links.md) · [Offentlig adgang](funnel.md)
 
 <a id="architecture"></a>
 

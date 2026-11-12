@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-ゲストリンクと新しい公開 URL には期限があり、使えるのは Web アプリだけです。フォルダー、ファイル、TCP ポートは非公開のままです。[ユーザー共有](people.md) · [ゲストリンク](guest-links.md) · [一般公開](funnel.md)
+ゲストリンクと新しい公開 URL には期限があり、使えるのは Web アプリだけです。フォルダー、ファイル、TCP ポートは非公開のままです。ゲストリンクは Funnel を経由するため、非常に大きなファイルでは遅くなります（2026-11-11 の計測でアップロード 1 本あたり約 0.65〜1.5 MB/s）。大容量の転送には、ゲストリンクのないアプリでユーザー共有を使ってください。[ユーザー共有](people.md) · [ゲストリンク](guest-links.md) · [一般公開](funnel.md)
 
 <a id="architecture"></a>
 

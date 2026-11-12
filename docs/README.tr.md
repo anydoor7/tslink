@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Konuk bağlantılarının ve yeni herkese açık URL'lerin süresi dolar ve yalnızca web uygulamalarında çalışır; klasörler, dosyalar ve TCP portları özel kalır. [Kişiler](people.md) · [Konuk bağlantıları](guest-links.md) · [Herkese açık erişim](funnel.md)
+Konuk bağlantılarının ve yeni herkese açık URL'lerin süresi dolar ve yalnızca web uygulamalarında çalışır; klasörler, dosyalar ve TCP portları özel kalır. Funnel üzerinden çalışırlar ve çok büyük dosyalarda yavaştır (2026-11-11 ölçümüyle yükleme akışı başına yaklaşık 0,65 ila 1,5 MB/sn); büyük aktarımlar için konuk bağlantısı olmayan bir uygulamada kişi izinleri kullanın. [Kişiler](people.md) · [Konuk bağlantıları](guest-links.md) · [Herkese açık erişim](funnel.md)
 
 <a id="architecture"></a>
 

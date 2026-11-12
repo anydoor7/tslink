@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Liên kết khách và URL công khai mới sẽ hết hạn và chỉ dùng được cho ứng dụng web; thư mục, tệp và cổng TCP vẫn riêng tư. [Người dùng](people.md) · [Liên kết khách](guest-links.md) · [Truy cập công khai](funnel.md)
+Liên kết khách và URL công khai mới sẽ hết hạn và chỉ dùng được cho ứng dụng web; thư mục, tệp và cổng TCP vẫn riêng tư. Chúng chạy qua Funnel, vốn chậm với tệp rất lớn (khoảng 0,65 đến 1,5 MB/s cho mỗi luồng tải lên, đo ngày 2026-11-11); với lượng truyền lớn, hãy cấp quyền người dùng trên một ứng dụng không có liên kết khách. [Người dùng](people.md) · [Liên kết khách](guest-links.md) · [Truy cập công khai](funnel.md)
 
 <a id="architecture"></a>
 

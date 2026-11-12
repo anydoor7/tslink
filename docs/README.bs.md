@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Linkovi za goste i novi javni URL-ovi ističu i rade samo za web aplikacije; folderi, fajlovi i TCP portovi ostaju privatni. [Osobe](people.md) · [Linkovi za goste](guest-links.md) · [Javni pristup](funnel.md)
+Linkovi za goste i novi javni URL-ovi ističu i rade samo za web aplikacije; folderi, fajlovi i TCP portovi ostaju privatni. Rade preko Funnela, koji je spor za vrlo velike fajlove (oko 0,65 do 1,5 MB/s po toku otpremanja, izmjereno 2026-11-11); za velike prenose koristite dozvole za osobe na aplikaciji bez linkova za goste. [Osobe](people.md) · [Linkovi za goste](guest-links.md) · [Javni pristup](funnel.md)
 
 <a id="architecture"></a>
 

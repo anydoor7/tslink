@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Les liens invités et les nouvelles URL publiques expirent et ne fonctionnent que pour les applications web ; dossiers, fichiers et ports TCP restent privés. [Personnes](people.md) · [Liens invités](guest-links.md) · [Accès public](funnel.md)
+Les liens invités et les nouvelles URL publiques expirent et ne fonctionnent que pour les applications web ; dossiers, fichiers et ports TCP restent privés. Ils passent par Funnel, lent pour les très gros fichiers (environ 0,65 à 1,5 Mo/s par flux d'envoi, mesuré le 2026-11-11) ; pour les gros transferts, utilisez des accès de personnes sur une application sans liens invités. [Personnes](people.md) · [Liens invités](guest-links.md) · [Accès public](funnel.md)
 
 <a id="architecture"></a>
 

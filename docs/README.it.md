@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-I link ospite e i nuovi URL pubblici scadono e funzionano solo per le app web; cartelle, file e porte TCP restano privati. [Persone](people.md) · [Link ospite](guest-links.md) · [Accesso pubblico](funnel.md)
+I link ospite e i nuovi URL pubblici scadono e funzionano solo per le app web; cartelle, file e porte TCP restano privati. Passano da Funnel, lento per file molto grandi (circa 0,65-1,5 MB/s per flusso di caricamento, misurato il 2026-11-11); per trasferimenti grandi usa i permessi per persone su un'app senza link ospite. [Persone](people.md) · [Link ospite](guest-links.md) · [Accesso pubblico](funnel.md)
 
 <a id="architecture"></a>
 

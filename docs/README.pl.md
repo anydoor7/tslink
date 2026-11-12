@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Linki dla gości i nowe publiczne adresy URL wygasają i działają tylko dla aplikacji webowych; foldery, pliki i porty TCP pozostają prywatne. [Osoby](people.md) · [Linki dla gości](guest-links.md) · [Dostęp publiczny](funnel.md)
+Linki dla gości i nowe publiczne adresy URL wygasają i działają tylko dla aplikacji webowych; foldery, pliki i porty TCP pozostają prywatne. Działają przez Funnel, który jest wolny przy bardzo dużych plikach (około 0,65–1,5 MB/s na strumień wysyłania, pomiar z 2026-11-11); do dużych transferów użyj uprawnień dla osób w aplikacji bez linków dla gości. [Osoby](people.md) · [Linki dla gości](guest-links.md) · [Dostęp publiczny](funnel.md)
 
 <a id="architecture"></a>
 

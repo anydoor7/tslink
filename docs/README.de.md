@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-Gastlinks und neue öffentliche URLs laufen ab und funktionieren nur für Web-Apps; Ordner, Dateien und TCP-Ports bleiben privat. [Personen](people.md) · [Gastlinks](guest-links.md) · [Öffentlicher Zugriff](funnel.md)
+Gastlinks und neue öffentliche URLs laufen ab und funktionieren nur für Web-Apps; Ordner, Dateien und TCP-Ports bleiben privat. Sie laufen über Funnel, das für sehr große Dateien langsam ist (etwa 0,65 bis 1,5 MB/s pro Upload-Stream, gemessen am 2026-11-11); für große Übertragungen nutzen Sie Personenfreigaben auf einer App ohne Gastlinks. [Personen](people.md) · [Gastlinks](guest-links.md) · [Öffentlicher Zugriff](funnel.md)
 
 <a id="architecture"></a>
 

@@ -121,7 +121,7 @@ tslink guest create photos --for 3d --public --print-link
 tslink add launch --proxy localhost:4000 --funnel --public --funnel-ttl 1h   # anyone, for one hour
 ```
 
-게스트 링크와 새 공개 URL은 만료되며 웹 앱에만 쓸 수 있습니다. 폴더, 파일, TCP 포트는 비공개로 남습니다. [사용자 공유](people.md) · [게스트 링크](guest-links.md) · [공개 접속](funnel.md)
+게스트 링크와 새 공개 URL은 만료되며 웹 앱에만 쓸 수 있습니다. 폴더, 파일, TCP 포트는 비공개로 남습니다. 게스트 링크는 Funnel을 거치므로 아주 큰 파일에는 느립니다(2026-11-11 측정, 업로드 스트림당 약 0.65~1.5 MB/s). 큰 전송에는 게스트 링크가 없는 앱에서 사용자 공유를 쓰세요. [사용자 공유](people.md) · [게스트 링크](guest-links.md) · [공개 접속](funnel.md)
 
 <a id="architecture"></a>
 
