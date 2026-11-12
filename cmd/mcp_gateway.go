@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/server"
@@ -147,7 +148,29 @@ func withPublicMutationGuard(ctx context.Context) context.Context {
 		return ctx
 	}
 	caller := ctx
-	return registry.WithPublicMutationGuard(ctx, func(before, _ *registry.Registry) error {
+	return registry.WithPublicMutationGuard(ctx, func(before, _ *registry.Registry, change registry.GuardedChange) error {
+		// The gateway rule, on every door that registers a route (add,
+		// template_apply, share, people grants that route an app): route
+		// creation needs the portal owner, fail-closed while none is set.
+		if change.RouteAdded {
+			if err := requireRequestOwnerInRegistry(caller, before); err != nil {
+				return err
+			}
+		}
+		if !change.Public {
+			return nil
+		}
+		// Pulling a link only reduces exposure, and a leaked link must be
+		// pullable by the operator on call: an MCP owner-role caller may
+		// revoke existing guest grants when that is the whole public change.
+		if change.OnlyRevokesGuests && mcpOwnerRole(caller) {
+			return nil
+		}
 		return requirePortalOwnerForPublicChange(caller, before)
 	})
+}
+
+func mcpOwnerRole(ctx context.Context) bool {
+	session, ok := mcpscope.FromContext(ctx)
+	return ok && session.Scope.Role == "owner"
 }

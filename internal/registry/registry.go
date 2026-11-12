@@ -1430,12 +1430,6 @@ func withLockContext(ctx context.Context, regPath string, fn func() error) error
 		return err
 	}
 
-	// The in-process mutex serializes this process's transactions on the
-	// path even if the file lock were not exclusive, so the public mutation
-	// guard of one transaction can never be seen by another one's save.
-	inProcess := transactionMutex(regPath)
-	inProcess.Lock()
-	defer inProcess.Unlock()
 	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
@@ -1446,6 +1440,13 @@ func withLockContext(ctx context.Context, regPath string, fn func() error) error
 		return err
 	}
 	defer unlockFn(lockFile)
+	// The in-process mutex serializes this process's transactions on the
+	// path even if the file lock were not exclusive, so the public mutation
+	// guard of one transaction can never be seen by another one's save. It
+	// is taken after the file lock (tryWithLock takes both without waiting).
+	inProcess := transactionMutex(regPath)
+	inProcess.Lock()
+	defer inProcess.Unlock()
 	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
@@ -1469,11 +1470,6 @@ func tryWithLock(regPath string, fn func() error) (bool, error) {
 	if err := convergeRegistryFile(regPath + ".lock"); err != nil {
 		return false, err
 	}
-	inProcess := transactionMutex(regPath)
-	if !inProcess.TryLock() {
-		return false, nil
-	}
-	defer inProcess.Unlock()
 	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return false, err
@@ -1484,6 +1480,11 @@ func tryWithLock(regPath string, fn func() error) (bool, error) {
 		return acquired, err
 	}
 	defer filelock.Unlock(lockFile)
+	inProcess := transactionMutex(regPath)
+	if !inProcess.TryLock() {
+		return false, nil
+	}
+	defer inProcess.Unlock()
 	return true, fn()
 }
 
@@ -2006,6 +2007,14 @@ func KeepIfUnchangedContext(ctx context.Context, path string, expected Service) 
 		for _, svc := range reg.Services {
 			if svc.Name != expected.Name || !reflect.DeepEqual(svc, expected) {
 				continue
+			}
+			// Settling a tentative public registration keeps an exposure its
+			// creator would otherwise roll back: a public change, though it
+			// writes no registry.
+			if _, statErr := os.Lstat(tentativeMarkPath(path, expected.Name)); statErr == nil && svc.PubliclyExposed() {
+				if err := checkPublicSettle(path, reg); err != nil {
+					return err
+				}
 			}
 			if err := dropTentativeMark(path, expected.Name); err != nil {
 				return err

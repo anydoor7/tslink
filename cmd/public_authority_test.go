@@ -125,7 +125,7 @@ func publicMutationCases() []publicMutationCase {
 		{"guest-create-gated-print-link", "guest_create", static(map[string]any{"app": "pub", "for": "2h", "public": true, "print_link": true}), true},
 		{"guest-create-funnel", "guest_create", static(map[string]any{"app": "fun", "for": "2h", "public": true}), false}, // an open Funnel refuses guest links for everyone
 		{"guest-create-makes-private-public", "guest_create", static(map[string]any{"app": "priv", "for": "2h", "public": true}), true},
-		{"guest-revoke", "guest_revoke", func(f publicFixture) map[string]any { return map[string]any{"id": f.guestID} }, true},
+		{"recipe-apply-new-funnel", "recipe_apply", static(map[string]any{"recipe_id": "jellyfin", "name": "rpub", "target": "localhost:8096", "funnel": true, "public_ack": true, "funnel_ttl": "2h", "no_daemon_install": true}), true},
 		{"extend-funnel", "extend", static(map[string]any{"service": "fun", "for": "3h"}), true},
 		{"extend-regrant-lapsed", "extend", static(map[string]any{"service": "lapsed", "for": "2h", "regrant": true}), true},
 		{"tags-set-funnel", "tags_set", static(map[string]any{"service": "fun", "tag": "tag:other"}), true},
@@ -156,15 +156,15 @@ var mutatingToolClass = map[string]string{
 	"add":                 "public: replaces a definition; guard on before and after",
 	"share":               "public: creates or re-arms a Funnel; guard",
 	"unshare":             "public: removes the app; authorizePortalServiceMutation before node retirement, and guard",
-	"template_apply":      "not public: templates carry no Funnel or gate and skip existing names; guard still applies",
-	"recipe_apply":        "not public: recipes carry no Funnel or gate and skip existing names; guard still applies",
+	"template_apply":      "not public: templates carry no Funnel or gate; new routed apps need the portal owner (gateway rule in the guard, TestRouteCreationOverRemoteMCPRequiresThePortalOwner)",
+	"recipe_apply":        "public: funnel, public_ack and funnel_ttl inputs; adopting a tentative public share is a public settle; guard",
 	"health_set":          "public: definition change; authorizePortalServiceMutation and guard",
 	"limits_set":          "public: what an internet caller may send; authorizePortalServiceMutation and guard",
 	"tags_set":            "public: definition change and node restart; guard",
 	"app_restart":         "public: restarts the public listener; guard",
 	"extend":              "public for the Funnel audience: public lifetime; guard. Person audience: tailnet grant, peopleMutationAuthorization",
 	"guest_create":        "public: always leaves the app gated; pre-check on gated form and guard",
-	"guest_revoke":        "public: reduces a public link; guard",
+	"guest_revoke":        "exempt: an MCP owner-role caller may revoke existing grants when that is the whole public change (TestGuestRevokeOverRemoteMCPIsExemptForTheOwnerRole)",
 	"portal_route_add":    "not public: gateway rule (portal owner) already; guest-gated and Funnel apps cannot be routed",
 	"portal_route_remove": "not public: gateway rule already",
 	"portal_enable":       "not public: portal is Tailnet-only; already requires the portal owner",
@@ -196,6 +196,9 @@ func TestEveryMutatingMCPToolIsClassifiedForThePublicRule(t *testing.T) {
 		if !ok {
 			t.Errorf("mutating MCP tool %q is not classified for the public portal-owner rule", definition.Name)
 			continue
+		}
+		if !strings.HasPrefix(class, "public") && !strings.HasPrefix(class, "exempt") && !strings.HasPrefix(class, "not public") {
+			t.Errorf("tool %q has an unknown class %q", definition.Name, class)
 		}
 		if strings.HasPrefix(class, "public") && !covered[definition.Name] {
 			t.Errorf("public-relevant tool %q has no row in publicMutationCases", definition.Name)
@@ -453,6 +456,8 @@ func wrapPublicActions(a *mcpActions, wrap func(context.Context) context.Context
 	a.extend = func(ctx context.Context, x extendArguments) (any, error) { return extend(wrap(ctx), x) }
 	a.tagsSet = func(ctx context.Context, s, tag string) (any, error) { return tags(wrap(ctx), s, tag) }
 	a.appRestart = func(ctx context.Context, app string) (any, error) { return restart(wrap(ctx), app) }
+	recipe := a.recipeApply
+	a.recipeApply = func(ctx context.Context, r recipeRequest, dry bool) (any, error) { return recipe(wrap(ctx), r, dry) }
 }
 
 func publicArgsJSON(t *testing.T, v any) json.RawMessage {
@@ -472,4 +477,147 @@ func publicActions(f publicFixture) mcpActions {
 		return executeShare(ctx, f.paths, req, 0, io.Discard)
 	}
 	return a
+}
+
+// E: pulling a leaked link only reduces exposure, so an MCP owner-role caller
+// may revoke an existing grant without being the portal owner. The exemption
+// is exactly that: the receipt names the caller, and a reduced role still
+// cannot call the tool.
+func TestGuestRevokeOverRemoteMCPIsExemptForTheOwnerRole(t *testing.T) {
+	for _, outsider := range append(publicOutsiders(), publicCaller{name: "revoked-owner", login: "owner", allow: []string{"owner"}}) {
+		t.Run(outsider.name, func(t *testing.T) {
+			f := publicAuthorityFixture(t, "owner", true)
+			if outsider.name == "revoked-owner" {
+				if _, err := registry.RemovePerson(f.paths.Registry, "owner"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result := portalRemoteCall(t, publicServer(t, outsider, publicActions(f)), "guest_revoke", map[string]any{"id": f.guestID})
+			if bytes.Contains(result, []byte(`"isError":true`)) {
+				t.Fatalf("owner-role revoke refused: %s", result)
+			}
+			if _, reason := registry.CheckGuest(f.paths.Registry, "pub", f.guestID, time.Now(), false, false); reason != "revoked" {
+				t.Fatalf("link still %q", reason)
+			}
+			journal, err := os.ReadFile(mcpAuditPath(f.paths.Registry))
+			if err != nil || !bytes.Contains(journal, []byte(`"tool":"guest_revoke"`)) || !bytes.Contains(journal, []byte(`"principal":"`+outsider.login)) && !bytes.Contains(journal, []byte(`"principal":"tag:ops"`)) {
+				t.Fatalf("receipt does not name the caller: %s %v", journal, err)
+			}
+		})
+	}
+	t.Run("reduced-role", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "owner", true)
+		before := registryBytes(t, f.paths.Registry)
+		expiry := time.Now().Add(time.Hour)
+		caller := publicCaller{login: "helper", bindings: []mcpscope.Binding{{Principal: "helper", Scope: mcpscope.Scope{Role: "app-operator", Apps: []string{"pub"}, MaxDuration: "2h"}, ExpiresAt: &expiry}}}
+		// guest_revoke is owner-only before and after this rule: a reduced
+		// role is answered as for an unknown tool (HTTP 400) and nothing runs.
+		status, result := publicRemoteCallStatus(t, publicServer(t, caller, publicActions(f)), "guest_revoke", map[string]any{"id": f.guestID})
+		if status == http.StatusOK && !bytes.Contains(result, []byte(`"isError":true`)) || !bytes.Equal(before, registryBytes(t, f.paths.Registry)) {
+			t.Fatalf("reduced role revoked a link: %d %s", status, result)
+		}
+	})
+	t.Run("unowned-gateway", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "", true)
+		result := portalRemoteCall(t, publicServer(t, publicOutsiders()[0], publicActions(f)), "guest_revoke", map[string]any{"id": f.guestID})
+		if bytes.Contains(result, []byte(`"isError":true`)) {
+			t.Fatalf("owner-role revoke refused on an unowned gateway: %s", result)
+		}
+	})
+}
+
+// M2: settling a tentative public registration writes no registry but keeps
+// an exposure its creator would roll back. A non-owner's identical share or a
+// recipe that adopts it by name is refused, and the owner's rollback works.
+func TestSettlingATentativePublicShareRequiresThePortalOwner(t *testing.T) {
+	for _, via := range []string{"share", "recipe_apply"} {
+		t.Run(via, func(t *testing.T) {
+			f := publicAuthorityFixture(t, "owner", true)
+			req := shareRequest{Target: "localhost:15", Ephemeral: true, Funnel: true, PublicAck: true, FunnelTTL: "2h", FunnelTTLSet: true, Now: time.Now()}
+			spec, err := inferShareTarget(req.Target, req.Ephemeral)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if spec, err = applyShareExposure(spec, req); err != nil {
+				t.Fatal(err)
+			}
+			reg, err := registerShareWithOutcomeContext(context.Background(), f.paths.Registry, spec, "")
+			if err != nil || !reg.Created {
+				t.Fatalf("owner tentative share: %+v %v", reg, err)
+			}
+			mark := f.paths.Registry + ".tentative-" + reg.Service.Name
+			args := map[string]any{"target": "localhost:15", "funnel": true, "public_ack": true, "funnel_ttl": "2h", "no_daemon_install": true}
+			if via == "recipe_apply" {
+				args = map[string]any{"recipe_id": "jellyfin", "name": reg.Service.Name, "target": "localhost:8096", "no_daemon_install": true}
+			}
+			result := portalRemoteCall(t, publicServer(t, publicOutsiders()[0], publicActions(f)), via, args)
+			if !refusedForOwner(result) {
+				t.Fatalf("non-owner settled the owner's tentative public share: %s", result)
+			}
+			if _, err := os.Stat(mark); err != nil {
+				t.Fatalf("tentative mark gone: %v", err)
+			}
+			if removed, err := registry.RemoveIfUnchanged(f.paths.Registry, reg.Service); err != nil || !removed {
+				t.Fatalf("owner's rollback: removed=%v err=%v", removed, err)
+			}
+		})
+	}
+}
+
+// M4: route creation on a home gateway needs the portal owner on every door,
+// not only add: template_apply and share register through the same guard.
+func TestRouteCreationOverRemoteMCPRequiresThePortalOwner(t *testing.T) {
+	for _, tc := range []struct {
+		name, tool string
+		args       map[string]any
+	}{
+		{"add-new-private", "add", map[string]any{"name": "n2", "type": "proxy", "target": "localhost:32", "no_daemon_install": true}},
+		{"share-new-private", "share", map[string]any{"target": "localhost:77", "no_daemon_install": true}},
+		{"template-local-web", "template_apply", map[string]any{"name": "local-web", "no_daemon_install": true}},
+		{"template-local-ai-suite", "template_apply", map[string]any{"name": "local-ai-suite", "no_daemon_install": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, outsider := range publicOutsiders() {
+				f := publicAuthorityFixture(t, "owner", true)
+				before := registryBytes(t, f.paths.Registry)
+				result := portalRemoteCall(t, publicServer(t, outsider, publicActions(f)), tc.tool, tc.args)
+				if !refusedForOwner(result) || !bytes.Equal(before, registryBytes(t, f.paths.Registry)) {
+					t.Fatalf("%s: non-owner created a routed app: %s", outsider.name, result)
+				}
+			}
+			f := publicAuthorityFixture(t, "owner", true)
+			result := portalRemoteCall(t, publicServer(t, publicCaller{login: "owner", allow: []string{"owner"}}, publicActions(f)), tc.tool, tc.args)
+			if refusedForOwner(result) {
+				t.Fatalf("portal owner refused: %s", result)
+			}
+		})
+	}
+}
+
+func publicRemoteCallStatus(t *testing.T, srv *httptest.Server, tool string, args map[string]any) (int, []byte) {
+	t.Helper()
+	r := mcpHTTPToolCallRequest(tool)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(b, &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire["params"].(map[string]any)["arguments"] = args
+	if b, err = json.Marshal(wire); err != nil {
+		t.Fatal(err)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(b))
+	r.ContentLength, r.RequestURI = int64(len(b)), ""
+	r.URL.Scheme, r.URL.Host = "http", strings.TrimPrefix(srv.URL, "http://")
+	r.Host = r.URL.Host
+	resp, err := srv.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body
 }

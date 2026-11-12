@@ -77,7 +77,7 @@ func TestPublicMutationGuardRefusesBeforeDisk(t *testing.T) {
 	}
 	refusal := errors.New("refused")
 	calls := 0
-	ctx := WithPublicMutationGuard(context.Background(), func(before, after *Registry) error {
+	ctx := WithPublicMutationGuard(context.Background(), func(before, after *Registry, _ GuardedChange) error {
 		calls++
 		if len(before.Services) != 2 {
 			t.Errorf("guard saw %d services before", len(before.Services))
@@ -117,7 +117,7 @@ func TestPublicMutationGuardHoldsWithoutTheFileLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	refusal := errors.New("refused")
-	outsider := WithPublicMutationGuard(context.Background(), func(_, _ *Registry) error { return refusal })
+	outsider := WithPublicMutationGuard(context.Background(), func(_, _ *Registry, _ GuardedChange) error { return refusal })
 	var localRefused, outsiderSaved, daemonRefused atomic.Int64
 	var wg sync.WaitGroup
 	stop := time.Now().Add(time.Second)
@@ -166,5 +166,40 @@ func TestPublicMutationGuardHoldsWithoutTheFileLock(t *testing.T) {
 	activeGuardsMu.Unlock()
 	if outsiderSaved.Load() != 0 || localRefused.Load() != 0 || daemonRefused.Load() != 0 || reg.Services[0].Target != "http://localhost:1" || left != 0 {
 		t.Fatalf("guard crossed transactions: outsiderSaved=%d localRefused=%d daemonRefused=%d target=%s stale=%d", outsiderSaved.Load(), localRefused.Load(), daemonRefused.Load(), reg.Services[0].Target, left)
+	}
+}
+
+// The revoke exemption is exact: only existing grants going active ->
+// revoked, with no service or other grant change.
+func TestClassifyGuardedChange(t *testing.T) {
+	pub := Service{Name: "pub", GuestGate: true}
+	base := func() *Registry {
+		return &Registry{Services: []Service{pub, {Name: "priv"}}, Guests: []GuestGrant{{ID: "g1", App: "pub"}, {ID: "g2", App: "pub"}}}
+	}
+	for _, tc := range []struct {
+		name                   string
+		mutate                 func(*Registry)
+		public, onlyRevoke, rt bool
+	}{
+		{"revoke one", func(r *Registry) { r.Guests[0].Revoked = true }, true, true, false},
+		{"revoke both", func(r *Registry) { r.Guests[0].Revoked, r.Guests[1].Revoked = true, true }, true, true, false},
+		{"revoke and retarget", func(r *Registry) { r.Guests[0].Revoked = true; r.Services[0].Target = "x" }, true, false, false},
+		{"revoke and add a grant", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests = append(r.Guests, GuestGrant{ID: "g3", App: "pub"}) }, true, false, false},
+		{"revoke and extend", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests[1].ExpiresAt = time.Now() }, true, false, false},
+		{"unrevoke", func(r *Registry) { r.Guests[0].Revoked = true }, true, true, false},
+		{"route a private app", func(r *Registry) { r.Services[1].PortalRoute = &PortalRoute{Port: 8443} }, false, false, true},
+		{"new routed app", func(r *Registry) { r.Services = append(r.Services, Service{Name: "n", PortalRoute: &PortalRoute{Port: 8444}}) }, false, false, true},
+	} {
+		after := base()
+		tc.mutate(after)
+		before := base()
+		if tc.name == "unrevoke" {
+			before, after = after, base()
+			tc.onlyRevoke = false
+		}
+		got := ClassifyGuardedChange(before, after)
+		if got.Public != tc.public || got.OnlyRevokesGuests != tc.onlyRevoke || got.RouteAdded != tc.rt {
+			t.Errorf("%s: %+v", tc.name, got)
+		}
 	}
 }

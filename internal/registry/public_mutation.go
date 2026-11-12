@@ -7,19 +7,36 @@ import (
 	"sync"
 )
 
-// PublicMutationGuard decides whether a write may change public state. It is
-// called by save, under the registry lock, with the registry as loaded when
-// the lock was taken and the registry about to be written, and only when
-// PublicStateChanged reports a change. A non-nil error refuses the write
-// before anything reaches disk.
-type PublicMutationGuard func(before, after *Registry) error
+// GuardedChange classifies a guarded write for the caller's authority rule.
+// The registry decides what changed; the guard decides who may change it.
+type GuardedChange struct {
+	// Public: the write changes a publicly exposed service or its guest links
+	// (PublicStateChanged), or settles a tentative public registration.
+	Public bool
+	// OnlyRevokesGuests: the only public difference is existing guest grants
+	// going from active to revoked; no service and no other grant changes.
+	OnlyRevokesGuests bool
+	// RouteAdded: a service gains a home gateway route it did not have,
+	// including a new service registered with one (RoutesAdded).
+	RouteAdded bool
+}
+
+// Relevant reports whether the guard needs to be consulted at all.
+func (c GuardedChange) Relevant() bool { return c.Public || c.RouteAdded }
+
+// PublicMutationGuard decides whether a guarded write may proceed. save calls
+// it under the registry lock, with the registry as loaded when the lock was
+// taken, the registry about to be written and the classification, only when
+// the classification is Relevant. A non-nil error refuses the write before
+// anything reaches disk.
+type PublicMutationGuard func(before, after *Registry, change GuardedChange) error
 
 type publicMutationGuardKey struct{}
 
 // WithPublicMutationGuard makes every registry write performed with ctx
 // subject to guard. The guard is one rule at one point: it sees each write a
 // tool performs, whichever registry helper performs it, so a tool cannot reach
-// public state by a path that forgot to ask.
+// public state or create a gateway route by a path that forgot to ask.
 func WithPublicMutationGuard(ctx context.Context, guard PublicMutationGuard) context.Context {
 	return context.WithValue(ctx, publicMutationGuardKey{}, guard)
 }
@@ -68,14 +85,85 @@ func activatePublicMutationGuard(path string, before *Registry, guard PublicMuta
 	}
 }
 
-func checkPublicMutationGuard(path string, after *Registry) error {
+func currentGuard(path string) (*activeGuard, bool) {
 	activeGuardsMu.Lock()
+	defer activeGuardsMu.Unlock()
 	active, ok := activeGuards[guardKey(path)]
-	activeGuardsMu.Unlock()
-	if !ok || !PublicStateChanged(active.before, after) {
+	return active, ok
+}
+
+func checkPublicMutationGuard(path string, after *Registry) error {
+	active, ok := currentGuard(path)
+	if !ok {
 		return nil
 	}
-	return active.guard(active.before, after)
+	change := ClassifyGuardedChange(active.before, after)
+	if !change.Relevant() {
+		return nil
+	}
+	return active.guard(active.before, after, change)
+}
+
+// checkPublicSettle consults the transaction's guard for a public change
+// that writes no registry: settling a tentative public registration keeps an
+// exposure its creator would otherwise roll back.
+func checkPublicSettle(path string, reg *Registry) error {
+	active, ok := currentGuard(path)
+	if !ok {
+		return nil
+	}
+	return active.guard(active.before, reg, GuardedChange{Public: true})
+}
+
+// ClassifyGuardedChange computes the GuardedChange of a write.
+func ClassifyGuardedChange(before, after *Registry) GuardedChange {
+	change := GuardedChange{Public: PublicStateChanged(before, after), RouteAdded: RoutesAdded(before, after)}
+	change.OnlyRevokesGuests = change.Public && onlyRevokesGuests(before, after)
+	return change
+}
+
+// RoutesAdded reports whether a service gains a gateway route it did not
+// have, or a new service is registered with one.
+func RoutesAdded(before, after *Registry) bool {
+	if after == nil {
+		return false
+	}
+	had := map[string]bool{}
+	if before != nil {
+		for _, svc := range before.Services {
+			had[svc.Name] = svc.PortalRoute != nil
+		}
+	}
+	for _, svc := range after.Services {
+		if svc.PortalRoute != nil && !had[svc.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// onlyRevokesGuests: services identical, the same grants in the same order,
+// and every differing grant differs only by Revoked going false -> true.
+func onlyRevokesGuests(before, after *Registry) bool {
+	if before == nil || after == nil || !reflect.DeepEqual(before.Services, after.Services) || len(before.Guests) != len(after.Guests) {
+		return false
+	}
+	revoked := false
+	for i := range before.Guests {
+		was, is := before.Guests[i], after.Guests[i]
+		if reflect.DeepEqual(was, is) {
+			continue
+		}
+		if was.Revoked || !is.Revoked {
+			return false
+		}
+		was.Revoked = true
+		if !reflect.DeepEqual(was, is) {
+			return false
+		}
+		revoked = true
+	}
+	return revoked
 }
 
 // PublicStateChanged reports whether a write changes anything about a
