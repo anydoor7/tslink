@@ -112,7 +112,8 @@ app's node last started (and when that was), gives the most recent time and the
 the node, so the count resets when the limit is changed; every refused upload
 stays in `tslink access log --app <app>` with its 413 or 408 status. A
 connection that times out before sending any request byte (Funnel and edge
-relays open idle ones) is not counted as a rejected request. The first rejection is published at once;
+relays open idle ones) still gets the 408 and an Info-level log line, but is
+not counted as a rejected request. The first rejection is published at once;
 later ones within 30 seconds are published together at the end of that window.
 Warnings last until the service node restarts. Change limits with
 `tslink limits set <app> --max-request-body 4GiB` (MCP `limits_set`): it changes

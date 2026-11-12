@@ -112,26 +112,44 @@ public acknowledgement (`extend` or `share` can re-arm it without a new one),
 or a guest gate. Over remote HTTP MCP, any write that changes such an app
 before or after the write requires the current portal owner: its definition
 (`add`, `share`, `tags_set`, `health_set`, `limits_set`), its lifetime
-(`extend` of the Funnel), its guest links (`guest_create`, `guest_revoke`), a
-restart (`app_restart`), its removal (`unshare`), and every write that makes a
-private app public. The check runs inside the registry write transaction on
+(`extend` of the Funnel), new guest links (`guest_create`), a restart
+(`app_restart`), its removal (`unshare`), and every write that makes a
+private app public, including settling another caller's still-tentative public
+`share` (an identical `share`, or a `recipe_apply` naming it). The check runs inside the registry write transaction on
 the registry loaded under the lock, at the one place every registry write
 passes, so a tool cannot reach public state by a path that forgot to ask; the
 tools that act before they write (a route removal, a node retirement, a URL
 wait) also answer early. A refusal is `access_request_owner_required`, changes
 nothing and names no other app. The caller must be the recorded owner from an
-untagged device, and a revoked owner is refused. Reducing changes (revoking a
-link, unsharing a public app) are included, as `unshare` of a routed app is: a
-principal who may pull a link may also delete the public service. Pull a
-leaking link as the portal owner, or on the gateway host with the local CLI or
-stdio MCP, which this rule does not affect. Private apps without a route keep
-the MCP owner role rule.
+untagged device, and a revoked owner is refused. One reducing change is
+exempt: a caller with the MCP owner role (an `mcp.allow` login or tag, or an
+owner binding) may revoke existing guest links with `guest_revoke` without
+being the portal owner, so an operator on call can pull a leaked link. The
+exemption covers exactly a write whose whole public change is existing grants
+going from active to revoked; the MCP receipt names the caller, and reduced
+roles still cannot call `guest_revoke`. Every other reducing change
+(`unshare` of a public app, turning its Funnel off) needs the portal owner, as
+`unshare` of a routed app does, because it destroys or degrades the service.
+Local CLI and stdio MCP are not affected by this rule. Private apps without a
+route keep the MCP owner role rule.
+
+Creating a gateway route needs the portal owner on every door, not only
+`add`: `template_apply`, `share` and a people grant that routes an existing
+app register through the same check, which refuses every remote caller while
+the gateway has no owner.
 
 The rule applies when a portal owner is recorded (disabling the portal keeps
-it, and no remote call can set or clear it) or a home gateway is on, whose
-routed apps already refuse every remote caller until its owner is
-bootstrapped. A legacy install with neither has no authority above the MCP
-owner role, which then keeps governing public changes; configure an owner with
+it; only the current portal owner can change it remotely, by transferring it
+with `portal_enable`, and nothing remote clears it) or a home gateway is on,
+whose routed apps already refuse every remote caller until its owner is
+bootstrapped. On such a gateway, remote person changes (`people_*`) are
+refused too until the owner is set, so nobody can place a revocation on the
+login that is about to become owner. The daemon does not bootstrap a revoked
+login as owner. Designating the owner with `tslink portal enable --owner
+<login>` restores that login if it was revoked, in the same write; this is the
+local recovery when an owner is locked out by a revocation. A legacy install
+with neither an owner nor a gateway has no authority above the MCP owner role,
+which then keeps governing public changes; configure an owner with
 `tslink portal enable --owner you@example.com` to close that.
 
 New private HTTP/file apps receive stable routes automatically when the gateway is enabled; their own app nodes and URLs remain. Authorization also routes supported existing apps as needed. Running `portal enable` without gateway options preserves an existing mode and defaults a new portal to gateway mode.

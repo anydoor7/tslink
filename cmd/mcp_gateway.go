@@ -108,7 +108,8 @@ func authorizePortalServiceMutation(ctx context.Context, reg *registry.Registry,
 
 // portalOwnerGovernsPublicChanges reports whether a portal owner is the
 // authority for public changes. It is configured once an owner is recorded
-// (disabling the portal keeps it; nothing remote clears it), and on a home
+// (disabling the portal keeps it; only the current owner can change it
+// remotely and nothing remote clears it), and on a home
 // gateway before its first owner is bootstrapped, where the gateway rule is
 // already fail-closed. A legacy install with no portal owner and no gateway has
 // no higher authority than the MCP owner role, which keeps governing.
