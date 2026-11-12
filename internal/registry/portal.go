@@ -159,7 +159,26 @@ func SetPortal(path string, p *PortalConfig) error {
 // SetPortalAuthorized checks the current authority under the same lock as the
 // update. Local owner processes can use SetPortal without a remote check.
 func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry) error, contexts ...context.Context) error {
-	return withLockContext(optionalMutationContext(contexts), path, func() error {
+	_, err := SetPortalOwnerAware(path, p, false, authorize, contexts...)
+	return err
+}
+
+// PortalOwnerOutcome reports what a portal write did about a revoked owner.
+type PortalOwnerOutcome struct {
+	// Restored is the owner login whose revocation tombstone this write
+	// cleared; set only when the caller named that owner explicitly.
+	Restored string
+	// Revoked is the recorded owner login that stays revoked because the
+	// caller did not name it.
+	Revoked string
+}
+
+// SetPortalOwnerAware is SetPortalAuthorized that restores the owner's
+// revocation tombstone only when ownerNamed is true (the invocation named
+// the owner, as `portal enable --owner <login>` does). Otherwise a revoked
+// recorded owner is left revoked and reported in the outcome.
+func SetPortalOwnerAware(path string, p *PortalConfig, ownerNamed bool, authorize func(*Registry) error, contexts ...context.Context) (outcome PortalOwnerOutcome, err error) {
+	err = withLockContext(optionalMutationContext(contexts), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -181,19 +200,26 @@ func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry)
 			}
 		}
 		reg.Portal = p
-		// Designating the owner is the explicit restore of that login: a
+		// Naming the owner is the explicit restore of that login: a
 		// revocation tombstone would refuse the owner every remote change it
 		// is the authority for. Only an authorized caller reaches this (local
-		// CLI or stdio, or the current, unrevoked portal owner remotely).
+		// CLI or stdio, or the current, unrevoked portal owner remotely). An
+		// invocation that does not name the owner keeps a deliberate
+		// revocation and reports it.
 		restored := ""
 		if p != nil && p.Owner != "" {
 			for i := range reg.People {
 				if reg.People[i].Login == p.Owner && reg.People[i].Revoked {
-					reg.People[i].Revoked = false
-					restored = p.Owner
+					if ownerNamed {
+						reg.People[i].Revoked = false
+						restored = p.Owner
+					} else {
+						outcome.Revoked = p.Owner
+					}
 				}
 			}
 		}
+		outcome.Restored = restored
 		if p != nil && p.Owner != "" && (before.Portal == nil || before.Portal.Owner == "") {
 			// The restored owner's own access is what this write changes on
 			// purpose; everyone else's must stay as it was.
@@ -210,6 +236,10 @@ func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry)
 		}
 		return save(path, reg)
 	})
+	if err != nil {
+		return PortalOwnerOutcome{}, err
+	}
+	return outcome, nil
 }
 
 func DisablePortal(path string) error {

@@ -93,6 +93,11 @@ type PortalState struct {
 	State           string        `json:"state"`
 	URL             string        `json:"url,omitempty"`
 	Error           string        `json:"error,omitempty"`
+	// OwnerRestored and OwnerRevoked are set only on a portal enable result:
+	// the owner login whose revocation the command cleared because it named
+	// that owner, or the recorded owner that stays revoked.
+	OwnerRestored string `json:"owner_restored,omitempty"`
+	OwnerRevoked  string `json:"owner_revoked,omitempty"`
 }
 
 type GatewayState struct {

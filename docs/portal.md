@@ -145,9 +145,14 @@ whose routed apps already refuse every remote caller until its owner is
 bootstrapped. On such a gateway, remote person changes (`people_*`) are
 refused too until the owner is set, so nobody can place a revocation on the
 login that is about to become owner. The daemon does not bootstrap a revoked
-login as owner. Designating the owner with `tslink portal enable --owner
-<login>` restores that login if it was revoked, in the same write; this is the
-local recovery when an owner is locked out by a revocation. A legacy install
+login as owner. Naming the owner with `tslink portal enable --owner <login>`
+restores that login if it was revoked, in the same write, and says so
+(`owner_restored` in JSON and MCP, a `portal_owner_restored` receipt); this is
+the local recovery when an owner is locked out by a revocation. A
+`portal enable` that does not name the owner keeps a revoked owner revoked and
+reports it (`owner_revoked`, with the command that restores it), so a
+deliberate `people remove` of the owner is not undone by an unrelated
+command. A legacy install
 with neither an owner nor a gateway has no authority above the MCP owner role,
 which then keeps governing public changes; configure an owner with
 `tslink portal enable --owner you@example.com` to close that.

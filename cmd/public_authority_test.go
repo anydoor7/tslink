@@ -694,3 +694,79 @@ func TestOwnerTombstoneCannotLockTheOwnerOut(t *testing.T) {
 		ownerWorks(t, f)
 	})
 }
+
+// R2-1: only an invocation that names the owner restores a revoked owner,
+// and it says so (human output, JSON data, receipt). Any other enable keeps
+// a deliberate revocation and tells the operator how to restore it.
+func TestPortalEnableRestoresARevokedOwnerOnlyWhenNamed(t *testing.T) {
+	revoked := func(t *testing.T, path string) bool {
+		t.Helper()
+		reg, err := registry.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range reg.People {
+			if p.Login == "owner" {
+				return p.Revoked
+			}
+		}
+		return false
+	}
+	t.Run("unnamed-keeps-the-tombstone", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "owner", true)
+		if _, err := registry.RemovePerson(f.paths.Registry, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		view, err := changePortal(f.paths, portalArguments{Gateway: true, GatewaySet: true}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !revoked(t, f.paths.Registry) {
+			t.Fatal("portal enable without --owner restored the revoked owner")
+		}
+		if view.OwnerRevoked != "owner" || view.OwnerRestored != "" {
+			t.Fatalf("view = %+v", view)
+		}
+		notice := portalOwnerNotice(view)
+		if !strings.Contains(notice, "is revoked") || !strings.Contains(notice, "tslink portal enable --owner owner") {
+			t.Fatalf("notice = %q", notice)
+		}
+		encoded, _ := json.Marshal(view)
+		if !bytes.Contains(encoded, []byte(`"owner_revoked":"owner"`)) || bytes.Contains(encoded, []byte("owner_restored")) {
+			t.Fatalf("json = %s", encoded)
+		}
+		result := portalRemoteCall(t, publicServer(t, publicCaller{login: "owner", allow: []string{"owner"}}, publicActions(f)), "limits_set", map[string]any{"app": "pub", "max_body": "64MiB"})
+		if !refusedForOwner(result) {
+			t.Fatalf("revoked owner regained remote authority: %s", result)
+		}
+	})
+	t.Run("named-restores-and-reports", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "owner", true)
+		if _, err := registry.RemovePerson(f.paths.Registry, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		view, err := changePortal(f.paths, portalArguments{Owner: "owner"}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if revoked(t, f.paths.Registry) || view.OwnerRestored != "owner" || view.OwnerRevoked != "" {
+			t.Fatalf("named owner not restored: %+v", view)
+		}
+		if notice := portalOwnerNotice(view); !strings.Contains(notice, "Restored portal owner owner") {
+			t.Fatalf("notice = %q", notice)
+		}
+		encoded, _ := json.Marshal(view)
+		if !bytes.Contains(encoded, []byte(`"owner_restored":"owner"`)) {
+			t.Fatalf("json = %s", encoded)
+		}
+		journal, err := os.ReadFile(mcpAuditPath(f.paths.Registry))
+		if err != nil || !bytes.Contains(journal, []byte(`"action":"portal_owner_restored"`)) || !bytes.Contains(journal, []byte(`"subject":"owner"`)) {
+			t.Fatalf("no restore receipt: %s %v", journal, err)
+		}
+		// A second named enable has nothing to restore and reports nothing.
+		again, err := changePortal(f.paths, portalArguments{Owner: "owner"}, true)
+		if err != nil || again.OwnerRestored != "" || again.OwnerRevoked != "" {
+			t.Fatalf("repeat = %+v %v", again, err)
+		}
+	})
+}

@@ -174,7 +174,7 @@ func TestPublicMutationGuardHoldsWithoutTheFileLock(t *testing.T) {
 func TestClassifyGuardedChange(t *testing.T) {
 	pub := Service{Name: "pub", GuestGate: true}
 	base := func() *Registry {
-		return &Registry{Services: []Service{pub, {Name: "priv"}}, Guests: []GuestGrant{{ID: "g1", App: "pub"}, {ID: "g2", App: "pub"}}}
+		return &Registry{Services: []Service{pub, {Name: "priv"}}, Guests: []GuestGrant{{ID: "g1", App: "pub", PINHash: "pbkdf2$x"}, {ID: "g2", App: "pub"}}}
 	}
 	for _, tc := range []struct {
 		name                   string
@@ -189,6 +189,8 @@ func TestClassifyGuardedChange(t *testing.T) {
 			r.Guests = append(r.Guests, GuestGrant{ID: "g3", App: "pub"})
 		}, true, false, false},
 		{"revoke and extend", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests[1].ExpiresAt = time.Now() }, true, false, false},
+		{"revoke and clear the PIN of the same grant", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests[0].PINHash = "" }, true, false, false},
+		{"revoke and extend the same grant", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests[0].ExpiresAt = time.Now() }, true, false, false},
 		{"unrevoke", func(r *Registry) { r.Guests[0].Revoked = true }, true, true, false},
 		{"route a private app", func(r *Registry) { r.Services[1].PortalRoute = &PortalRoute{Port: 8443} }, false, false, true},
 		{"new routed app", func(r *Registry) {
@@ -206,5 +208,49 @@ func TestClassifyGuardedChange(t *testing.T) {
 		if got.Public != tc.public || got.OnlyRevokesGuests != tc.onlyRevoke || got.RouteAdded != tc.rt {
 			t.Errorf("%s: %+v", tc.name, got)
 		}
+	}
+}
+
+// R2-2 end to end: a guard that admits only revoke-only writes (the owner
+// role exemption) refuses a write that revokes a grant and changes another
+// field of the same grant, and nothing reaches disk; the plain revoke passes.
+func TestRevokeExemptionRefusesABundledGrantChange(t *testing.T) {
+	path := guestRegistry(t)
+	view, _, err := CreateGuest(path, guestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal := errors.New("portal owner required")
+	ctx := WithPublicMutationGuard(context.Background(), func(_, _ *Registry, change GuardedChange) error {
+		if change.OnlyRevokesGuests {
+			return nil
+		}
+		return refusal
+	})
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = withLockContext(ctx, path, func() error {
+		reg, err := loadForMutation(path)
+		if err != nil {
+			return err
+		}
+		for i := range reg.Guests {
+			if reg.Guests[i].ID == view.ID {
+				reg.Guests[i].Revoked = true
+				reg.Guests[i].ExpiresAt = reg.Guests[i].ExpiresAt.Add(24 * time.Hour)
+			}
+		}
+		return save(path, reg)
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("bundled revoke err = %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("refused bundled revoke reached disk")
+	}
+	if _, err := RevokeGuestContext(ctx, path, view.ID, guestTestNow); err != nil {
+		t.Fatalf("plain revoke under the exemption: %v", err)
 	}
 }

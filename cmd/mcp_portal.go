@@ -4,11 +4,13 @@ func portalSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"gateway": gatewaySchema(),
 		"message": map[string]any{"type": "string"}, "unavailable_apps": stringArraySchema(),
-		"enabled":  map[string]any{"type": "boolean"},
-		"hostname": map[string]any{"type": "string"},
-		"state":    map[string]any{"type": "string"},
-		"url":      map[string]any{"type": "string"},
-		"error":    map[string]any{"type": "string"},
+		"enabled":        map[string]any{"type": "boolean"},
+		"hostname":       map[string]any{"type": "string"},
+		"state":          map[string]any{"type": "string"},
+		"url":            map[string]any{"type": "string"},
+		"error":          map[string]any{"type": "string"},
+		"owner_restored": map[string]any{"type": "string", "description": "Owner login whose revocation this enable cleared, because the call named that owner."},
+		"owner_revoked":  map[string]any{"type": "string", "description": "Recorded owner that stays revoked; restore with portal enable naming that owner."},
 	}, "enabled", "state")
 }
 

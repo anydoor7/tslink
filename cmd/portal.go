@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
@@ -117,6 +119,7 @@ func changePortal(paths sharePaths, args portalArguments, enable bool) (tsRuntim
 }
 
 func changePortalContext(ctx context.Context, paths sharePaths, args portalArguments, enable bool) (tsRuntime.PortalState, error) {
+	var ownerOutcome registry.PortalOwnerOutcome
 	if enable {
 		if err := requireRequestOwner(ctx, paths.Registry); err != nil {
 			return tsRuntime.PortalState{}, err
@@ -153,7 +156,10 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 			}
 		}
 		portal := &registry.PortalConfig{Enabled: true, Hostname: args.Hostname, Owner: args.Owner, Admins: args.Admins}
-		if err := registry.SetPortalAuthorized(paths.Registry, portal, func(reg *registry.Registry) error {
+		// Only an invocation that names the owner restores a revoked owner;
+		// an omitted --owner carries the recorded owner over unchanged.
+		ownerNamed := args.Owner != ""
+		ownerOutcome, err = registry.SetPortalOwnerAware(paths.Registry, portal, ownerNamed, func(reg *registry.Registry) error {
 			if err := requireRequestOwnerInRegistry(ctx, reg); err != nil {
 				return err
 			}
@@ -184,8 +190,14 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 			}
 			portal.Gateway = gateway
 			return registry.ValidatePortal(portal)
-		}, ctx); err != nil {
+		}, ctx)
+		if err != nil {
 			return tsRuntime.PortalState{}, err
+		}
+		if ownerOutcome.Restored != "" {
+			if err := mcpaudit.RecordChange(ctx, paths.Registry, mcpaudit.Surface(ctx), mcpLocalActor(), time.Now(), mcpaudit.Change{Action: "portal_owner_restored", App: portal.Hostname, Subject: ownerOutcome.Restored}); err != nil {
+				return tsRuntime.PortalState{}, err
+			}
 		}
 	} else if err := registry.DisablePortalAuthorizedContext(ctx, paths.Registry, func(reg *registry.Registry) error {
 		if reg.Portal != nil && reg.Portal.Gateway != nil && reg.Portal.Gateway.Enabled {
@@ -204,7 +216,20 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 	}
 	running := inviteIsRunningFn(paths.PID)
 	pid, _ := inviteReadPIDFn(paths.PID)
-	return readPortalView(reg, paths.Registry, running, pid), nil
+	view := readPortalView(reg, paths.Registry, running, pid)
+	view.OwnerRestored, view.OwnerRevoked = ownerOutcome.Restored, ownerOutcome.Revoked
+	return view, nil
+}
+
+// portalOwnerNotice is the human line for a restored or still-revoked owner.
+func portalOwnerNotice(view tsRuntime.PortalState) string {
+	switch {
+	case view.OwnerRestored != "":
+		return fmt.Sprintf("Restored portal owner %s: its revocation was cleared because --owner named it.", view.OwnerRestored)
+	case view.OwnerRevoked != "":
+		return fmt.Sprintf("The recorded portal owner %s is revoked: it cannot open apps or make remote changes. To restore it, run: tslink portal enable --owner %s", view.OwnerRevoked, view.OwnerRevoked)
+	}
+	return ""
 }
 
 func newPortalCmd() *cobra.Command {
@@ -226,6 +251,9 @@ func newPortalCmd() *cobra.Command {
 			output.WriteJSON(c.OutOrStdout(), output.NewSuccess("portal enable", view))
 		} else {
 			fmt.Fprintf(c.OutOrStdout(), "Portal %s: %s\n", view.Hostname, view.State)
+			if notice := portalOwnerNotice(view); notice != "" {
+				fmt.Fprintln(c.OutOrStdout(), notice)
+			}
 			if view.Message != "" {
 				fmt.Fprintln(c.OutOrStdout(), view.Message)
 			}
