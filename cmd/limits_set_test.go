@@ -136,3 +136,35 @@ func TestLimitsSetHelpSaysTheNodeRestarts(t *testing.T) {
 		}
 	}
 }
+
+// A written change says the node restarts and how to know it is back, in the
+// human output, the JSON data and the MCP result; an unchanged one does not.
+func TestLimitsSetSaysTheNodeIsRestarting(t *testing.T) {
+	_, regPath := healthSetFixture(t)
+	if _, err := registry.Add(regPath, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	body := "64MiB"
+	r, err := setLimitsContext(context.Background(), regPath, limitsSetArguments{App: "photos", MaxBody: &body})
+	if err != nil || !r.Changed || !r.NodeRestarting {
+		t.Fatalf("changed result = %+v %v", r, err)
+	}
+	for _, want := range []string{"restarting", "reopen their link", "tslink url photos --wait"} {
+		if !strings.Contains(r.Message, want) {
+			t.Errorf("message %q lacks %q", r.Message, want)
+		}
+	}
+	var human strings.Builder
+	formatLimitsSet(&human, r)
+	if !strings.Contains(human.String(), "tslink url photos --wait") {
+		t.Fatalf("human output = %q", human.String())
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil || !strings.Contains(string(encoded), `"node_restarting":true`) {
+		t.Fatalf("json = %s %v", encoded, err)
+	}
+	same, err := setLimitsContext(context.Background(), regPath, limitsSetArguments{App: "photos", MaxBody: &body})
+	if err != nil || same.Changed || same.NodeRestarting || same.Message != "" {
+		t.Fatalf("unchanged result = %+v %v", same, err)
+	}
+}

@@ -33,6 +33,16 @@ type LimitsSetResult struct {
 	// Changed is false when the stored limits already matched; nothing was written.
 	Changed       bool                             `json:"changed"`
 	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits"`
+	// NodeRestarting is true when the change was written: the running daemon
+	// restarts the app's node to apply it. The command does not wait for it.
+	NodeRestarting bool   `json:"node_restarting"`
+	Message        string `json:"message,omitempty"`
+}
+
+// limitsRestartMessage says what a written change does to people using the
+// app: the registry write returns at once and the node restarts after it.
+func limitsRestartMessage(app string) string {
+	return fmt.Sprintf("%s's node is restarting to apply the new limits: open connections and uploads in flight end, and guests get 401 until they reopen their link (and enter its PIN again). Check `tslink url %s --wait` (or `tslink status`) before telling anyone to retry.", app, app)
 }
 
 // setLimitsContext is shared by the CLI and the limits_set tool. Like health
@@ -56,7 +66,11 @@ func setLimitsContext(ctx context.Context, regPath string, args limitsSetArgumen
 	if err != nil {
 		return LimitsSetResult{}, err
 	}
-	return LimitsSetResult{App: svc.Name, Changed: changed, RequestLimits: svc.EffectiveRequestLimits()}, nil
+	result := LimitsSetResult{App: svc.Name, Changed: changed, RequestLimits: svc.EffectiveRequestLimits()}
+	if changed {
+		result.NodeRestarting, result.Message = true, limitsRestartMessage(svc.Name)
+	}
+	return result, nil
 }
 
 func formatLimitsSet(out io.Writer, r LimitsSetResult) {
@@ -67,9 +81,12 @@ func formatLimitsSet(out io.Writer, r LimitsSetResult) {
 	l := r.RequestLimits
 	if l == nil {
 		fmt.Fprintf(out, humanText("✓ %s request limits %s.\n"), r.App, verb)
-		return
+	} else {
+		fmt.Fprintf(out, humanText("✓ %s request limits %s: body %s, header timeout %s, read timeout %s, idle timeout %s\n"), r.App, verb, registry.RequestBodyLimitText(l.MaxBodyBytes), l.HeaderTimeout, l.ReadTimeout, l.IdleTimeout)
 	}
-	fmt.Fprintf(out, humanText("✓ %s request limits %s: body %s, header timeout %s, read timeout %s, idle timeout %s\n"), r.App, verb, registry.RequestBodyLimitText(l.MaxBodyBytes), l.HeaderTimeout, l.ReadTimeout, l.IdleTimeout)
+	if r.Message != "" {
+		fmt.Fprintln(out, r.Message)
+	}
 }
 
 func init() {
@@ -127,7 +144,7 @@ func init() {
 	mcpToolHints["limits_set"] = mcpHints(false, false, true, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
 		Name: "limits_set",
-		Description: "Change only one app's HTTP request limits in a single registry transaction. Keeps target, access, routes, health, preserve_host, the guest gate and the enrolled node; works on apps with guest links, where add is refused. The app's node restarts to apply new limits: open connections and in-flight uploads end and guests must reopen their link. " +
+		Description: "Change only one app's HTTP request limits in a single registry transaction. Keeps target, access, routes, health, preserve_host, the guest gate and the enrolled node; works on apps with guest links, where add is refused. The app's node restarts to apply new limits: open connections and in-flight uploads end and guests must reopen their link. The call returns before the restart; a written change reports node_restarting true, so check url or status before telling anyone to retry. " +
 			"Omitted fields keep their stored value; an empty string returns that limit to its default (32MiB body, 10s header, 30s read, 60s idle). max_body unlimited requires unlimited_ack true. " +
 			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only." + mcpPublicOwnerNote,
 		InputSchema: objectSchema(map[string]any{
@@ -139,9 +156,11 @@ func init() {
 			"idle_timeout":   map[string]any{"type": "string", "description": "Keep-alive idle duration; empty means 60s."},
 		}, "app"),
 		OutputSchema: objectSchema(map[string]any{
-			"app":            map[string]any{"type": "string"},
-			"changed":        map[string]any{"type": "boolean"},
-			"request_limits": map[string]any{"type": []string{"object", "null"}},
-		}, "app", "changed", "request_limits"),
+			"app":             map[string]any{"type": "string"},
+			"changed":         map[string]any{"type": "boolean"},
+			"request_limits":  map[string]any{"type": []string{"object", "null"}},
+			"node_restarting": map[string]any{"type": "boolean", "description": "True when the change was written: the app's node restarts, guests must reopen their link; check url or status before asking anyone to retry."},
+			"message":         map[string]any{"type": "string"},
+		}, "app", "changed", "request_limits", "node_restarting"),
 	})
 }

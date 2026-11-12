@@ -107,8 +107,12 @@ warning. Completed bodies keep the usual connection reuse behavior.
 The owner gets a structured service/limit log and a runtime warning in
 `status --urls` and `list --verbose`, repeated as a `doctor` finding. The
 warning says the app is rejecting requests, counts the rejections since the
-app's node started, gives the most recent time and the `tslink limits set ...`
-command that raises the limit. The first rejection is published at once;
+app's node last started (and when that was), gives the most recent time and the
+`tslink limits set ...` command that raises the limit. Changing limits restarts
+the node, so the count resets when the limit is changed; every refused upload
+stays in `tslink access log --app <app>` with its 413 or 408 status. A
+connection that times out before sending any request byte (Funnel and edge
+relays open idle ones) is not counted as a rejected request. The first rejection is published at once;
 later ones within 30 seconds are published together at the end of that window.
 Warnings last until the service node restarts. Change limits with
 `tslink limits set <app> --max-request-body 4GiB` (MCP `limits_set`): it changes
