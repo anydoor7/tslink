@@ -58,7 +58,7 @@ Linked third-party modules: 55
 | `go4.org/netipx` | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/crypto` | v0.58.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/exp` | v0.0.0-20260908205506-85c1c2202aba | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `golang.org/x/net` | v0.60.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/net` | v0.62.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/oauth2` | v0.37.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/sync` | v0.24.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `golang.org/x/sys` | v0.49.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
@@ -4959,10 +4959,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // license that can be found in the LICENSE file.
 ~~~~
 
-### `golang.org/x/net` v0.60.0
+### `golang.org/x/net` v0.62.0
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
-- Evidence source: `golang.org/x/net@v0.60.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/net@v0.62.0` from the resolved Go module graph
 - Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE

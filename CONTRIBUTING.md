@@ -10,19 +10,22 @@ Documentation is English-only. The only translations are the homepage READMEs in
 
 ### Prerequisites
 
-- Go 1.27.1 or newer. The `go` directive in [`go.mod`](./go.mod) remains the supported minimum; `toolchain go1.27.3` selects the patched build toolchain (see below).
+- Go 1.27.1 or newer. The `go` directive in [`go.mod`](./go.mod) remains the supported minimum; `toolchain go1.27.4` selects the patched build toolchain (see below).
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 
 ### Development Setup
 
-Builds and CI use Go 1.27.3, which fixes
-[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), with
-`golang.org/x/net v0.60.0` to fix
+Builds and CI use Go 1.27.4, which fixes
+[GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) (and, since Go 1.27.3,
+[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809)), with
+`golang.org/x/net v0.62.0` to fix
+[GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866),
+[GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860) and, since v0.60.0,
 [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617). Keep Go's default automatic
-toolchain selection enabled for local builds, or select Go 1.27.3 explicitly.
-With `GOTOOLCHAIN=local`, install Go 1.27.3 or newer yourself: Go 1.27.1 and
-1.27.2 still compile TSLink but keep the vulnerable standard-library code.
+toolchain selection enabled for local builds, or select Go 1.27.4 explicitly.
+With `GOTOOLCHAIN=local`, install Go 1.27.4 or newer yourself: Go 1.27.1 to
+1.27.3 still compile TSLink but keep vulnerable standard-library code.
 `go.mod` is the build-version source: `setup-go v7.0.0` prefers its `toolchain`
 directive when using `go-version-file`, and every CI job uses it.
 

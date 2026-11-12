@@ -83,11 +83,15 @@ internal/
 
 ### Toolchain notes
 
-**Go version (`go.mod`, `go 1.27.1`, `toolchain go1.27.3`)**: the module floor
+**Go version (`go.mod`, `go 1.27.1`, `toolchain go1.27.4`)**: the module floor
 remains 1.27.1, as required by `tailscale.com@v1.104.1`. Builds and CI use Go
-1.27.3, which fixes [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809)
+1.27.4, which fixes [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859)
+(`net/http` HTTP/1 server crash from a `MaxBytesReader` header race, fixed in Go
+1.27.4) and [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809)
 (`crypto/x509` `Certificate.Verify`, fixed in Go 1.27.3), with
-`golang.org/x/net v0.60.0` to fix
+`golang.org/x/net v0.62.0` to fix
+[GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866),
+[GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860) and
 [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617). Raise the floor only when a
 dependency forces it; a stdlib fix is delivered by raising the `toolchain`
 directive, which selects a preferred toolchain, not an exact pin, so a newer
@@ -110,7 +114,7 @@ could not read the export data of Go 1.27.2
 [upstream issue #1832](https://github.com/dominikh/go-tools/issues/1832)), so CI
 and `scripts/check.sh` once analyzed with Go 1.27.1. Staticcheck 2026.2.2
 ([release](https://github.com/dominikh/go-tools/releases/tag/2026.2.2), module
-`v0.8.2`) reads Go 1.27.3 export data, so that exception is gone: the CI job uses
+`v0.8.2`) reads Go 1.27.3 and 1.27.4 export data, so that exception is gone: the CI job uses
 `go-version-file: go.mod` like every other job, and no `GOTOOLCHAIN` override
 remains. Install the version CI uses (`STATICCHECK_VERSION` in
 `.github/workflows/release-candidate.yml`) with
@@ -136,7 +140,7 @@ This section teaches an agent how to install, configure, and operate tslink. The
 
 ### Prerequisites
 
-- Go 1.27.1+ installed; builds select Go 1.27.3 via `go.mod` (see Toolchain notes);
+- Go 1.27.1+ installed; builds select Go 1.27.4 via `go.mod` (see Toolchain notes);
   macOS 13 Ventura or later is required
   ([Go release notes](https://go.dev/doc/go1.27#darwin))
 - A Tailscale account. The default zero-credential path needs no admin-console token.

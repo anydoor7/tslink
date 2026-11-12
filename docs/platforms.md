@@ -4,11 +4,13 @@
 
 - [Tailscale account](https://tailscale.com) (free for personal use)
 - Tailscale installed on the devices you want to access from (phone, tablet, etc.)
-- Go 1.27.1+ (if building from source); `go.mod` selects Go 1.27.3 for patched builds. With `GOTOOLCHAIN=local`, use Go 1.27.3 or newer ([toolchain notes](../CONTRIBUTING.md))
+- Go 1.27.1+ (if building from source); `go.mod` selects Go 1.27.4 for patched builds. With `GOTOOLCHAIN=local`, use Go 1.27.4 or newer ([toolchain notes](../CONTRIBUTING.md))
 
-The module minimum remains Go 1.27.1. Builds and CI use Go 1.27.3, which fixes
+The module minimum remains Go 1.27.1. Builds and CI use Go 1.27.4, which fixes
+[GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) and
 [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), with
-`golang.org/x/net v0.60.0` to fix [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617).
+`golang.org/x/net v0.62.0` to fix [GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866),
+[GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860) and [GO-2026-6617](https://pkg.go.dev/vuln/GO-2026-6617).
 Staticcheck 2026.2.2 or newer is needed to read this toolchain's export data, as described in
 [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
 
