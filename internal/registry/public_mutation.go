@@ -29,14 +29,22 @@ type activeGuard struct {
 	guard  PublicMutationGuard
 }
 
-// The registry lock is exclusive across processes and across open file
-// descriptions in one process, so at most one guarded transaction holds a
-// path at a time; save looks the transaction up by path because it carries
-// no context.
+// save carries no context, so it finds its transaction's guard by path. Two
+// locks make that lookup belong to one transaction: the registry file lock
+// across processes, and transactionMutex inside this process, which
+// withLockContext and tryWithLock hold for the whole transaction (guard
+// installation, every save, removal), so no other goroutine can save on the
+// path under this guard or while it is installed.
 var (
 	activeGuardsMu sync.Mutex
-	activeGuards   = map[string]activeGuard{}
+	activeGuards   = map[string]*activeGuard{}
+	transactions   sync.Map // guardKey -> *sync.Mutex
 )
+
+func transactionMutex(path string) *sync.Mutex {
+	mu, _ := transactions.LoadOrStore(guardKey(path), &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
 
 func guardKey(path string) string {
 	if abs, err := filepath.Abs(path); err == nil {
@@ -47,12 +55,15 @@ func guardKey(path string) string {
 
 func activatePublicMutationGuard(path string, before *Registry, guard PublicMutationGuard) func() {
 	key := guardKey(path)
+	own := &activeGuard{before: before, guard: guard}
 	activeGuardsMu.Lock()
-	activeGuards[key] = activeGuard{before: before, guard: guard}
+	activeGuards[key] = own
 	activeGuardsMu.Unlock()
 	return func() {
 		activeGuardsMu.Lock()
-		delete(activeGuards, key)
+		if activeGuards[key] == own {
+			delete(activeGuards, key)
+		}
 		activeGuardsMu.Unlock()
 	}
 }

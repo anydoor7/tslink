@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -98,5 +100,71 @@ func TestPublicMutationGuardRefusesBeforeDisk(t *testing.T) {
 	// Without the guard in the context the same write proceeds.
 	if _, err := MutateService(path, "fun", func(s Service) (Service, error) { s.Target = "http://localhost:9"; return s, nil }); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The guard must not depend on file-lock exclusivity alone: with the file
+// lock stubbed out, a guarded transaction's guard is never seen by another
+// goroutine's save, and a refused write never reaches disk.
+func TestPublicMutationGuardHoldsWithoutTheFileLock(t *testing.T) {
+	oldLock, oldTry := lockFn, tryLockFn
+	lockFn = func(*os.File) error { return nil }
+	tryLockFn = func(*os.File) (bool, error) { return true, nil }
+	t.Cleanup(func() { lockFn, tryLockFn = oldLock, oldTry })
+	path := filepath.Join(t.TempDir(), "registry.json")
+	deadline := time.Now().Add(time.Hour).UTC()
+	if _, err := Add(path, Service{Name: "fun", Type: TypeProxy, Target: "http://localhost:1", Funnel: true, PublicAck: true, FunnelExpiresAt: &deadline}); err != nil {
+		t.Fatal(err)
+	}
+	refusal := errors.New("refused")
+	outsider := WithPublicMutationGuard(context.Background(), func(_, _ *Registry) error { return refusal })
+	var localRefused, outsiderSaved, daemonRefused atomic.Int64
+	var wg sync.WaitGroup
+	stop := time.Now().Add(time.Second)
+	for g := 0; g < 4; g++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(stop) {
+				if _, err := MutateServiceContext(outsider, path, "fun", func(s Service) (Service, error) { s.Target = "http://attacker:9"; return s, nil }); err == nil {
+					outsiderSaved.Add(1)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(stop) {
+				if _, err := MutateService(path, "fun", func(s Service) (Service, error) { s.RestartGeneration++; return s, nil }); errors.Is(err, refusal) {
+					localRefused.Add(1)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(stop) {
+				_, err := tryWithLock(path, func() error {
+					reg, err := loadForMutation(path)
+					if err != nil {
+						return err
+					}
+					reg.Services[0].RestartGeneration++
+					return save(path, reg)
+				})
+				if errors.Is(err, refusal) {
+					daemonRefused.Add(1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeGuardsMu.Lock()
+	left := len(activeGuards)
+	activeGuardsMu.Unlock()
+	if outsiderSaved.Load() != 0 || localRefused.Load() != 0 || daemonRefused.Load() != 0 || reg.Services[0].Target != "http://localhost:1" || left != 0 {
+		t.Fatalf("guard crossed transactions: outsiderSaved=%d localRefused=%d daemonRefused=%d target=%s stale=%d", outsiderSaved.Load(), localRefused.Load(), daemonRefused.Load(), reg.Services[0].Target, left)
 	}
 }

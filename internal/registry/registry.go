@@ -1430,6 +1430,12 @@ func withLockContext(ctx context.Context, regPath string, fn func() error) error
 		return err
 	}
 
+	// The in-process mutex serializes this process's transactions on the
+	// path even if the file lock were not exclusive, so the public mutation
+	// guard of one transaction can never be seen by another one's save.
+	inProcess := transactionMutex(regPath)
+	inProcess.Lock()
+	defer inProcess.Unlock()
 	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
@@ -1463,6 +1469,11 @@ func tryWithLock(regPath string, fn func() error) (bool, error) {
 	if err := convergeRegistryFile(regPath + ".lock"); err != nil {
 		return false, err
 	}
+	inProcess := transactionMutex(regPath)
+	if !inProcess.TryLock() {
+		return false, nil
+	}
+	defer inProcess.Unlock()
 	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return false, err
