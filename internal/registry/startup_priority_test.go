@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -34,8 +35,13 @@ func TestStartupPriorityRoundTrip(t *testing.T) {
 		t.Fatalf("priorities = %v %v, want beta=10 alpha=-3", got, err)
 	}
 	info, err := os.Stat(StartupPriorityPath(path))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("hint file mode = %v %v, want 0600", info, err)
+	if err != nil {
+		t.Fatalf("stat hint file: %v", err)
+	}
+	// Windows has no POSIX permission bits (it reports 0666 for a writable file);
+	// the 0600 contract is a Unix property.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("hint file mode = %v, want 0600", info.Mode().Perm())
 	}
 
 	// add is incremental: replacing a service keeps its priority.
