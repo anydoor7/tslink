@@ -129,6 +129,14 @@ func requestDecisionAuthorization(ctx context.Context, args requestDecisionArgum
 // Scope permission cannot authorize changing owner/admin grants or tombstones.
 func peopleMutationAuthorization(ctx context.Context) func(*registry.Registry, string) error {
 	return func(reg *registry.Registry, login string) error {
+		// On a home gateway whose owner is not set yet, the login a person
+		// change targets may be the owner the gateway is about to bootstrap,
+		// so no login is protected by the check below. Remote person changes
+		// there are fail-closed like the rest of that gateway: a tombstone
+		// placed now would lock the future owner out of every remote change.
+		if registry.GatewayEnabled(reg) && reg.Portal.Owner == "" {
+			return requireRequestOwnerInRegistry(ctx, reg)
+		}
 		if reg.Portal != nil {
 			protected := login == reg.Portal.Owner
 			for _, admin := range reg.Portal.Admins {

@@ -121,6 +121,15 @@ func BootstrapPortalOwner(ctx context.Context, path, hostname, login string) err
 		if !GatewayEnabled(reg) || reg.Portal.Hostname != hostname || reg.Portal.Owner != "" {
 			return nil
 		}
+		// A revoked login is not made owner automatically: the owner stays
+		// unset ("Choose the account that will manage your apps") until the
+		// host runs `tslink portal enable --owner <login>`, which clears the
+		// tombstone in the same write.
+		for _, p := range reg.People {
+			if p.Login == canonical && p.Revoked {
+				return nil
+			}
+		}
 		reg.Portal.Owner = canonical
 		return save(path, reg)
 	})
@@ -172,8 +181,30 @@ func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry)
 			}
 		}
 		reg.Portal = p
+		// Designating the owner is the explicit restore of that login: a
+		// revocation tombstone would refuse the owner every remote change it
+		// is the authority for. Only an authorized caller reaches this (local
+		// CLI or stdio, or the current, unrevoked portal owner remotely).
+		restored := ""
+		if p != nil && p.Owner != "" {
+			for i := range reg.People {
+				if reg.People[i].Login == p.Owner && reg.People[i].Revoked {
+					reg.People[i].Revoked = false
+					restored = p.Owner
+				}
+			}
+		}
 		if p != nil && p.Owner != "" && (before.Portal == nil || before.Portal.Owner == "") {
-			if err := preserveAccessExcept(before, reg, "", nil, time.Now()); err != nil {
+			// The restored owner's own access is what this write changes on
+			// purpose; everyone else's must stay as it was.
+			var ownApps map[string]bool
+			if restored != "" {
+				ownApps = map[string]bool{}
+				for _, svc := range reg.Services {
+					ownApps[svc.Name] = true
+				}
+			}
+			if err := preserveAccessExcept(before, reg, restored, ownApps, time.Now()); err != nil {
 				return err
 			}
 		}

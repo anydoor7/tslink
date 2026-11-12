@@ -621,3 +621,76 @@ func publicRemoteCallStatus(t *testing.T, srv *httptest.Server, tool string, arg
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, body
 }
+
+// M1: a revocation tombstone on the future owner's login must not lock the
+// owner out. Remote person changes on an unowned gateway are fail-closed;
+// the daemon does not bootstrap a revoked login; and designating the owner
+// locally restores the login in the same write.
+func TestOwnerTombstoneCannotLockTheOwnerOut(t *testing.T) {
+	ownerCaller := publicCaller{login: "owner", allow: []string{"owner"}}
+	ownerWorks := func(t *testing.T, f publicFixture) {
+		t.Helper()
+		result := portalRemoteCall(t, publicServer(t, ownerCaller, publicActions(f)), "limits_set", map[string]any{"app": "pub", "max_body": "64MiB"})
+		if bytes.Contains(result, []byte(`"isError":true`)) {
+			t.Fatalf("owner locked out: %s", result)
+		}
+	}
+	t.Run("unowned-gateway-refuses-remote-tombstone", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "", true)
+		before := registryBytes(t, f.paths.Registry)
+		result := portalRemoteCall(t, publicServer(t, publicOutsiders()[0], publicActions(f)), "people_remove", map[string]any{"who": "owner"})
+		if !refusedForOwner(result) || !bytes.Equal(before, registryBytes(t, f.paths.Registry)) {
+			t.Fatalf("remote tombstone on an unowned gateway: %s", result)
+		}
+		if err := registry.BootstrapPortalOwner(context.Background(), f.paths.Registry, "home", "owner"); err != nil {
+			t.Fatal(err)
+		}
+		ownerWorks(t, f)
+	})
+	t.Run("bootstrap-skips-a-revoked-login-and-local-enable-restores-it", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "", true)
+		if _, err := registry.RemovePerson(f.paths.Registry, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.BootstrapPortalOwner(context.Background(), f.paths.Registry, "home", "owner"); err != nil {
+			t.Fatal(err)
+		}
+		if reg, err := registry.Load(f.paths.Registry); err != nil || reg.Portal.Owner != "" {
+			t.Fatalf("revoked login bootstrapped as owner: %+v %v", reg.Portal, err)
+		}
+		if _, err := changePortal(f.paths, portalArguments{Owner: "owner"}, true); err != nil {
+			t.Fatal(err)
+		}
+		reg, err := registry.Load(f.paths.Registry)
+		if err != nil || reg.Portal.Owner != "owner" {
+			t.Fatalf("owner = %+v %v", reg.Portal, err)
+		}
+		for _, p := range reg.People {
+			if p.Login == "owner" && p.Revoked {
+				t.Fatal("local owner designation kept the tombstone")
+			}
+		}
+		ownerWorks(t, f)
+	})
+	t.Run("legacy-tombstone-then-local-owner", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "", false)
+		result := portalRemoteCall(t, publicServer(t, publicOutsiders()[0], publicActions(f)), "people_remove", map[string]any{"who": "owner"})
+		if bytes.Contains(result, []byte(`"isError":true`)) {
+			t.Fatalf("legacy install: MCP owner role may still remove people: %s", result)
+		}
+		if _, err := changePortal(f.paths, portalArguments{Owner: "owner", Gateway: false, GatewaySet: true}, true); err != nil {
+			t.Fatal(err)
+		}
+		ownerWorks(t, f)
+	})
+	t.Run("existing-owner-local-reenable-restores", func(t *testing.T) {
+		f := publicAuthorityFixture(t, "owner", true)
+		if _, err := registry.RemovePerson(f.paths.Registry, "owner"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := changePortal(f.paths, portalArguments{Owner: "owner"}, true); err != nil {
+			t.Fatal(err)
+		}
+		ownerWorks(t, f)
+	})
+}
