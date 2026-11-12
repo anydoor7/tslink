@@ -3,7 +3,15 @@
 All notable changes to TSLink are documented here. The public compatibility
 surface for the 0.x series is defined below; TSLink is a CLI, not a Go library.
 
-## [Unreleased]
+## [0.4.0] - 2026-11-11
+
+Guest links work on a new installation in two commands, and remote MCP needs the portal owner for every public change. `tslink add` then `tslink guest create --public --print-link` now succeeds on a fresh install: the first guest link takes the app off the home gateway in the same write. `tslink limits set` changes an app's upload limits in place, including on an app with guest links, and an upload over the limit gets a JSON 413 that `status` and `doctor` count. `tslink remove` revokes the app's guest links, so a re-added app of the same name cannot bring old links back.
+
+### Upgrade
+
+- Homebrew: `brew upgrade --cask anydoor7/tap/tslink`. Scoop: `scoop update; scoop update tslink`. Other installs: download the new archive or package from this release.
+- If TSLink runs as a background service, run `tslink install` again after upgrading so the service starts the new binary. No registry migration is required.
+- **Remote MCP operators (`serve --mcp`):** on an installation with a portal owner or a home gateway, a remote principal that holds the MCP owner role but is not the current portal owner now gets `access_request_owner_required` for changes to public apps, including `unshare`, `limits_set` and `app_restart`; `guest_revoke` stays open to it. Run such changes as the portal owner, or locally with the CLI or stdio MCP. Installations without a remote MCP control plane are unaffected. See Security below.
 
 ### Added
 
