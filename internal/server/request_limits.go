@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,6 +60,7 @@ type requestBudgetState struct {
 type serviceLimitWarnings struct {
 	mu       sync.Mutex
 	now      func() time.Time // captured where the node starts (serverNowFn)
+	started  time.Time        // when this node started; the count's scope
 	window   time.Duration    // limitWarningRepublish unless a test sets it
 	publish  func()           // writes the runtime snapshot; nil in tests that only read
 	pending  bool             // a trailing publish is scheduled
@@ -141,6 +143,23 @@ func (s *serviceLimitWarnings) trailingPublish() {
 	publish()
 }
 
+// limitWarningScope states what the count covers. It is in memory for this
+// node only: changing limits restarts the node and starts a new count. Every
+// refusal answered with a status (413, the upload 408) also stays in the
+// access log; a header timeout happens before any request exists, so it is
+// only in this count and the daemon log.
+func limitWarningScope(code string, count uint64, started, last time.Time) string {
+	since := "since this app's node last started"
+	if !started.IsZero() {
+		since += " at " + started.UTC().Format(time.RFC3339)
+	}
+	text := fmt.Sprintf(" Rejected %d request(s) %s; most recent at %s. Changing the limits restarts the node and resets this count.", count, since, last.UTC().Format(time.RFC3339))
+	if code != registry.CodeRequestHeaderTimeout {
+		text += " Each refusal stays in tslink access log (status 413 or 408)."
+	}
+	return text
+}
+
 func (s *serviceLimitWarnings) snapshot() []inspect.WarningView {
 	if s == nil {
 		return nil
@@ -150,7 +169,10 @@ func (s *serviceLimitWarnings) snapshot() []inspect.WarningView {
 	out := make([]inspect.WarningView, 0, len(s.warnings))
 	for _, w := range s.warnings {
 		view := w.view
-		view.Message += fmt.Sprintf(" Rejected %d request(s) since the app started; most recent at %s.", w.count, w.last.UTC().Format(time.RFC3339))
+		if !strings.HasSuffix(view.Message, ".") {
+			view.Message += "."
+		}
+		view.Message += limitWarningScope(view.Code, w.count, s.started, w.last)
 		out = append(out, view)
 	}
 	return out
@@ -621,8 +643,16 @@ func (c *headerBudgetConn) Read(p []byte) (int, error) {
 		// The caller may be anyone in front of every gate, so the body names
 		// neither the service nor an owner flag; the owner's warning does.
 		msg := fmt.Sprintf("request_header_timeout: request headers did not arrive within %s", c.owner.timeout)
-		slog.Warn("request limit exceeded", "code", registry.CodeRequestHeaderTimeout, "name", c.owner.service, "limit", c.owner.timeout, "status", 408)
-		if c.owner.report != nil {
+		if !c.started {
+			// A new connection that sent no request byte at all is an idle
+			// connection (Funnel and edge relays open them ahead of use), not a
+			// slow client: it still gets the 408 and is closed, but it is not a
+			// rejected request and does not tell the owner to raise the limit.
+			slog.Info("idle connection closed before a request", "code", registry.CodeRequestHeaderTimeout, "name", c.owner.service, "limit", c.owner.timeout, "request_bytes", 0, "status", 408)
+		} else {
+			slog.Warn("request limit exceeded", "code", registry.CodeRequestHeaderTimeout, "name", c.owner.service, "limit", c.owner.timeout, "status", 408)
+		}
+		if c.owner.report != nil && c.started {
 			c.owner.report(inspect.WarningView{Code: registry.CodeRequestHeaderTimeout, Severity: "warning", Source: "http.request_limits", Message: fmt.Sprintf("Service %q is rejecting requests over its %s (%s). Raise it with: %s", c.owner.service, registry.CodeRequestHeaderTimeout, c.owner.timeout, registry.RequestLimitCommand(c.owner.service, registry.CodeRequestHeaderTimeout))})
 		}
 		_ = c.Conn.SetWriteDeadline(time.Now().Add(time.Second))

@@ -23,6 +23,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -1115,7 +1116,7 @@ func TestRequestLimitsRejectKnownAndChunkedWith413(t *testing.T) {
 		})
 	}
 	got := warnings.snapshot()
-	if len(got) != 1 || got[0].Code != registry.CodeRequestBodyLimit || !strings.Contains(got[0].Message, `Service "photos" is rejecting requests over its request_body_limit (8 bytes). Raise it with: tslink limits set photos --max-request-body <value>`) || !strings.Contains(got[0].Message, "Rejected 2 request(s) since the app started") {
+	if len(got) != 1 || got[0].Code != registry.CodeRequestBodyLimit || !strings.Contains(got[0].Message, `Service "photos" is rejecting requests over its request_body_limit (8 bytes). Raise it with: tslink limits set photos --max-request-body <value>`) || !strings.Contains(got[0].Message, "<value>. Rejected 2 request(s) since this app's node last started") {
 		t.Fatalf("warnings=%+v", got)
 	}
 	found := false
@@ -1264,6 +1265,11 @@ func TestRequestLimitsHeader408AndKeepAliveIdle(t *testing.T) {
 	blankResponse.Body.Close()
 	if blankResponse.StatusCode != 408 {
 		t.Fatalf("silent initial status=%d", blankResponse.StatusCode)
+	}
+	// A connection that sent no request byte is idle (Funnel and edge relays
+	// open them ahead of use), not a rejected request: no owner warning.
+	if got := warnings.snapshot(); len(got) != 1 || !strings.Contains(got[0].Message, "Rejected 1 request(s)") {
+		t.Fatalf("idle connection counted as a rejected request: %+v", got)
 	}
 	// Positive control: an idle keep-alive is closed without a request warning.
 	clean := &serviceLimitWarnings{}
@@ -2025,7 +2031,7 @@ func assertTLSHandshakeDeadline(t *testing.T) {
 // most once per limitWarningRepublish.
 func TestServiceLimitWarningsCountAndThrottleRepublish(t *testing.T) {
 	clock := time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)
-	warnings := &serviceLimitWarnings{now: func() time.Time { return clock }}
+	warnings := &serviceLimitWarnings{now: func() time.Time { return clock }, started: clock.Add(-time.Hour)}
 	view := inspect.WarningView{Code: registry.CodeRequestBodyLimit, Severity: "warning", Source: "http.request_limits", Message: "Service \"photos\" is rejecting requests."}
 	var published []bool
 	for _, step := range []time.Duration{0, time.Second, 10 * time.Second, limitWarningRepublish, time.Second} {
@@ -2036,7 +2042,7 @@ func TestServiceLimitWarningsCountAndThrottleRepublish(t *testing.T) {
 		t.Fatalf("republish decisions = %v", published)
 	}
 	got := warnings.snapshot()
-	want := "Service \"photos\" is rejecting requests. Rejected 5 request(s) since the app started; most recent at 2030-07-10T12:00:42Z."
+	want := "Service \"photos\" is rejecting requests. Rejected 5 request(s) since this app's node last started at 2030-07-10T11:00:00Z; most recent at 2030-07-10T12:00:42Z. Changing the limits restarts the node and resets this count. Each refusal stays in tslink access log (status 413 or 408)."
 	if len(got) != 1 || got[0].Message != want {
 		t.Fatalf("snapshot = %+v, want %q", got, want)
 	}
@@ -2096,4 +2102,52 @@ func TestServiceLimitWarningsStopCancelsTheTrailingPublish(t *testing.T) {
 		t.Fatal("trailing publish ran after the node stopped")
 	case <-time.After(150 * time.Millisecond):
 	}
+}
+
+// A header timeout has no request, so its warning does not point at the
+// access log; an unknown start time still states the node scope.
+func TestLimitWarningScopeByCode(t *testing.T) {
+	last := time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)
+	header := limitWarningScope(registry.CodeRequestHeaderTimeout, 2, time.Time{}, last)
+	if strings.Contains(header, "access log") || !strings.Contains(header, "since this app's node last started;") || !strings.Contains(header, "resets this count") {
+		t.Fatalf("header scope = %q", header)
+	}
+}
+
+// The warning's pointer is true: a refused upload is recorded in the access
+// log with its status, because the access event wraps the request limits.
+func TestRequestBodyRefusalIsRecordedInTheAccessLog(t *testing.T) {
+	svc := registry.Service{Name: "photos", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{MaxBody: "8B"}}
+	writer := &captureAccessWriter{}
+	handler := AccessEventMiddleware(svc, accesslog.Options{}, writer, nil, time.Now, RequestLimitsMiddleware(svc, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(204)
+	})))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(strings.Repeat("x", 64))))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	events := writer.events()
+	if len(events) != 1 || events[0].Status != http.StatusRequestEntityTooLarge || events[0].App != "photos" {
+		t.Fatalf("access events = %+v", events)
+	}
+}
+
+type captureAccessWriter struct {
+	mu   sync.Mutex
+	list []accesslog.Event
+}
+
+func (w *captureAccessWriter) Record(e accesslog.Event) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.list = append(w.list, e)
+	return true
+}
+
+func (w *captureAccessWriter) events() []accesslog.Event {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]accesslog.Event(nil), w.list...)
 }

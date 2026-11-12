@@ -2534,7 +2534,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 	}
 
-	limitWarnings := &serviceLimitWarnings{now: serverNowFn}
+	limitWarnings := &serviceLimitWarnings{now: serverNowFn, started: serverNowFn()}
 	limitWarnings.publish = func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
