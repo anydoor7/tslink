@@ -184,11 +184,16 @@ func TestClassifyGuardedChange(t *testing.T) {
 		{"revoke one", func(r *Registry) { r.Guests[0].Revoked = true }, true, true, false},
 		{"revoke both", func(r *Registry) { r.Guests[0].Revoked, r.Guests[1].Revoked = true, true }, true, true, false},
 		{"revoke and retarget", func(r *Registry) { r.Guests[0].Revoked = true; r.Services[0].Target = "x" }, true, false, false},
-		{"revoke and add a grant", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests = append(r.Guests, GuestGrant{ID: "g3", App: "pub"}) }, true, false, false},
+		{"revoke and add a grant", func(r *Registry) {
+			r.Guests[0].Revoked = true
+			r.Guests = append(r.Guests, GuestGrant{ID: "g3", App: "pub"})
+		}, true, false, false},
 		{"revoke and extend", func(r *Registry) { r.Guests[0].Revoked = true; r.Guests[1].ExpiresAt = time.Now() }, true, false, false},
 		{"unrevoke", func(r *Registry) { r.Guests[0].Revoked = true }, true, true, false},
 		{"route a private app", func(r *Registry) { r.Services[1].PortalRoute = &PortalRoute{Port: 8443} }, false, false, true},
-		{"new routed app", func(r *Registry) { r.Services = append(r.Services, Service{Name: "n", PortalRoute: &PortalRoute{Port: 8444}}) }, false, false, true},
+		{"new routed app", func(r *Registry) {
+			r.Services = append(r.Services, Service{Name: "n", PortalRoute: &PortalRoute{Port: 8444}})
+		}, false, false, true},
 	} {
 		after := base()
 		tc.mutate(after)
