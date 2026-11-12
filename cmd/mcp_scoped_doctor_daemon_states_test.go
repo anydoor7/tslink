@@ -20,18 +20,17 @@ func TestMCPReducedDoctorDaemonNeverContradictsTheOwner(t *testing.T) {
 		name       string
 		services   []registry.Service
 		running    bool
-		pidFile    bool   // write the test process's PID: live, provably foreign
-		supervisor []byte // OS manager answer to the owner's scope probe
+		pidFile    bool // write the test process's PID: live, provably foreign
+		supervisor bool // the OS supervisor still holds a process
 		wantState  string
 		// Control: what the real owner doctor concludes on these files.
 		ownerUnverified bool
 	}
 	app := []registry.Service{{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}}
-	supervisorHolds := []byte("pid = 777\nMainPID=777\n")
 	states := []state{
 		{name: "running", services: app, running: true, wantState: daemonStateRunning},
 		{name: "absent", services: app, wantState: daemonStateAbsent},
-		{name: "absent while the supervisor holds a process", services: app, supervisor: supervisorHolds, wantState: daemonStateAbsent, ownerUnverified: true},
+		{name: "absent while the supervisor holds a process", services: app, supervisor: true, wantState: daemonStateAbsent, ownerUnverified: true},
 		{name: "foreign live PID", services: app, pidFile: true, wantState: daemonStateUnknown},
 		{name: "foreign live PID, zero services", pidFile: true, wantState: daemonStateUnknown},
 		{name: "absent, zero services", wantState: daemonStateAbsent},
@@ -46,9 +45,7 @@ func TestMCPReducedDoctorDaemonNeverContradictsTheOwner(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			oldOutput := managerOutputFn
-			t.Cleanup(func() { managerOutputFn = oldOutput })
-			managerOutputFn = func(context.Context, string, ...string) ([]byte, error) { return st.supervisor, nil }
+			fakeSupervisorHoldsProcess(t, st.supervisor)
 			owner := buildDoctorResult(context.Background(), doctorOptions{RegistryPath: env.regPath, PIDPath: env.pidPath, RuntimeSnapshotPath: env.snapshotPath, AuthHandoffPath: env.authHandoff, ReadOnly: true})
 			if owner.Daemon.IdentityUnverified != st.ownerUnverified {
 				t.Fatalf("fixture control: owner identity_unverified = %t, want %t", owner.Daemon.IdentityUnverified, st.ownerUnverified)
