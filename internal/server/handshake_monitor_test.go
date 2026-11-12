@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -694,4 +695,18 @@ func TestHelloTrackingRetainsNothingForGatewayDeniedConnections(t *testing.T) {
 	}
 	waitHandshakeCond(t, func() bool { return gate.dropped.Load() == 50 })
 	gcUntil(t, rec, 0, "gateway-denied connections")
+}
+
+// Host sockets on Windows report Winsock's own errno values, which are not
+// syscall.ECONNRESET/ECONNABORTED there; they must still classify as reset.
+func TestClassifyHandshakeErrorWinsockErrnos(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Winsock errno values only mean reset/abort on Windows")
+	}
+	for _, errno := range []syscall.Errno{10054, 10053} {
+		err := &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("wsarecv", errno)}
+		if class, _ := classifyHandshakeError(err); class != handshakeClassReset {
+			t.Fatalf("errno %d classified %q, want %q", errno, class, handshakeClassReset)
+		}
+	}
 }

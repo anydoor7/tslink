@@ -91,7 +91,9 @@ func classifyHandshakeError(err error) (class, detail string) {
 		return handshakeClassTimeout, ""
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 		return handshakeClassEOF, ""
-	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE), errors.Is(err, syscall.ECONNABORTED):
+	// errnoIs also matches Winsock's own reset and abort numbers (WSAECONNRESET
+	// 10054, WSAECONNABORTED 10053), which host sockets report on Windows.
+	case errnoIs(err, syscall.ECONNRESET, 10054), errors.Is(err, syscall.EPIPE), errnoIs(err, syscall.ECONNABORTED, 10053):
 		return handshakeClassReset, ""
 	case err != nil && strings.HasPrefix(err.Error(), "tls: "):
 		return handshakeClassProtocol, ""
