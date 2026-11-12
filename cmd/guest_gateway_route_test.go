@@ -656,3 +656,44 @@ func TestGuestCreateCountsAGatewayOnlyAdminWithoutAGrant(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// The shipped bound covers one node restart: on the shipped daemon the node
+// URL was missing from about 1.5 s to 5.0 s after the first link, so a second
+// create issued in that window needs about 3.5 s, and one issued at once
+// about 5 s. A 3 s bound returned url_not_ready there.
+func TestGuestURLWaitCoversANodeRestart(t *testing.T) {
+	const measuredRecovery = 5 * time.Second
+	if guestURLWaitDefault < measuredRecovery+2*time.Second {
+		t.Fatalf("guestURLWaitDefault = %v, want at least %v", guestURLWaitDefault, measuredRecovery+2*time.Second)
+	}
+	if guestURLWaitDefault > 30*time.Second {
+		t.Fatalf("guestURLWaitDefault = %v is not a short bound", guestURLWaitDefault)
+	}
+}
+
+// A create issued while the node restarts, with the shipped bound, waits for
+// the URL instead of failing; scaled so the URL returns after 3.5 s.
+func TestGuestCreateWaitsThroughANodeRestart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits 3.5 s of wall time")
+	}
+	paths, now := guestGatewaySetup(t)
+	guestURLWait = guestURLWaitDefault
+	reg, err := registry.Load(paths.Registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := tsruntime.NewSnapshot(42, now, currentRegistryFingerprint(paths.Registry), now, []tsruntime.ServiceState{{Service: reg.Services[0], RuntimeHost: guestSecondLinkHost, RuntimeState: tsruntime.ServiceRuntimeRunning}})
+	published := make(chan error, 1)
+	go func() {
+		time.Sleep(3500 * time.Millisecond)
+		published <- tsruntime.Save(paths.Snapshot, snapshot)
+	}()
+	r, err := createGuest(paths, guestArguments{App: "photos", For: "3d", Public: true, PrintLink: true}, now)
+	if saveErr := <-published; saveErr != nil {
+		t.Fatal(saveErr)
+	}
+	if err != nil || r.Link == nil {
+		t.Fatalf("create during the restart window: %v %+v", err, r)
+	}
+}

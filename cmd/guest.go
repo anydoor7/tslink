@@ -151,10 +151,20 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	return r, nil
 }
 
-// guestURLWait bounds how long guest create --print-link waits for a running
-// daemon to publish the app's exact node URL, as people add does with
-// peopleRuntimeWait. A test replaces it.
-var guestURLWait = 3 * time.Second
+// guestURLWaitDefault bounds how long guest create --print-link waits for a
+// running daemon to publish the app's exact node URL. The first link raises
+// the gate and the app's node restarts with its public listener: on a
+// healthy node measured on the shipped daemon, the restart began about 4.0 s
+// after the first create, the endpoint was missing for about 1.0 s and was
+// exact again at about 5.0 s, so a second create during that window needed
+// about 3.5 s. 8 s covers one restart plus recovery with margin and is still
+// a bound: a stopped daemon or an enrollment handoff fails at once, and
+// nothing is written until the URL is exact.
+const guestURLWaitDefault = 8 * time.Second
+
+// guestURLWait is guestURLWaitDefault; a test replaces it. people add keeps
+// its own peopleRuntimeWait: granting people does not restart the app node.
+var guestURLWait = guestURLWaitDefault
 
 func guestNodeURL(ctx context.Context, paths sharePaths, app string) (string, error) {
 	deadline := time.Now().Add(guestURLWait)
