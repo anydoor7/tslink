@@ -710,3 +710,31 @@ func TestClassifyHandshakeErrorWinsockErrnos(t *testing.T) {
 		}
 	}
 }
+
+// A reader that sees Failed or Slow must also find the event in the pending
+// window: the counter moves under the same lock as the window. Before, observe
+// counted first and recorded later, so a test (or flush) that waited on the
+// counter could fire the timers before the window existed and see no record.
+func TestHandshakeCounterNeverPrecedesItsWindow(t *testing.T) {
+	timers := &fakeTimers{}
+	m := newTestMonitor(timers)
+	m.mu.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.observe("100.64.0.9:1234", time.Millisecond, io.EOF, helloNotSeen)
+	}()
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if m.Failed.Load() != 0 {
+			m.mu.Unlock()
+			t.Fatal("Failed counted before the event reached the pending window")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	m.mu.Unlock()
+	<-done
+	if m.Failed.Load() != 1 || timers.armed != 1 {
+		t.Fatalf("Failed = %d, armed timers = %d, want 1 and 1", m.Failed.Load(), timers.armed)
+	}
+}

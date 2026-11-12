@@ -167,7 +167,6 @@ func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error
 		if handshakeTeardown(err) {
 			return
 		}
-		m.Failed.Add(1)
 		class, detail := classifyHandshakeError(err)
 		if class == handshakeClassTimeout {
 			switch hello {
@@ -177,7 +176,7 @@ func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error
 				class = handshakeClassTimeoutAfterHello
 			}
 		}
-		m.record(func(w *handshakeWindow) {
+		m.record(&m.Failed, func(w *handshakeWindow) {
 			if w.failed == 0 {
 				w.firstClass, w.firstDetail, w.firstAddr = class, detail, remoteAddr
 			}
@@ -196,8 +195,7 @@ func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error
 	if d < m.threshold {
 		return
 	}
-	m.Slow.Add(1)
-	m.record(func(w *handshakeWindow) {
+	m.record(&m.Slow, func(w *handshakeWindow) {
 		if w.slow == 0 {
 			w.slowFirst = remoteAddr
 		}
@@ -208,9 +206,14 @@ func (m *handshakeMonitor) observe(remoteAddr string, d time.Duration, err error
 	})
 }
 
-func (m *handshakeMonitor) record(update func(*handshakeWindow)) {
+// record adds one event to the pending window and bumps its cumulative
+// counter under the same lock, so whoever sees the counter also finds the
+// event in the pending window (and its flush timer), and a flush never emits
+// a total older than the window it reports.
+func (m *handshakeMonitor) record(counter *atomic.Int64, update func(*handshakeWindow)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	counter.Add(1)
 	if m.closed {
 		return
 	}
