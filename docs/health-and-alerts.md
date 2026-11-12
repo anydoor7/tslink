@@ -43,7 +43,7 @@ services they fail with `health_option_unsupported` (exit 2). An unknown app is
 effective settings; it shows whether a body check exists, never its text. The
 owner-only MCP tool `health_set` takes the same fields (`body_contains` for
 `--body`) and, over HTTP MCP, requires the current portal owner for a routed
-app, checked inside the write transaction. Do not re-run `add` to change a
+or public app, checked inside the write transaction. Do not re-run `add` to change a
 check: `add` replaces backend settings while preserving existing access and identity settings unless explicitly changed.
 Changing the settings starts a new observation: the failure count and alert
 state of the previous settings are not carried over. The path is joined to the backend base path

@@ -74,7 +74,11 @@ An empty `allow` list, or one containing only blank entries, makes `serve`
 refuse to start and never grants open access. Every rejection returns the
 same `403` JSON-RPC `forbidden` body. A peer that passes `mcp.allow` can
 register and delete services, publish them to the public internet through
-Funnel, and send or revoke real Tailscale invitations. Elevated invitations
+Funnel, and send or revoke real Tailscale invitations. Once a portal owner is
+recorded or a home gateway is on, changes to routed apps and to public apps
+(Funnel, guest links) also need that peer to be the current portal owner,
+checked in the write transaction
+([public changes over remote MCP](portal.md#public-changes-over-remote-mcp)). Elevated invitations
 also require `mcp.allow_elevated_invites`.
 
 A request carrying an `Origin` header must match the endpoint's own
