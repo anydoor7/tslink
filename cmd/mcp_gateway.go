@@ -5,6 +5,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/server"
 )
 
 type portalRouteArguments struct {
@@ -76,11 +77,77 @@ func init() {
 	)
 }
 
-// add also preserves existing routes when replacing a service. Authorize the
-// effective service, not just explicit route flags in the incoming request.
-func authorizePortalServiceMutation(ctx context.Context, reg *registry.Registry, svc registry.Service) error {
-	if svc.PortalRoute != nil {
-		return requireRequestOwnerInRegistry(ctx, reg)
+// authorizePortalServiceMutation is the early, explicit form of the portal
+// owner rule for the call sites that act before they write (a route removal,
+// a node retirement, a URL wait). It covers a routed app (the gateway rule)
+// and a publicly exposed one (the public rule). add also preserves existing
+// routes when replacing a service, so callers authorize the effective
+// service, not just explicit route flags in the incoming request. The
+// authority for public state is the guard in save; this check only answers
+// earlier.
+// mcpPublicOwnerNote ends the description of every tool the public rule
+// covers, so a model reads the rule where it chooses the tool.
+const mcpPublicOwnerNote = " Over HTTP MCP, a change to a public app (open Funnel, a lapsed Funnel that keeps its public acknowledgement, or guest links), including one that makes an app public or removes it, needs the current portal owner when one is configured or a home gateway is on, checked in the write transaction (access_request_owner_required)."
+
+func authorizePortalServiceMutation(ctx context.Context, reg *registry.Registry, services ...registry.Service) error {
+	for _, svc := range services {
+		if svc.PortalRoute != nil {
+			if err := requireRequestOwnerInRegistry(ctx, reg); err != nil {
+				return err
+			}
+		}
+		if svc.PubliclyExposed() {
+			if err := requirePortalOwnerForPublicChange(ctx, reg); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// portalOwnerGovernsPublicChanges reports whether a portal owner is the
+// authority for public changes. It is configured once an owner is recorded
+// (disabling the portal keeps it; nothing remote clears it), and on a home
+// gateway before its first owner is bootstrapped, where the gateway rule is
+// already fail-closed. A legacy install with no portal owner and no gateway has
+// no higher authority than the MCP owner role, which keeps governing.
+func portalOwnerGovernsPublicChanges(reg *registry.Registry) bool {
+	return reg != nil && reg.Portal != nil && (reg.Portal.Owner != "" || registry.GatewayEnabled(reg))
+}
+
+// requirePortalOwnerForPublicChange is the public rule: over remote HTTP MCP,
+// a change to a publicly exposed app, or one that makes an app public, needs
+// the current, untagged, unrevoked portal owner of reg, the registry as
+// loaded under the write lock. Local CLI and stdio MCP callers have no remote
+// caller in their context and are unaffected.
+func requirePortalOwnerForPublicChange(ctx context.Context, reg *registry.Registry) error {
+	if _, remote := server.MCPCallerFromContext(ctx); !remote || !portalOwnerGovernsPublicChanges(reg) {
+		return nil
+	}
+	if err := requireRequestOwnerInRegistry(ctx, reg); err != nil {
+		return publicChangeOwnerRequired()
+	}
+	return nil
+}
+
+func publicChangeOwnerRequired() error {
+	return registry.CodedError{
+		Code:    "access_request_owner_required",
+		Message: "changes to a public app (Funnel, guest links, or a recorded public acknowledgement) over remote MCP require the current portal owner; nothing was changed",
+		Next:    []string{"Run the change as the portal owner, or with the local tslink CLI or stdio MCP on the gateway host"},
+	}
+}
+
+// withPublicMutationGuard installs the public rule as the registry write
+// guard for a remote MCP call: every write the tool performs is checked under
+// the lock, against the registry loaded under that lock, before it reaches
+// disk, whichever registry helper performs it.
+func withPublicMutationGuard(ctx context.Context) context.Context {
+	if _, remote := server.MCPCallerFromContext(ctx); !remote {
+		return ctx
+	}
+	caller := ctx
+	return registry.WithPublicMutationGuard(ctx, func(before, _ *registry.Registry) error {
+		return requirePortalOwnerForPublicChange(caller, before)
+	})
 }

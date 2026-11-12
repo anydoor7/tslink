@@ -268,6 +268,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		ctx, cancel = mcpSessionTimeoutFn(ctx, session.ExpiresAt.Sub(mcpNow(actions)))
 		defer cancel()
 	}
+	ctx = withPublicMutationGuard(ctx)
 	ctx, changes := mcpaudit.Collect(ctx)
 	affected := &mcpAffectedApps{apps: []string{}}
 	ctx = context.WithValue(ctx, mcpAffectedKey{}, affected)
@@ -557,7 +558,7 @@ func init() {
 		}
 	}
 	mcpToolHints["app_restart"] = mcpHints(false, true, false, false)
-	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "app_restart", Description: "Queue restart of this app's TSLink gateway node on daemon reconciliation. Keeps the enrolled identity and other apps; does not restart the third-party app process or install a daemon. queued is not evidence that reconciliation finished. Reduced operators cannot restart a public Funnel app.", InputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}}, "app"), OutputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}, "queued": map[string]any{"type": "boolean"}, "restart_generation": map[string]any{"type": "integer"}}, "app", "queued", "restart_generation")})
+	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "app_restart", Description: "Queue restart of this app's TSLink gateway node on daemon reconciliation. Keeps the enrolled identity and other apps; does not restart the third-party app process or install a daemon. queued is not evidence that reconciliation finished. Reduced operators cannot restart a public Funnel app." + mcpPublicOwnerNote, InputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}}, "app"), OutputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}, "queued": map[string]any{"type": "boolean"}, "restart_generation": map[string]any{"type": "integer"}}, "app", "queued", "restart_generation")})
 	mcpToolHints["health"] = mcpHints(true, false, true, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "health", Description: "Read app health and node expiry observations without probing or changing configuration.", InputSchema: objectSchema(map[string]any{}), OutputSchema: objectSchema(map[string]any{"services": mcpStatusOutputSchema["properties"].(map[string]any)["services"]}, "services")})
 	mcpToolHints["mcp_audit"] = mcpHints(true, false, true, false)

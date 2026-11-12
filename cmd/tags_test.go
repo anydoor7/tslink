@@ -44,7 +44,7 @@ func mockRegistryWithServices(services []registry.Service) {
 	tagsLoadRegistryFn = func(path string) (*registry.Registry, error) {
 		return &registry.Registry{Services: append([]registry.Service(nil), stored...)}, nil
 	}
-	tagsMutateServiceFn = func(path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+	tagsMutateServiceFn = func(_ context.Context, path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
 		reg, err := tagsLoadRegistryFn(path)
 		if err != nil {
 			return registry.Service{}, err
@@ -68,7 +68,7 @@ func mockDefaults() {
 	tagsRegistryPathFn = func() (string, error) { return "/tmp/test-reg.json", nil }
 	tagsEnsureDirFn = func() error { return nil }
 	tagsGetDefaultFn = func() string { return "tag:tsmain" }
-	tagsMutateServiceFn = func(path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+	tagsMutateServiceFn = func(_ context.Context, path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
 		reg, err := tagsLoadRegistryFn(path)
 		if err != nil {
 			return registry.Service{}, err
@@ -341,7 +341,7 @@ func TestTagsAdd_SaveError(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsMutateServiceFn = func(string, string, func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+	tagsMutateServiceFn = func(context.Context, string, string, func(registry.Service) (registry.Service, error)) (registry.Service, error) {
 		return registry.Service{}, fmt.Errorf("save error")
 	}
 
@@ -433,7 +433,7 @@ func TestTagsSet_SaveError(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsMutateServiceFn = func(string, string, func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+	tagsMutateServiceFn = func(context.Context, string, string, func(registry.Service) (registry.Service, error)) (registry.Service, error) {
 		return registry.Service{}, fmt.Errorf("save error")
 	}
 

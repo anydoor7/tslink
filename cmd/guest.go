@@ -89,7 +89,11 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 			}
 			// The same authority as every other mutation of a routed app,
 			// checked again under the registry lock by CreateGuest.
-			if err := authorizePortalServiceMutation(ctx, reg, s); err != nil {
+			// A guest link always leaves the app public (gated), so the
+			// public rule applies even to an app that is private now.
+			gated := s
+			gated.GuestGate = true
+			if err := authorizePortalServiceMutation(ctx, reg, s, gated); err != nil {
 				return guestCreateResult{}, err
 			}
 			if !s.GuestGate && (s.PortalRoute != nil || s.PortalOnly) {
@@ -115,7 +119,9 @@ func createGuestContext(ctx context.Context, paths sharePaths, args guestArgumen
 	removedRoute := 0
 	var svc registry.Service
 	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now, RemovedRoute: &removedRoute, SavedService: &svc, AllowRouteRemoval: removingRoute, EvidenceCreatedAt: evidenceCreatedAt, Authorize: func(reg *registry.Registry, s registry.Service) error {
-		return authorizePortalServiceMutation(ctx, reg, s)
+		gated := s
+		gated.GuestGate = true
+		return authorizePortalServiceMutation(ctx, reg, s, gated)
 	}})
 	var receipt registry.AuditReceiptError
 	auditWarning := ""

@@ -62,7 +62,7 @@ func healthSettingsView(svc registry.Service) HealthSettingsView {
 	return v
 }
 
-// setHealthContext is shared by the CLI and the health_set tool. A routed app
+// setHealthContext is shared by the CLI and the health_set tool. A routed or public app
 // requires the current portal owner for remote MCP callers, checked inside the
 // registry write transaction like the other route-affecting changes.
 func setHealthContext(ctx context.Context, regPath string, args healthSetArguments) (HealthSetResult, error) {
@@ -164,7 +164,7 @@ func init() {
 		Name: "health_set",
 		Description: "Change only one app's health check in a single registry transaction. Keeps access lists, tags, people scope, portal routes and the enrolled node; never re-enrolls. " +
 			"Omitted fields keep their stored value; empty or 0 selects the default; reset returns to defaults (GET / accepting 200-399). path, status range and body_contains apply to proxy apps only. " +
-			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only.",
+			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only." + mcpPublicOwnerNote,
 		InputSchema: objectSchema(map[string]any{
 			"app":           map[string]any{"type": "string", "minLength": 1},
 			"path":          map[string]any{"type": "string", "description": "HTTP probe path joined to the backend base path; empty means /."},

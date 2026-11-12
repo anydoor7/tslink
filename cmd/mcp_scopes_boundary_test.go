@@ -88,8 +88,8 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 			defer unblock()
 			mutate := tagsMutateServiceFn
 			t.Cleanup(func() { tagsMutateServiceFn = mutate })
-			tagsMutateServiceFn = func(path, name string, fn func(registry.Service) (registry.Service, error)) (registry.Service, error) {
-				return mutate(path, name, func(svc registry.Service) (registry.Service, error) {
+			tagsMutateServiceFn = func(ctx context.Context, path, name string, fn func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+				return mutate(ctx, path, name, func(svc registry.Service) (registry.Service, error) {
 					close(locked)
 					<-release
 					return fn(svc)

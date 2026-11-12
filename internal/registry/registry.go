@@ -546,6 +546,18 @@ func (s Service) HasDecidedPublicLifetime() bool {
 	return s.PublicAck && !s.FunnelExpiryUndecided() && (s.Funnel || s.FunnelExpiresAt != nil)
 }
 
+// PubliclyExposed reports whether the service is reachable from the public
+// internet, or is recorded so that a lifetime change brings it back without
+// a new public acknowledgement: an open Funnel (whatever its deadline), a
+// recorded public_ack (a lapsed Funnel that extend or share re-arms), or a
+// guest gate (its browser links are bearer access from anywhere). A record
+// whose public_ack was cleared is tailnet-only even if it keeps an old
+// deadline, because nothing re-arms it without a new acknowledgement. The
+// portal itself is Tailnet-only (portal enable refuses Funnel).
+func (s Service) PubliclyExposed() bool {
+	return s.Funnel || s.PublicAck || s.GuestGate
+}
+
 // MarshalJSON stores the Funnel lifetime explicitly: an RFC 3339 deadline, or
 // "never" for a Funnel without one. An entry read without a decision is
 // written back without one, so a rewrite never turns it into a permanent
@@ -1431,6 +1443,14 @@ func withLockContext(ctx context.Context, regPath string, fn func() error) error
 	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
+	if guard, ok := ctx.Value(publicMutationGuardKey{}).(PublicMutationGuard); ok && guard != nil {
+		before, err := loadForMutation(regPath)
+		if err != nil {
+			return err
+		}
+		release := activatePublicMutationGuard(regPath, before, guard)
+		defer release()
+	}
 	return fn()
 }
 
@@ -1481,6 +1501,9 @@ func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) e
 }
 
 func save(path string, reg *Registry) error {
+	if err := checkPublicMutationGuard(path, reg); err != nil {
+		return err
+	}
 	if err := ValidateGateway(reg); err != nil {
 		return err
 	}
@@ -2135,6 +2158,12 @@ func DowngradeExpiredFunnels(path string, now time.Time, dryRun bool) (expired [
 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
 	return mutateService(context.Background(), path, name, mutate, false)
+}
+
+// MutateServiceContext is MutateService under the caller's context, so a
+// remote MCP caller's public mutation guard sees the write.
+func MutateServiceContext(ctx context.Context, path, name string, mutate func(Service) (Service, error)) (Service, error) {
+	return mutateService(ctx, path, name, mutate, false)
 }
 
 // MutateServiceTentative marks the new value before publishing it so a failed

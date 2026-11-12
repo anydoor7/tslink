@@ -67,7 +67,7 @@ var (
 	tagsDeleteTagFn     = tailapi.DeleteTag
 	tagsRegistryPathFn  = config.RegistryPath
 	tagsLoadRegistryFn  = registry.Load
-	tagsMutateServiceFn = registry.MutateService
+	tagsMutateServiceFn = registry.MutateServiceContext
 	tagsEnsureDirFn     = config.EnsureDir
 	tagsUpdateGlobalFn  = config.UpdateGlobalConfig
 	tagsGetDefaultFn    = config.GetDefaultTag
@@ -128,7 +128,7 @@ func tagsSetForPathContext(ctx context.Context, regPath, serviceName, tag string
 	if err := validateTagPrefix(tag); err != nil {
 		return TagsSetResult{}, err
 	}
-	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
+	if _, err := tagsMutateServiceFn(ctx, regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
 		if err := mcpscope.CheckEffect(ctx); err != nil {
 			return registry.Service{}, err
 		}
@@ -227,7 +227,7 @@ func tagsAddRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 		return err
 	}
 	alreadyExisted := false
-	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
+	if _, err := tagsMutateServiceFn(context.Background(), regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
 		for _, t := range svc.Tags {
 			if t == tag {
 				alreadyExisted = true

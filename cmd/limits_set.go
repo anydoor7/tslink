@@ -37,8 +37,8 @@ type LimitsSetResult struct {
 
 // setLimitsContext is shared by the CLI and the limits_set tool. Like health
 // set it changes one field group in place, so it works on guest-gated apps
-// (whose sticky gate refuses add) and keeps every other setting. A routed app
-// requires the current portal owner for remote MCP callers, checked inside
+// (whose sticky gate refuses add) and keeps every other setting. A routed or
+// public app requires the current portal owner for remote MCP callers, checked inside
 // the registry write transaction.
 func setLimitsContext(ctx context.Context, regPath string, args limitsSetArguments) (LimitsSetResult, error) {
 	u := args.update()
@@ -129,7 +129,7 @@ func init() {
 		Name: "limits_set",
 		Description: "Change only one app's HTTP request limits in a single registry transaction. Keeps target, access, routes, health, preserve_host, the guest gate and the enrolled node; works on apps with guest links, where add is refused. The app's node restarts to apply new limits: open connections and in-flight uploads end and guests must reopen their link. " +
 			"Omitted fields keep their stored value; an empty string returns that limit to its default (32MiB body, 10s header, 30s read, 60s idle). max_body unlimited requires unlimited_ack true. " +
-			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only.",
+			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only." + mcpPublicOwnerNote,
 		InputSchema: objectSchema(map[string]any{
 			"app":            map[string]any{"type": "string", "minLength": 1},
 			"max_body":       map[string]any{"type": "string", "description": "Size such as 4GiB, or unlimited; empty means the 32MiB default."},

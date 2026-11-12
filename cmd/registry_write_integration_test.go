@@ -39,7 +39,7 @@ func useRealRegistryCommandDependencies(t *testing.T) {
 	tagsEnsureDirFn = config.EnsureDir
 	tagsRegistryPathFn = config.RegistryPath
 	tagsLoadRegistryFn = registry.Load
-	tagsMutateServiceFn = registry.MutateService
+	tagsMutateServiceFn = registry.MutateServiceContext
 	deleteDevicesFn = tailapi.DeleteDevicesForService
 }
 
