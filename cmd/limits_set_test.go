@@ -144,6 +144,8 @@ func TestLimitsSetSaysTheNodeIsRestarting(t *testing.T) {
 	if _, err := registry.Add(regPath, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
 	}
+	restoreInviteCommandSeams(t)
+	inviteIsRunningFn = func(string) bool { return true }
 	body := "64MiB"
 	r, err := setLimitsContext(context.Background(), regPath, limitsSetArguments{App: "photos", MaxBody: &body})
 	if err != nil || !r.Changed || !r.NodeRestarting {
@@ -166,5 +168,20 @@ func TestLimitsSetSaysTheNodeIsRestarting(t *testing.T) {
 	same, err := setLimitsContext(context.Background(), regPath, limitsSetArguments{App: "photos", MaxBody: &body})
 	if err != nil || same.Changed || same.NodeRestarting || same.Message != "" {
 		t.Fatalf("unchanged result = %+v %v", same, err)
+	}
+}
+
+// N2: with no daemon running nothing restarts, and the result says so.
+func TestLimitsSetWithoutADaemonDoesNotClaimARestart(t *testing.T) {
+	_, regPath := healthSetFixture(t)
+	if _, err := registry.Add(regPath, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	restoreInviteCommandSeams(t)
+	inviteIsRunningFn = func(string) bool { return false }
+	body := "64MiB"
+	r, err := setLimitsContext(context.Background(), regPath, limitsSetArguments{App: "photos", MaxBody: &body})
+	if err != nil || !r.Changed || r.NodeRestarting || !strings.Contains(r.Message, "not running") || strings.Contains(r.Message, "is restarting") {
+		t.Fatalf("stopped daemon result = %+v %v", r, err)
 	}
 }

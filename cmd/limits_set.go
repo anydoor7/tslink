@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/output"
@@ -33,8 +34,10 @@ type LimitsSetResult struct {
 	// Changed is false when the stored limits already matched; nothing was written.
 	Changed       bool                             `json:"changed"`
 	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits"`
-	// NodeRestarting is true when the change was written: the running daemon
-	// restarts the app's node to apply it. The command does not wait for it.
+	// NodeRestarting is true when the change was written and a daemon is
+	// running: it restarts the app's node to apply it. The command does not
+	// wait for it. With no daemon running it is false and the message says
+	// the limits apply when the daemon starts.
 	NodeRestarting bool   `json:"node_restarting"`
 	Message        string `json:"message,omitempty"`
 }
@@ -68,7 +71,11 @@ func setLimitsContext(ctx context.Context, regPath string, args limitsSetArgumen
 	}
 	result := LimitsSetResult{App: svc.Name, Changed: changed, RequestLimits: svc.EffectiveRequestLimits()}
 	if changed {
-		result.NodeRestarting, result.Message = true, limitsRestartMessage(svc.Name)
+		if inviteIsRunningFn(filepath.Join(filepath.Dir(regPath), "tslink.pid")) {
+			result.NodeRestarting, result.Message = true, limitsRestartMessage(svc.Name)
+		} else {
+			result.Message = fmt.Sprintf("Saved. TSLink is not running, so nothing restarted; %s's node starts with the new limits when the daemon starts (tslink install or tslink serve).", svc.Name)
+		}
 	}
 	return result, nil
 }
@@ -159,7 +166,7 @@ func init() {
 			"app":             map[string]any{"type": "string"},
 			"changed":         map[string]any{"type": "boolean"},
 			"request_limits":  map[string]any{"type": []string{"object", "null"}},
-			"node_restarting": map[string]any{"type": "boolean", "description": "True when the change was written: the app's node restarts, guests must reopen their link; check url or status before asking anyone to retry."},
+			"node_restarting": map[string]any{"type": "boolean", "description": "True when the change was written and the daemon is running: the app's node restarts, guests must reopen their link; check url or status before asking anyone to retry. False with no daemon running (the limits apply when it starts)."},
 			"message":         map[string]any{"type": "string"},
 		}, "app", "changed", "request_limits", "node_restarting"),
 	})
