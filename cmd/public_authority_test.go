@@ -63,9 +63,14 @@ func publicAuthorityFixture(t *testing.T, owner string, gateway bool) publicFixt
 	add(registry.Service{Name: "fun", Type: registry.TypeProxy, Target: "http://localhost:12", Funnel: true, PublicAck: true, FunnelExpiresAt: &open})
 	past := now.Add(-time.Hour)
 	add(registry.Service{Name: "lapsed", Type: registry.TypeProxy, Target: "http://localhost:13", PublicAck: true, FunnelExpiresAt: &past})
-	created, err := createGuest(paths, guestArguments{App: "pub", For: "2h", Public: true}, now)
+	// The link is created after every service, on the wall clock, so it
+	// authorizes (a grant older than its app's created_at never does).
+	created, err := createGuest(paths, guestArguments{App: "pub", For: "2h", Public: true}, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, reason := registry.CheckGuest(paths.Registry, "pub", created.Grant.ID, time.Now(), false, false); reason != "allowed" {
+		t.Fatalf("fixture link does not authorize: %q", reason)
 	}
 	reg, err := registry.Load(paths.Registry)
 	if err != nil {
