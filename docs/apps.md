@@ -362,6 +362,28 @@ command: ["--http-enabled"]
 
 [Official documentation 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (accessed 2026-10-02). [Official documentation 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (accessed 2026-10-02). [Official documentation 3](https://docs.portainer.io/start/install/server/setup) (accessed 2026-10-02). [Official documentation 4](https://docs.portainer.io/advanced/cli) (accessed 2026-10-02). [Official documentation 5](https://github.com/portainer/portainer/blob/develop/api/http/csrf/csrf.go) (accessed 2026-10-02).
 
+## copyparty
+
+Not a catalog recipe: there is no `apps share copyparty`. This is a manual pairing for receiving files from someone without a Tailscale account. [copyparty](https://github.com/9001/copyparty) (MIT) serves a browser upload page that splits files into chunks and resumes after interruptions; a [guest link](guest-links.md) puts it behind an expiring, revocable public gate. Measured 2026-11-11 with copyparty 1.20.26, uploading from a second Mac through the public Funnel edge.
+
+```sh
+pipx install copyparty
+mkdir -p ~/inbox
+copyparty -i 127.0.0.1 -p 3923 -v ~/inbox:/:w -nih -nid --name inbox --bname inbox
+tslink add inbox --proxy localhost:3923 --max-request-body 128MiB
+tslink url inbox --wait=30s
+tslink guest create inbox --for 3d --label "camera footage" --public --print-link
+```
+
+- `-v ~/inbox:/:w` is write-only: visitors upload but cannot list or download anything. `-nih -nid` (single dash) hide the hostname and free disk space that copyparty otherwise shows every visitor.
+- copyparty's browser uploader sends each chunk as its own POST, aiming for 64 MiB and never above 96 MiB. With TSLink's default 32 MiB cap every chunk receives 413 while the page still shows a transfer rate and nothing is stored. 128 MiB covers the chunks; a multi-GiB cap is unnecessary. The default 30-second inactivity window is fine because each chunk is a short request.
+- Set request limits before creating the guest link; afterwards `add` is refused because the gate is sticky (revoke, `remove`, add again).
+- In gateway mode, granting a person access can route the app through the portal, and `guest create` then fails with `portal_route_guest_refused`. Run `tslink portal route remove inbox`, wait for `tslink url`, and create the link again.
+- Interruptions resume: a killed browser, a copyparty restart and a 60-second network block on the uploader all continued from the stored chunks; a 300 MB file arrived with a matching SHA-256. The first public request in the ~30 seconds after a new link can fail while Funnel starts.
+- Throughput is limited by Funnel's relay, which [Tailscale documents](https://tailscale.com/docs/features/tailscale-funnel) as subject to non-configurable bandwidth limits: 0.65–1.1 MB/s into the receiving Mac from a 1.5 Gbit/s uplink, against 35 MB/s for the same node over the tailnet. 40 GB takes more than 11 hours; for tens of GB use a [people grant](people.md) instead.
+- After `tslink guest revoke`, the link and existing sessions receive 401 and uploads stop. When the last link expires, the public Funnel edge closes too: a running upload stopped within a second of the deadline and later requests could not connect. Stop copyparty yourself and delete leftover `*.PARTIAL` files.
+- In v0.3.1 and earlier, a second `guest create --print-link` for the same app fails with `url_not_ready` while its guest gate is active; remove and re-add the app to issue a new link. Later builds accept the second link.
+
 ## Generic web app
 
 Recipe `generic-web`; local ports **8080, 3000, 8000**; target `http://127.0.0.1:8080`; WebSockets: **yes**; health recommendation `/`. Examples only; there is no universal local port.
