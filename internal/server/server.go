@@ -78,9 +78,9 @@ type helloTrackingServer struct {
 	lc   *LocalClient
 }
 
-const tsnetMirrorVersion = "v1.104.1"
+const tsnetMirrorVersion = "v1.104.5"
 
-// ListenTLS mirrors tailscale.com tsnet.Server.ListenTLS (v1.104.1): same
+// ListenTLS mirrors tailscale.com tsnet.Server.ListenTLS (v1.104.5): same
 // preconditions, same tailnet listener, and a TLS config whose only content is
 // the node's certificate provider. Funnel listeners keep tsnet's own path.
 // tsnetMirrorVersion is the tailscale.com version this was copied from;
