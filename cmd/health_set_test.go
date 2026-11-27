@@ -211,6 +211,14 @@ func TestMCPHealthSetOwnerStdio(t *testing.T) {
 	if b, _ := json.Marshal(r.StructuredContent); !strings.Contains(string(b), `"disabled":true`) || !strings.Contains(string(b), `"changed":true`) {
 		t.Fatalf("disabled structured content %s", b)
 	}
+	r, err = callMCPTool(context.Background(), actions, "health_set", json.RawMessage(`{"app":"db","disabled":false}`))
+	if err != nil || r.IsError {
+		t.Fatalf("health_set re-enable: %v %+v", err, r)
+	}
+	validateAgainstToolOutputSchema(t, "health_set", r.StructuredContent)
+	if b, _ := json.Marshal(r.StructuredContent); strings.Contains(string(b), `"disabled":true`) || !strings.Contains(string(b), `"changed":true`) {
+		t.Fatalf("re-enabled structured content %s", b)
+	}
 	r, err = callMCPTool(context.Background(), actions, "health_set", json.RawMessage(`{"app":"files","path":"/x"}`))
 	if err != nil || !r.IsError {
 		t.Fatalf("inapplicable field accepted: %v %+v", err, r)

@@ -373,4 +373,45 @@ func TestHealthCycleSkipsDisabledServiceAndPreservesNodeExpiry(t *testing.T) {
 	if disabledProbes.Load() != 1 {
 		t.Fatalf("re-enabled service probed %d times, want 1", disabledProbes.Load())
 	}
+
+	// Disabling a previously down/stale service clears stale state and emits no new alerts.
+	eventsBefore := len(r.State.Events)
+	s.mu.Lock()
+	downChecked := now.Add(20 * time.Hour)
+	s.healthStates[disabledSvc.Name] = serviceHealth{
+		Identity: healthProbeIdentity(enabledAgain, ""),
+		Health:   health.State{State: health.Down, Kind: registry.TypeTCP, LastChecked: &downChecked, ConsecutiveFailures: 3},
+		Stale:    true,
+	}
+	s.nodes[disabledSvc.Name].service = disabledSvc
+	s.mu.Unlock()
+	s.healthCycle(context.Background(), r, now.Add(27*time.Hour), probe)
+	if disabledProbes.Load() != 1 {
+		t.Fatalf("re-disabled service probed %d times, want 1", disabledProbes.Load())
+	}
+	if len(r.State.Events) != eventsBefore {
+		t.Fatalf("disabling down service emitted unexpected alert events: %+v", r.State.Events[eventsBefore:])
+	}
+	s.mu.RLock()
+	gotState := s.healthStates[disabledSvc.Name]
+	s.mu.RUnlock()
+	if gotState.Health.State != health.Disabled || gotState.Stale {
+		t.Fatalf("re-disabled healthState = %+v, want disabled and Stale=false", gotState)
+	}
+
+	// Passive gateway upstream observation must not overwrite disabled route state.
+	routeCtx, routeCancel := context.WithCancel(context.Background())
+	defer routeCancel()
+	route := &gatewayRouteRun{
+		svc:    disabledSvc,
+		ctx:    routeCtx,
+		health: health.DisabledState(disabledSvc.Type),
+	}
+	route.state.State = "running"
+	route.state.Health = health.Disabled
+	run := &portalRun{routes: map[string]*gatewayRouteRun{disabledSvc.Name: route}, now: func() time.Time { return now }}
+	s.observeGatewayUpstream(run, route, false)
+	if route.state.Health != health.Disabled || route.state.OfflineSince != nil || route.state.HealthChecked != nil {
+		t.Fatalf("observeGatewayUpstream mutated disabled route: %+v", route.state)
+	}
 }

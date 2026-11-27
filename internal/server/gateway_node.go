@@ -355,6 +355,10 @@ func (s *Server) startGatewayRoute(run *portalRun, r *gatewayRouteRun) {
 
 func (s *Server) observeGatewayUpstream(run *portalRun, r *gatewayRouteRun, up bool) {
 	run.routesMu.Lock()
+	if r.svc.HealthDisabled() {
+		run.routesMu.Unlock()
+		return
+	}
 	changed := false
 	if run.routes[r.svc.Name] == r && r.ctx.Err() == nil {
 		state := health.Down

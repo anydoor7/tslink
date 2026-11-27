@@ -231,18 +231,18 @@ func TestAddHealthFlagsAndMCPArguments(t *testing.T) {
 	if add == nil {
 		t.Fatal("add missing")
 	}
-	for _, flag := range []string{"health-path", "health-status-min", "health-status-max", "health-body", "health-timeout", "health-interval"} {
+	for _, flag := range []string{"health-disabled", "health-path", "health-status-min", "health-status-max", "health-body", "health-timeout", "health-interval"} {
 		f := add.Flags().Lookup(flag)
 		oldValue, oldChanged := f.Value.String(), f.Changed
 		t.Cleanup(func() { _ = f.Value.Set(oldValue); f.Changed = oldChanged })
 	}
-	for flag, value := range map[string]string{"health-path": "/ready", "health-status-min": "201", "health-status-max": "204", "health-body": "ready", "health-timeout": "2s", "health-interval": "2m"} {
+	for flag, value := range map[string]string{"health-disabled": "true", "health-path": "/ready", "health-status-min": "201", "health-status-max": "204", "health-body": "ready", "health-timeout": "2s", "health-interval": "2m"} {
 		if err := add.Flags().Set(flag, value); err != nil {
 			t.Fatal(err)
 		}
 	}
 	h := healthConfigFromFlags(add)
-	if h == nil || h.Path != "/ready" || h.StatusMin != 201 || h.BodyContains != "ready" || h.Interval != "2m" {
+	if h == nil || !h.Disabled || h.Path != "/ready" || h.StatusMin != 201 || h.BodyContains != "ready" || h.Interval != "2m" {
 		t.Fatal(h)
 	}
 	p, _, err := addParamsFromMCPArguments(mcpAddArguments{Name: "app", Type: registry.TypeProxy, Target: "localhost:1234", Health: h})
@@ -250,7 +250,7 @@ func TestAddHealthFlagsAndMCPArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc, err := buildService(p)
-	if err != nil || svc.Health != h {
+	if err != nil || svc.Health != h || !svc.HealthDisabled() {
 		t.Fatalf("%+v %v", svc, err)
 	}
 }
