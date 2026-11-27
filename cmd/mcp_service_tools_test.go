@@ -84,7 +84,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	"tslink mcp":                 {Tools: []string{"people_grant", "people_revoke", "app_restart", "health"}, ExcludedFlags: map[string]string{"scope": "trusted transport launch option, not a tool argument", "apps": "trusted transport app restriction", "inventory": "trusted transport inventory opt-in", "max-duration": "trusted transport lifetime limit"}},
 	"tslink mcp-audit":           {Tools: []string{"mcp_audit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink limits set":          {Tools: []string{"limits_set"}, Args: []string{"app"}, Flags: map[string]string{"max-request-body": "max_body", "ack-unlimited-request-body": "unlimited_ack", "request-header-timeout": "header_timeout", "request-read-timeout": "read_timeout", "idle-timeout": "idle_timeout"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink health set":          {Tools: []string{"health_set"}, Args: []string{"app"}, Flags: map[string]string{"path": "path", "status-min": "status_min", "status-max": "status_max", "body": "body_contains", "timeout": "timeout", "interval": "interval", "reset": "reset"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink health set":          {Tools: []string{"health_set"}, Args: []string{"app"}, Flags: map[string]string{"disabled": "disabled", "path": "path", "status-min": "status_min", "status-max": "status_max", "body": "body_contains", "timeout": "timeout", "interval": "interval", "reset": "reset"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
 		Tools: []string{"share"},
 		Args:  []string{"target"},
@@ -111,7 +111,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Flags: map[string]string{
 			"for": "for", "until": "until", "ack-never": "ack_never", "print-links": "print_links",
 			"requestable": "requestable",
-			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
+			"health-disabled": "health", "health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 			"max-request-body":           "request_limits.max_body",
 			"ack-unlimited-request-body": "request_limits.unlimited_ack",
 			"request-header-timeout":     "request_limits.header_timeout",
@@ -252,7 +252,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	"tslink apps list":   {Tools: []string{"recipe_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink apps detect": {Tools: []string{"apps_detect"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink apps share": {Tools: []string{"recipe_plan", "recipe_apply"}, Args: []string{"recipe_id"}, Flags: map[string]string{
-		"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
+		"health-disabled": "health", "health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 		"max-request-body": "request_limits", "ack-unlimited-request-body": "request_limits", "request-header-timeout": "request_limits", "request-read-timeout": "request_limits", "idle-timeout": "request_limits",
 		"preserve-host": "preserve_host", "name": "name", "proxy": "target", "allow": "allow", "tags": "tags", "ephemeral": "ephemeral", "funnel": "funnel", "public": "public_ack", "funnel-ttl": "funnel_ttl", "no-auto-provision": "no_auto_provision", "no-daemon-install": "no_daemon_install", "control-url": "control_url", "force-unsafe-public": "force_unsafe_public"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "dry-run": "recipe_plan is the preview action", "yes": "recipe_apply is the write action"}},
 
