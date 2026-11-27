@@ -1001,6 +1001,10 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 		result.addFinding(inspect.WarningCodeTargetInvalid, svc.Name, "target", "Service target could not be parsed for probing.", evidenceError(err))
 		return
 	}
+	if svc.HealthDisabled() {
+		result.addFinding(inspect.WarningCodeTargetProbeSkippedDisabled, svc.Name, "target_probe", "Active backend probing is disabled for this service.", nil)
+		return
+	}
 	if target.External {
 		result.addFinding(nonLoopbackCode, svc.Name, "target", "Service target is not loopback/local; review whether TSLink should proxy to this host.", map[string]string{
 			"host": target.Host,
@@ -1221,6 +1225,10 @@ func classifyProbeError(err error) string {
 }
 
 func diagnoseFileTarget(result *DoctorResult, svc registry.Service) {
+	if svc.HealthDisabled() {
+		result.addFinding(inspect.WarningCodeTargetProbeSkippedDisabled, svc.Name, "target_probe", "Active backend probing is disabled for this service.", nil)
+		return
+	}
 	path := svc.Path
 	if path == "" {
 		result.addFinding(inspect.WarningCodeFilePathMissing, svc.Name, "file", "File service path is empty.", nil)

@@ -2097,6 +2097,8 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 			if node := s.nodes[states[i].Service.Name]; node != nil && node == observed.Node {
 				states[i].NodeKey = observed.NodeKey
 			}
+		} else if states[i].Service.HealthDisabled() {
+			states[i].Health = health.DisabledState(states[i].Service.Type)
 		} else {
 			states[i].Health = health.Unchecked(states[i].Service.Type)
 		}

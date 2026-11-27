@@ -21,6 +21,7 @@ const (
 	Degraded = "degraded"
 	Down     = "down"
 	Unknown  = "unknown"
+	Disabled = "disabled"
 )
 
 type State struct {
@@ -34,7 +35,8 @@ type State struct {
 	StatusCode int `json:"status_code,omitempty"`
 }
 
-func Unchecked(kind string) State { return State{State: Unknown, Kind: kind} }
+func Unchecked(kind string) State     { return State{State: Unknown, Kind: kind} }
+func DisabledState(kind string) State { return State{State: Disabled, Kind: kind} }
 
 type canonicalHostKey struct{}
 type responseStatusKey struct{}
@@ -99,6 +101,9 @@ func Probe(ctx context.Context, svc registry.Service) string { return ProbeWithD
 // ProbeWithDialer uses the supplied gateway transport for remote probes. A
 // remote service without it is refused before DNS or host-network I/O.
 func ProbeWithDialer(ctx context.Context, svc registry.Service, dialer Dialer) string {
+	if svc.HealthDisabled() {
+		return "health_probe_disabled"
+	}
 	if svc.Upstream == "tailnet" && dialer == nil {
 		return "remote_upstream_unavailable"
 	}

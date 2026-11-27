@@ -39,6 +39,7 @@ const (
 	WarningCodeDaemonNotRunning                    = "daemon_not_running"
 	WarningCodeDaemonUnsupervised                  = "daemon_unsupervised"
 	WarningCodeTargetProbeSkippedDaemon            = "target_probe_skipped_daemon_not_running"
+	WarningCodeTargetProbeSkippedDisabled          = "target_probe_skipped_disabled"
 	WarningCodeDaemonPIDUnreadable                 = "daemon_pid_unreadable"
 	WarningCodeTargetProbeSkippedExternal          = "target_probe_skipped_external"
 	WarningCodeTargetProbeFailed                   = "target_probe_failed"
@@ -252,6 +253,9 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 	},
 	WarningCodeTargetProbeSkippedDaemon: {
 		Severity: "info", Source: "target_probe", Description: "Backend probe deferred until the TSLink daemon is running.",
+	},
+	WarningCodeTargetProbeSkippedDisabled: {
+		Severity: "info", Source: "target_probe", Description: "Active backend probing is disabled for this service.",
 	},
 	WarningCodeBackendLoopbackShared: {
 		Severity: "warning", Source: "target_probe",

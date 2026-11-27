@@ -296,3 +296,81 @@ func TestHealthInventoryReportsUnreadableCredential(t *testing.T) {
 		t.Fatal(inventory.MetadataError)
 	}
 }
+
+func TestHealthCycleSkipsDisabledServiceAndPreservesNodeExpiry(t *testing.T) {
+	s, dir := healthTestServer(t)
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	expiry := now.Add(14 * 24 * time.Hour)
+	var localRequests atomic.Int32
+	lc := localapitest.NewClient(localapitest.RoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		localRequests.Add(1)
+		b, _ := json.Marshal(ipnstate.Status{Self: &ipnstate.PeerStatus{KeyExpiry: &expiry}})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
+	}))
+	disabledSvc := registry.Service{
+		Name:   "amber-link",
+		Type:   registry.TypeTCP,
+		Target: "127.0.0.1:21118",
+		Health: &registry.HealthConfig{Disabled: true},
+	}
+	enabledSvc := registry.Service{
+		Name:   "active-app",
+		Type:   registry.TypeProxy,
+		Target: "http://127.0.0.1:8080",
+	}
+	s.nodes[disabledSvc.Name] = &ServiceNode{service: disabledSvc, tsnetSrv: &fakeTSNetServer{localClient: lc}}
+	s.nodes[enabledSvc.Name] = &ServiceNode{service: enabledSvc}
+	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
+	var disabledProbes, enabledProbes atomic.Int32
+	probe := func(_ context.Context, svc registry.Service) string {
+		if svc.Name == disabledSvc.Name {
+			disabledProbes.Add(1)
+		} else if svc.Name == enabledSvc.Name {
+			enabledProbes.Add(1)
+		}
+		return ""
+	}
+
+	s.healthCycle(context.Background(), r, now, probe)
+	s.healthCycle(context.Background(), r, now.Add(2*time.Minute), probe)
+	s.healthCycle(context.Background(), r, now.Add(25*time.Hour), probe)
+
+	if disabledProbes.Load() != 0 {
+		t.Fatalf("disabled service probed %d times, want 0", disabledProbes.Load())
+	}
+	if enabledProbes.Load() != 3 {
+		t.Fatalf("control enabled service probed %d times, want 3", enabledProbes.Load())
+	}
+	if localRequests.Load() < 1 {
+		t.Fatalf("disabled service skipped node key expiry check; localRequests=%d", localRequests.Load())
+	}
+
+	snapshot, err := tsruntime.Load(filepath.Join(dir, "runtime.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, st := range snapshot.Services {
+		if st.Name == disabledSvc.Name {
+			found = true
+			if st.Health.State != health.Disabled || st.Health.LastChecked != nil || st.Health.LastError != "" {
+				t.Fatalf("disabled snapshot health = %+v, want disabled/nil/empty", st.Health)
+			}
+			if st.NodeKey.Warning != "warning_14d" {
+				t.Fatalf("disabled snapshot node_key = %+v, want warning_14d", st.NodeKey)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("amber-link missing from runtime snapshot: %+v", snapshot.Services)
+	}
+
+	// Re-enabling probing resumes active probes on the next cycle.
+	enabledAgain := disabledSvc
+	enabledAgain.Health = nil
+	s.nodes[disabledSvc.Name].service = enabledAgain
+	s.healthCycle(context.Background(), r, now.Add(26*time.Hour), probe)
+	if disabledProbes.Load() != 1 {
+		t.Fatalf("re-enabled service probed %d times, want 1", disabledProbes.Load())
+	}
+}

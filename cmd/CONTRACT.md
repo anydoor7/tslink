@@ -6,7 +6,7 @@
 - **`share`**: setup only when liveness says stopped; **rolls back a newly created registration** on failure (not the same retain contract as `add`).
 - **`remove`**: registry removal + remote cleanup only with ownership proof.
 - **`list` / `status` / `logs`**: human or `--json`; logs supports `--last`, `--level` (verbatim; MCP `logs` redacts only MCP surface).
-- **`health set`**: per-service probe configuration (see server contract).
+- **`health set`**: per-service probe configuration including `--disabled` to skip active daemon and doctor backend probing (see server contract).
 - **`url <name> --wait`**: never construct hostname from service name alone; wait for real URL evidence.
 - **`portal` / `door`**: Portal-only mode opt-in; stable routes for private HTTP/file apps.
 - **`mcp`**: JSON-RPC on stdout; **rejects `--json`**. `add`/`template_apply`: no second URL wait; missing first artifact → success + `url_pending`; verified process lost during wait → `daemon_setup_failed`.

@@ -209,7 +209,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		s.mu.RLock()
 		observed, exists := s.healthStates[target.Service.Name]
 		s.mu.RUnlock()
-		if !exists || previous.LastChecked == nil || now.Sub(*previous.LastChecked) >= interval {
+		if !target.Service.HealthDisabled() && (!exists || previous.LastChecked == nil || now.Sub(*previous.LastChecked) >= interval) {
 			jobs++
 			go func() {
 				// Enrollment/policy failures still get backend observations.
@@ -333,7 +333,11 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			}
 			observed := s.healthStates[name]
 			if observed.Identity != result.identity {
-				observed = serviceHealth{Identity: result.identity, Health: health.Unchecked(result.target.Service.Type)}
+				initial := health.Unchecked(result.target.Service.Type)
+				if result.target.Service.HealthDisabled() {
+					initial = health.DisabledState(result.target.Service.Type)
+				}
+				observed = serviceHealth{Identity: result.identity, Health: initial}
 			}
 			if result.health != nil {
 				changed = changed || !reflect.DeepEqual(observed.Health, *result.health)
@@ -366,11 +370,42 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		}
 		guestChanged := !reflect.DeepEqual(s.lastGuestCounterWarnings, s.guestCounterWarningsLocked())
 		retry := (s.runtimeSnapshotDirty || accessChanged || guestChanged) && !published
+		disabledChanged := false
 		aged := false
 		for _, target := range targets {
 			name := target.Service.Name
+			identity := healthProbeIdentity(target.Service, target.CanonicalHost)
+			if target.Service.HealthDisabled() {
+				want := health.DisabledState(target.Service.Type)
+				if target.Route != nil {
+					run := target.Portal
+					run.routesMu.Lock()
+					if route := run.routes[name]; s.portalRun == run && route == target.Route && route.ctx.Err() == nil && route.state.State == "running" {
+						if !reflect.DeepEqual(route.health, want) || route.state.Health != health.Disabled || route.state.HealthChecked != nil || route.state.OfflineSince != nil {
+							route.health = want
+							route.state.Health = health.Disabled
+							route.state.HealthChecked = nil
+							route.state.OfflineSince = nil
+							disabledChanged = true
+						}
+					}
+					run.routesMu.Unlock()
+				}
+				if s.healthStates == nil {
+					s.healthStates = map[string]serviceHealth{}
+				}
+				observed, ok := s.healthStates[name]
+				if !ok || observed.Identity != identity || !reflect.DeepEqual(observed.Health, want) || observed.Stale {
+					observed.Identity = identity
+					observed.Health = want
+					observed.Stale = false
+					s.healthStates[name] = observed
+					disabledChanged = true
+				}
+				continue
+			}
 			observed, ok := s.healthStates[name]
-			if !ok || observed.Identity != healthProbeIdentity(target.Service, target.CanonicalHost) || observed.Health.LastChecked == nil {
+			if !ok || observed.Identity != identity || observed.Health.LastChecked == nil {
 				continue
 			}
 			cfg := registry.HealthConfig{}
@@ -384,7 +419,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			s.healthStates[name] = observed
 		}
 		s.mu.Unlock()
-		if r.Commit(ctx, events, now) || changed || retry {
+		if r.Commit(ctx, events, now) || changed || retry || disabledChanged {
 			s.publishHealth(r)
 		}
 		if aged && s.events.currentGeneration() == generation {

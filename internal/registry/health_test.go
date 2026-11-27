@@ -64,5 +64,40 @@ func TestInvalidHealthConfiguration(t *testing.T) {
 		if err := ValidateHealthConfig(kind, &HealthConfig{Interval: "2m"}); err != nil {
 			t.Fatal(err)
 		}
+		if err := ValidateHealthConfig(kind, &HealthConfig{Disabled: true}); err != nil {
+			t.Fatal("disabled rejected on", kind, err)
+		}
+	}
+	if err := ValidateHealthConfig(TypeProxy, &HealthConfig{Disabled: true}); err != nil {
+		t.Fatal("disabled rejected on proxy:", err)
+	}
+}
+
+func TestHealthDisabledUpdateAndRoundTrip(t *testing.T) {
+	tVal, fVal := true, false
+	cfg := (HealthUpdate{Disabled: &tVal}).Apply(nil)
+	if cfg == nil || !cfg.Disabled {
+		t.Fatalf("Apply(disabled=true) = %+v", cfg)
+	}
+	svc := Service{Name: "amber-link", Type: TypeTCP, Target: "127.0.0.1:21118", Health: cfg}
+	if !svc.HealthDisabled() {
+		t.Fatal("HealthDisabled() = false, want true")
+	}
+	b, err := json.Marshal(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Service
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.HealthDisabled() {
+		t.Fatalf("round-trip lost disabled: %s", b)
+	}
+	if cleared := (HealthUpdate{Disabled: &fVal}).Apply(got.Health); cleared != nil {
+		t.Fatalf("Apply(disabled=false) on disabled-only block = %+v, want nil", cleared)
+	}
+	if reset := (HealthUpdate{Reset: true}).Apply(got.Health); reset != nil {
+		t.Fatalf("Apply(reset=true) = %+v, want nil", reset)
 	}
 }

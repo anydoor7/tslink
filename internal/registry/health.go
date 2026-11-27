@@ -13,18 +13,25 @@ import (
 )
 
 // CodeHealthOptionUnsupported refuses HTTP health options on file and TCP
-// services, which accept only timeout and interval.
+// services, which accept only timeout, interval and disabled.
 const CodeHealthOptionUnsupported = "health_option_unsupported"
 
 // HealthConfig is additive service configuration. Zero values select defaults.
 // BodyContains and Path are never included in diagnostic views.
 type HealthConfig struct {
+	Disabled     bool   `json:"disabled,omitempty"`
 	Path         string `json:"path,omitempty"`
 	StatusMin    int    `json:"status_min,omitempty"`
 	StatusMax    int    `json:"status_max,omitempty"`
 	BodyContains string `json:"body_contains,omitempty"`
 	Timeout      string `json:"timeout,omitempty"`
 	Interval     string `json:"interval,omitempty"`
+}
+
+// HealthDisabled reports whether active daemon and doctor backend probing is
+// disabled for this service.
+func (s Service) HealthDisabled() bool {
+	return s.Health != nil && s.Health.Disabled
 }
 
 // Effective fills defaults at run time; the registry is never rewritten. With
@@ -95,6 +102,7 @@ func ValidateHealthConfig(kind string, h *HealthConfig) error {
 // stored settings before applying the named fields.
 type HealthUpdate struct {
 	Reset                bool
+	Disabled             *bool
 	Path, BodyContains   *string
 	StatusMin, StatusMax *int
 	Timeout, Interval    *string
@@ -110,6 +118,9 @@ func (u HealthUpdate) Apply(current *HealthConfig) *HealthConfig {
 	next := HealthConfig{}
 	if current != nil && !u.Reset {
 		next = *current
+	}
+	if u.Disabled != nil {
+		next.Disabled = *u.Disabled
 	}
 	for _, f := range []struct {
 		value *string
@@ -152,7 +163,7 @@ func SetHealthContext(ctx context.Context, path, app string, u HealthUpdate, aut
 				}
 			}
 			if current.Type != TypeProxy && u.httpOptions() {
-				return CodedError{Code: CodeHealthOptionUnsupported, Message: fmt.Sprintf("health path, status range and body apply to proxy services; %s services accept only timeout and interval", current.Type)}
+				return CodedError{Code: CodeHealthOptionUnsupported, Message: fmt.Sprintf("health path, status range and body apply to proxy services; %s services accept only timeout, interval and disabled", current.Type)}
 			}
 			next := u.Apply(current.Health)
 			if err := ValidateHealthConfig(current.Type, next); err != nil {

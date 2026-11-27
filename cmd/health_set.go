@@ -15,6 +15,7 @@ import (
 // form of `tslink health set`. A nil field keeps the stored value.
 type healthSetArguments struct {
 	App          string  `json:"app"`
+	Disabled     *bool   `json:"disabled,omitempty"`
 	Path         *string `json:"path,omitempty"`
 	StatusMin    *int    `json:"status_min,omitempty"`
 	StatusMax    *int    `json:"status_max,omitempty"`
@@ -25,12 +26,13 @@ type healthSetArguments struct {
 }
 
 func (a healthSetArguments) update() registry.HealthUpdate {
-	return registry.HealthUpdate{Reset: a.Reset, Path: a.Path, BodyContains: a.BodyContains, StatusMin: a.StatusMin, StatusMax: a.StatusMax, Timeout: a.Timeout, Interval: a.Interval}
+	return registry.HealthUpdate{Reset: a.Reset, Disabled: a.Disabled, Path: a.Path, BodyContains: a.BodyContains, StatusMin: a.StatusMin, StatusMax: a.StatusMax, Timeout: a.Timeout, Interval: a.Interval}
 }
 
 // HealthSettingsView is a service's effective health check. Like the other
 // diagnostic views it reports whether a body check exists, never its text.
 type HealthSettingsView struct {
+	Disabled  bool   `json:"disabled,omitempty"`
 	Path      string `json:"path,omitempty"`
 	StatusMin int    `json:"status_min,omitempty"`
 	StatusMax int    `json:"status_max,omitempty"`
@@ -55,7 +57,7 @@ func healthSettingsView(svc registry.Service) HealthSettingsView {
 		c = *svc.Health
 	}
 	c = c.Effective()
-	v := HealthSettingsView{Timeout: c.Timeout, Interval: c.Interval}
+	v := HealthSettingsView{Disabled: c.Disabled, Timeout: c.Timeout, Interval: c.Interval}
 	if svc.Type == registry.TypeProxy {
 		v.Path, v.StatusMin, v.StatusMax, v.BodyCheck = c.Path, c.StatusMin, c.StatusMax, c.BodyContains != ""
 	}
@@ -86,6 +88,10 @@ func formatHealthSet(out io.Writer, r HealthSetResult) {
 		verb = "unchanged"
 	}
 	fmt.Fprintf(out, humanText("✓ %s health check %s:"), r.App, verb)
+	if h.Disabled {
+		fmt.Fprintln(out, " disabled")
+		return
+	}
 	if r.Type == registry.TypeProxy {
 		fmt.Fprintf(out, " GET %s, status %d-%d", h.Path, h.StatusMin, h.StatusMax)
 		if h.BodyCheck {
@@ -108,10 +114,10 @@ func init() {
 		Short: "Change only an app's health check, keeping access, routes and node identity",
 		Long: "Change only the health check of a registered app in one registry transaction. " +
 			"Access lists, tags, people scope, portal routes and the enrolled node are kept, and the running node is not restarted. " +
-			"Unset options keep their stored value; an empty value or 0 selects the default. --reset returns to the defaults: " +
-			"GET / accepting 200-399, 5s timeout, 1m interval. Path, status range and body apply to proxy services only. " +
+			"Unset options keep their stored value; an empty value or 0 selects the default. --disabled skips active daemon and doctor backend probing for the service (--disabled=false re-enables). --reset returns to the defaults: " +
+			"GET / accepting 200-399, 5s timeout, 1m interval, probing enabled. Path, status range and body apply to proxy services only. " +
 			"Use this instead of re-running add, which replaces the whole service.",
-		Example: "  tslink health set micwave-phone --path /health\n  tslink health set opencode-server --status-max 401\n  tslink health set photos --reset",
+		Example: "  tslink health set micwave-phone --path /health\n  tslink health set opencode-server --status-max 401\n  tslink health set amber-link --disabled\n  tslink health set photos --reset",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, a []string) error {
 			args := healthSetArguments{App: a[0]}
@@ -130,6 +136,14 @@ func init() {
 				v, _ := flags.GetInt(name)
 				return &v
 			}
+			boolPtr := func(name string) *bool {
+				if !flags.Changed(name) {
+					return nil
+				}
+				v, _ := flags.GetBool(name)
+				return &v
+			}
+			args.Disabled = boolPtr("disabled")
 			args.Path, args.BodyContains, args.Timeout, args.Interval = str("path"), str("body"), str("timeout"), str("interval")
 			args.StatusMin, args.StatusMax = num("status-min"), num("status-max")
 			args.Reset, _ = flags.GetBool("reset")
@@ -149,6 +163,7 @@ func init() {
 			return nil
 		},
 	}
+	set.Flags().Bool("disabled", false, "Disable active daemon and doctor backend probing for this service (--disabled=false re-enables)")
 	set.Flags().String("path", "", "HTTP probe path joined to the backend base path (default /; proxy only)")
 	set.Flags().Int("status-min", 0, "Lowest accepted HTTP status (default 200; proxy only)")
 	set.Flags().Int("status-max", 0, "Highest accepted HTTP status (default 399 with no lower bound set, otherwise 299; proxy only)")
@@ -163,10 +178,11 @@ func init() {
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
 		Name: "health_set",
 		Description: "Change only one app's health check in a single registry transaction. Keeps access lists, tags, people scope, portal routes and the enrolled node; never re-enrolls. " +
-			"Omitted fields keep their stored value; empty or 0 selects the default; reset returns to defaults (GET / accepting 200-399). path, status range and body_contains apply to proxy apps only. " +
+			"Omitted fields keep their stored value; empty or 0 selects the default; disabled=true skips active daemon and doctor backend probing; reset returns to defaults (GET / accepting 200-399, probing enabled). path, status range and body_contains apply to proxy apps only. " +
 			"HTTP MCP requires the current portal owner for a routed app, checked in the write transaction. Owner scope only." + mcpPublicOwnerNote,
 		InputSchema: objectSchema(map[string]any{
 			"app":           map[string]any{"type": "string", "minLength": 1},
+			"disabled":      map[string]any{"type": "boolean", "description": "Skip active daemon and doctor backend probing for this service; false re-enables."},
 			"path":          map[string]any{"type": "string", "description": "HTTP probe path joined to the backend base path; empty means /."},
 			"status_min":    map[string]any{"type": "integer", "minimum": 0, "maximum": 599, "description": "Lowest accepted status; 0 means the default."},
 			"status_max":    map[string]any{"type": "integer", "minimum": 0, "maximum": 599, "description": "Highest accepted status; 0 means the default (399 when status_min is also unset, otherwise 299)."},
@@ -181,7 +197,7 @@ func init() {
 			"changed":  map[string]any{"type": "boolean"},
 			"defaults": map[string]any{"type": "boolean"},
 			"health": objectSchema(map[string]any{
-				"path": map[string]any{"type": "string"}, "status_min": map[string]any{"type": "integer"}, "status_max": map[string]any{"type": "integer"},
+				"disabled": map[string]any{"type": "boolean"}, "path": map[string]any{"type": "string"}, "status_min": map[string]any{"type": "integer"}, "status_max": map[string]any{"type": "integer"},
 				"body_check": map[string]any{"type": "boolean"}, "timeout": map[string]any{"type": "string"}, "interval": map[string]any{"type": "string"},
 			}, "timeout", "interval"),
 		}, "app", "type", "changed", "defaults", "health"),

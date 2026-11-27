@@ -133,7 +133,7 @@ func TestCompiledHealthSetChangesOnlyHealth(t *testing.T) {
 		}
 	}
 
-	// Timeout and interval apply to file and TCP services; HTTP fields are absent.
+	// Timeout, interval and disabled apply to file and TCP services; HTTP fields are absent.
 	_, data, code = compiledHealthSet(t, configDir, "files", "--interval", "5m")
 	if code != 0 || !reflect.DeepEqual(data["health"], map[string]any{"timeout": "5s", "interval": "5m"}) || data["type"] != "file" {
 		t.Fatalf("file: code=%d data=%v", code, data)
@@ -141,6 +141,18 @@ func TestCompiledHealthSetChangesOnlyHealth(t *testing.T) {
 	_, data, code = compiledHealthSet(t, configDir, "db", "--timeout", "1s")
 	if code != 0 || !reflect.DeepEqual(data["health"], map[string]any{"timeout": "1s", "interval": "2m"}) {
 		t.Fatalf("tcp keeps the stored interval: code=%d data=%v", code, data)
+	}
+	_, data, code = compiledHealthSet(t, configDir, "db", "--disabled")
+	if code != 0 || data["changed"] != true || !reflect.DeepEqual(data["health"], map[string]any{"disabled": true, "timeout": "1s", "interval": "2m"}) {
+		t.Fatalf("tcp disabled: code=%d data=%v", code, data)
+	}
+	stdoutDisabled, stderrDisabled, code := runCompiledTSLinkWithConfigDir(t, configDir, "", "health", "set", "db", "--disabled")
+	if code != 0 || !strings.Contains(stdoutDisabled, "db health check unchanged: disabled") {
+		t.Fatalf("disabled human output: exit=%d stdout=%q stderr=%q", code, stdoutDisabled, stderrDisabled)
+	}
+	_, data, code = compiledHealthSet(t, configDir, "db", "--disabled=false")
+	if code != 0 || data["changed"] != true || !reflect.DeepEqual(data["health"], map[string]any{"timeout": "1s", "interval": "2m"}) {
+		t.Fatalf("tcp re-enabled: code=%d data=%v", code, data)
 	}
 
 	// --reset removes the block; the registry returns to its original bytes
@@ -190,6 +202,14 @@ func TestMCPHealthSetOwnerStdio(t *testing.T) {
 	afterDoc, afterHealth := registryWithoutHealth(t, after)
 	if !reflect.DeepEqual(beforeDoc, afterDoc) || !reflect.DeepEqual(afterHealth["app"], map[string]any{"status_max": float64(401)}) {
 		t.Fatalf("health_set changed more than health: %s", after)
+	}
+	r, err = callMCPTool(context.Background(), actions, "health_set", json.RawMessage(`{"app":"db","disabled":true}`))
+	if err != nil || r.IsError {
+		t.Fatalf("health_set disabled: %v %+v", err, r)
+	}
+	validateAgainstToolOutputSchema(t, "health_set", r.StructuredContent)
+	if b, _ := json.Marshal(r.StructuredContent); !strings.Contains(string(b), `"disabled":true`) || !strings.Contains(string(b), `"changed":true`) {
+		t.Fatalf("disabled structured content %s", b)
 	}
 	r, err = callMCPTool(context.Background(), actions, "health_set", json.RawMessage(`{"app":"files","path":"/x"}`))
 	if err != nil || !r.IsError {

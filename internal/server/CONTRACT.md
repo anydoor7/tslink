@@ -18,6 +18,7 @@
 ## HTTP health probes
 
 - Default success: **200–399**, no redirect follow unless configured.
+- Per-service `health.disabled: true` skips active daemon and `doctor` backend probing (reporting `health.state: "disabled"` and `target_probe_skipped_disabled` info); node key expiry checks still run.
 - **499** `client_canceled` when caller aborts.
 - **`route_closed` / `node_closed`**: route or node torn down (documented stable semantics).
 - Access logs and supervision metrics must reflect probe outcome without leaking secrets.

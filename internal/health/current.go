@@ -7,6 +7,9 @@ import (
 
 // CurrentAt shares the F2 freshness projection across status and portal.
 func CurrentAt(h State, svc registry.Service, now time.Time) State {
+	if svc.HealthDisabled() {
+		return DisabledState(svc.Type)
+	}
 	cfg := registry.HealthConfig{}
 	if svc.Health != nil {
 		cfg = *svc.Health

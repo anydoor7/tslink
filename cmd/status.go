@@ -247,10 +247,14 @@ func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (Sta
 	for _, svc := range reg.Services {
 		now := statusNowFn()
 		effective := registry.EffectiveServiceAt(svc, now)
+		initialHealth := health.Unchecked(svc.Type)
+		if svc.HealthDisabled() {
+			initialHealth = health.DisabledState(svc.Type)
+		}
 		r.Services = append(r.Services, StatusServiceState{
 			PortalOnly:      svc.PortalOnly,
 			Name:            svc.Name,
-			Health:          health.Unchecked(svc.Type),
+			Health:          initialHealth,
 			NodeKey:         health.Expiry{State: health.Unknown, Source: "unavailable"},
 			Status:          "down",
 			Error:           issueErrors[svc.Name],
@@ -804,10 +808,14 @@ func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath,
 		expired := registry.FunnelExpiredAt(svc, now)
 		effective := registry.EffectiveServiceAt(svc, now)
 		view := inspect.ServiceViewFor(effective)
+		initialHealth := health.Unchecked(svc.Type)
+		if svc.HealthDisabled() {
+			initialHealth = health.DisabledState(svc.Type)
+		}
 		service := StatusServiceView{
 			PortalOnly:      svc.PortalOnly,
 			Name:            view.Name,
-			Health:          health.Unchecked(svc.Type),
+			Health:          initialHealth,
 			NodeKey:         health.Expiry{State: health.Unknown, Source: "unavailable"},
 			Type:            view.Type,
 			RuntimeState:    "unknown",

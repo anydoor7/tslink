@@ -94,11 +94,14 @@ func formatAlerts(out io.Writer, a health.AlertsView) {
 func healthConfigFromFlags(cmd *cobra.Command) *registry.HealthConfig {
 	var cfg registry.HealthConfig
 	changed := false
-	for _, name := range []string{"health-path", "health-status-min", "health-status-max", "health-body", "health-timeout", "health-interval"} {
+	for _, name := range []string{"health-disabled", "health-path", "health-status-min", "health-status-max", "health-body", "health-timeout", "health-interval"} {
 		changed = changed || cmd.Flags().Changed(name)
 	}
 	if !changed {
 		return nil
+	}
+	if cmd.Flags().Changed("health-disabled") {
+		cfg.Disabled, _ = cmd.Flags().GetBool("health-disabled")
 	}
 	if cmd.Flags().Changed("health-path") {
 		cfg.Path, _ = cmd.Flags().GetString("health-path")
@@ -229,6 +232,7 @@ func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 }
 
 func addHealthFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("health-disabled", false, "Disable active daemon and doctor backend probing for this service")
 	cmd.Flags().String("health-path", "", "HTTP business probe path (default /; proxy only)")
 	cmd.Flags().Int("health-status-min", 0, "Lowest accepted HTTP probe status (default 200; proxy only)")
 	cmd.Flags().Int("health-status-max", 0, "Highest accepted HTTP probe status (default 399, or 299 when only --health-status-min is set; proxy only)")
@@ -239,6 +243,7 @@ func addHealthFlags(cmd *cobra.Command) {
 
 func healthInputSchema() map[string]any {
 	return objectSchema(map[string]any{
+		"disabled":      map[string]any{"type": "boolean", "description": "Skip active daemon and doctor backend probing for this service."},
 		"path":          map[string]any{"type": "string", "description": "HTTP business path joined to backend base path; default /."},
 		"status_min":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
 		"status_max":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},

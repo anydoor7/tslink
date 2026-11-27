@@ -625,6 +625,13 @@
           "usage": "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)"
         },
         {
+          "name": "health-disabled",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable active daemon and doctor backend probing for this service"
+        },
+        {
           "name": "health-interval",
           "type": "string",
           "default": "1m",
@@ -1001,6 +1008,13 @@
           "type": "string",
           "scope": "local",
           "usage": "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "health-disabled",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable active daemon and doctor backend probing for this service"
         },
         {
           "name": "health-interval",
@@ -1634,6 +1648,13 @@
           "type": "string",
           "scope": "local",
           "usage": "Expected substring in the first 64 KiB; empty removes the check (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "disabled",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable active daemon and doctor backend probing for this service (--disabled=false re-enables)"
         },
         {
           "name": "interval",
